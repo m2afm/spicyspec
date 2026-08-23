@@ -5,6 +5,12 @@
   "references": [
     {
       "path": "./packages/core"
+    },
+    {
+      "path": "./packages/provider"
+    },
+    {
+      "path": "./packages/provider-claude"
     }
   ],
   "compilerOptions": {}
