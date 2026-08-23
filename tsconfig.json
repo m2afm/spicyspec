@@ -11,6 +11,9 @@
     },
     {
       "path": "./packages/provider-claude"
+    },
+    {
+      "path": "./packages/orchestrator"
     }
   ],
   "compilerOptions": {}

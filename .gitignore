@@ -49,3 +49,5 @@ Thumbs.db
 .nx/self-healing
 .nx/migrate-runs
 vitest.config.*.timestamp*
+# orchestrator local state (temporal dev db, runner state)
+.spicyspec/

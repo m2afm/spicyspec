@@ -1,0 +1,124 @@
+/**
+ * The spec-run workflow — Temporal replaces the prototype's hand-rolled driver loop.
+ *
+ * Everything the prototype implemented by hand and got wrong at least once — watchdogs,
+ * stall counters, restart survival, waiting on a human for days — is expressed here as
+ * durable-execution primitives: activities with heartbeats, workflow state that survives
+ * any process death, and signals for human decisions.
+ *
+ * DETERMINISM: this file runs inside the Temporal workflow sandbox. No Date.now(), no
+ * Math.random(), no I/O — activities do the real work. (The same discipline the prototype
+ * enforced for replayable scripts.)
+ */
+import { condition, defineQuery, defineSignal, proxyActivities, setHandler } from '@temporalio/workflow';
+import type { SpecRunActivities, WorkerRunOutcome } from './activities.js';
+
+export interface SpecRunInput {
+  specId: string;
+  /** hard backstop on run count — a runaway loop must end (prototype maxTicksPerSpec) */
+  maxRuns: number;
+  /** consecutive non-progressing runs before the spec parks (prototype maxConsecutiveStalls) */
+  maxConsecutiveStalls: number;
+}
+
+export type SpecRunStatus =
+  | 'running'
+  | 'awaiting-review'
+  | 'complete'
+  | 'parked'
+  | 'exhausted';
+
+export interface SpecRunState {
+  status: SpecRunStatus;
+  runs: number;
+  stalls: number;
+  lastExit: string | null;
+}
+
+export interface ReviewDecision {
+  approved: boolean;
+  note?: string;
+}
+
+/** A human review lands as a signal — the workflow waits for days at zero cost. */
+export const reviewSignal = defineSignal<[ReviewDecision]>('review');
+/** Live state for dashboards, read without touching workflow history. */
+export const stateQuery = defineQuery<SpecRunState>('state');
+
+const activities = proxyActivities<SpecRunActivities>({
+  // AI worker sessions legitimately run for hours; the heartbeat is what detects a dead
+  // one — the prototype's watchdog killed a healthy 12-minute-silent test run (B6), and
+  // heartbeats are the engine-level fix.
+  startToCloseTimeout: '4 hours',
+  heartbeatTimeout: '20 minutes',
+  retry: {
+    // Infrastructure exits (account-refused, rate-limited) are handled by the ACTIVITY
+    // (switch account, wait) or surfaced as outcomes — a workflow-level retry storm on a
+    // failing spec is the loop-of-doom shape, so retries stay small here.
+    maximumAttempts: 2,
+  },
+});
+
+/** Exits that mean "the run moved the work forward". */
+const FORWARD_EXITS = new Set(['clean', 'spec-complete', 'awaiting-review']);
+/** Exits that count toward the stall limit. Infra exits NEVER do (B15/B29 discipline). */
+const STALL_EXITS = new Set(['stalled', 'no-progress', 'hung', 'timed-out']);
+
+export async function specRunWorkflow(input: SpecRunInput): Promise<SpecRunState> {
+  const state: SpecRunState = { status: 'running', runs: 0, stalls: 0, lastExit: null };
+
+  let pendingDecision: ReviewDecision | null = null;
+  setHandler(reviewSignal, (decision) => {
+    pendingDecision = decision;
+  });
+  setHandler(stateQuery, () => state);
+
+  while (state.runs < input.maxRuns) {
+    const outcome: WorkerRunOutcome = await activities.runWorkerSession({
+      specId: input.specId,
+      run: state.runs + 1,
+    });
+    state.runs += 1;
+    state.lastExit = outcome.exit;
+
+    if (outcome.exit === 'spec-complete') {
+      state.status = 'complete';
+      return state;
+    }
+
+    if (outcome.exit === 'awaiting-review') {
+      // Park on the human, durably: the workflow survives restarts, reboots, and weeks of
+      // silence while it waits — the mechanism whose absence caused 91% of the
+      // prototype's idle time.
+      state.status = 'awaiting-review';
+      pendingDecision = null;
+      await condition(() => pendingDecision !== null);
+      const decision = pendingDecision as unknown as ReviewDecision;
+      if (!decision.approved) {
+        state.status = 'parked';
+        return state;
+      }
+      state.status = 'running';
+      state.stalls = 0;
+      continue;
+    }
+
+    if (STALL_EXITS.has(outcome.exit)) {
+      state.stalls += 1;
+      if (state.stalls >= input.maxConsecutiveStalls) {
+        state.status = 'parked';
+        return state;
+      }
+      continue;
+    }
+
+    if (FORWARD_EXITS.has(outcome.exit)) {
+      state.stalls = 0;
+    }
+    // Infra exits (account-refused, rate-limited, aborted, no-attempt) fall through:
+    // neither forward nor stall — the run is simply retried on the next iteration.
+  }
+
+  state.status = 'exhausted';
+  return state;
+}
