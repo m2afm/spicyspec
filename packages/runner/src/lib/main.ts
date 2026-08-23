@@ -1,0 +1,50 @@
+/**
+ * Runner entrypoint — the process a team member's machine keeps alive (as a WinSW/systemd
+ * service). Connects OUT to Temporal and polls for work; nothing inbound (RFC-001 §2).
+ *
+ * Deliberately thin: everything testable lives in wiring.ts; this file only assembles and
+ * runs. Replaces the prototype's 1,138-line driver.
+ */
+import { NativeConnection, Worker } from '@temporalio/worker';
+import { createClaudeAdapter } from '@spicyspec/provider-claude';
+import { openStore } from '@spicyspec/store';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { parseRunnerConfig } from './config.js';
+import { createRunnerActivities } from './wiring.js';
+
+export async function startRunner(configPath: string): Promise<void> {
+  const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')));
+
+  let secrets: Record<string, { env?: Record<string, string> }> = {};
+  try {
+    // Same split as the config schema documents: secrets live beside the config in a
+    // gitignored file, keyed by account id. Absence is fine (ambient login).
+    secrets = JSON.parse(await readFile(configPath.replace(/\.json$/, '.secrets.json'), 'utf8'));
+  } catch {
+    /* no secrets file — ambient credentials */
+  }
+
+  const store = openStore(config.storePath);
+  const provider = createClaudeAdapter();
+  const activities = createRunnerActivities({ config, store, provider, secrets });
+
+  const connection = await NativeConnection.connect({ address: config.temporal.address });
+  try {
+    const worker = await Worker.create({
+      connection,
+      namespace: config.temporal.namespace,
+      taskQueue: config.temporal.taskQueue,
+      workflowsPath: fileURLToPath(new URL('../../../orchestrator/src/lib/workflows.ts', import.meta.url)),
+      activities,
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `spicyspec runner up — project ${config.projectName}, queue ${config.temporal.taskQueue}, temporal ${config.temporal.address}`,
+    );
+    await worker.run();
+  } finally {
+    await connection.close();
+    store.close();
+  }
+}

@@ -85,6 +85,15 @@ importers:
         specifier: ^1.22.0
         version: 1.22.0(@swc/helpers@0.5.18)
 
+  packages/pipeline:
+    dependencies:
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/provider:
     dependencies:
       '@spicyspec/core':
@@ -105,6 +114,45 @@ importers:
       '@spicyspec/provider':
         specifier: workspace:*
         version: link:../provider
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+
+  packages/runner:
+    dependencies:
+      '@spicyspec/core':
+        specifier: workspace:*
+        version: link:../core
+      '@spicyspec/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
+      '@spicyspec/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
+      '@spicyspec/provider':
+        specifier: workspace:*
+        version: link:../provider
+      '@spicyspec/provider-claude':
+        specifier: workspace:*
+        version: link:../provider-claude
+      '@spicyspec/store':
+        specifier: workspace:*
+        version: link:../store
+      '@temporalio/worker':
+        specifier: ^1.22.0
+        version: 1.22.0(@swc/helpers@0.5.18)
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  packages/store:
+    dependencies:
+      '@spicyspec/core':
+        specifier: workspace:*
+        version: link:../core
       tslib:
         specifier: ^2.3.0
         version: 2.8.1

@@ -31,6 +31,12 @@ export interface ActivityDeps {
   buildPacket(input: WorkerRunInput): Promise<Pick<SessionOptions, 'prompt' | 'cwd' | 'account' | 'model' | 'effort' | 'disallowedTools' | 'protectedPaths'>>;
   /** evidence snapshots around the session — repo head, task counts (Phase 1: injected) */
   snapshot(): Promise<EvidenceSnapshot>;
+  /**
+   * Called with the full classification after every run — where the runner settles the
+   * account pool (mark cold on a limit, sideline on a refusal, record the observed
+   * window) and appends the run ledger. Failures here must not mask the run outcome.
+   */
+  onClassified?(cls: Classification, accountId: string): Promise<void>;
   /** heartbeat cadence while draining the session stream */
   heartbeatEveryNEvents?: number;
 }
@@ -85,6 +91,14 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
         before,
         after,
       );
+
+      if (deps.onClassified) {
+        try {
+          await deps.onClassified(cls, packet.account.id);
+        } catch {
+          // Pool/ledger bookkeeping must never mask the run outcome the workflow needs.
+        }
+      }
 
       return {
         exit: cls.exit,

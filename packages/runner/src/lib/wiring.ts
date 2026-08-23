@@ -1,0 +1,159 @@
+/**
+ * Runner wiring — the composition root: pool from the store, packets from the pipeline,
+ * sessions from the provider, classification settled back into the store.
+ *
+ * This file replaces the prototype's driver internals. Every dependency is injectable so
+ * the wiring itself is testable without a repo, a Temporal server, or a live provider.
+ */
+import {
+  buildPool,
+  describePool,
+  earliestWarmMs,
+  markCold,
+  markLimitType,
+  markRefused,
+  pickAccount,
+  poolState,
+  recordUse,
+  type Classification,
+  type Pool,
+} from '@spicyspec/core';
+import { createActivities, type ActivityDeps, type SpecRunActivities, type WorkerRunInput } from '@spicyspec/orchestrator';
+import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefinition } from '@spicyspec/pipeline';
+import type { ProviderAdapter } from '@spicyspec/provider';
+import type { Store } from '@spicyspec/store';
+import type { RunnerConfig } from './config.js';
+import { snapshot, type FullSnapshot } from './git-snapshot.js';
+
+export interface RunnerDeps {
+  config: RunnerConfig;
+  store: Store;
+  provider: ProviderAdapter;
+  pipeline?: PipelineDefinition;
+  /** secrets keyed by account id, merged at build time — never persisted in the store */
+  secrets?: Record<string, { env?: Record<string, string> }>;
+  /** injected for tests */
+  snapshotFn?: (input: WorkerRunInput) => Promise<FullSnapshot>;
+  nowMs?: () => number;
+  nowIso?: () => string;
+}
+
+export class NoWarmAccountError extends Error {
+  constructor(public readonly earliestWarmAtMs: number | null, poolDescription: string) {
+    super(`every account is cold (${poolDescription})`);
+    this.name = 'NoWarmAccountError';
+  }
+}
+
+/**
+ * Build the pool fresh from store state on every pick — cooldowns recorded by a previous
+ * process survive (C4), and two activities never share a stale in-memory pool.
+ */
+export function loadPoolFromStore(deps: RunnerDeps): Pool {
+  return buildPool(deps.config.accounts, deps.secrets ?? {}, deps.store.loadPoolState());
+}
+
+/** Settle a run's classification into the pool — the single place cooldown rules live. */
+export function settlePool(deps: RunnerDeps, cls: Classification, accountId: string): void {
+  const nowMs = deps.nowMs ?? Date.now;
+  const nowIso = deps.nowIso ?? (() => new Date().toISOString());
+  const pool = loadPoolFromStore(deps);
+
+  recordUse(pool, accountId);
+  if (cls.rateLimitType) markLimitType(pool, accountId, cls.rateLimitType, nowIso());
+  if (cls.exit === 'rate-limited') markCold(pool, accountId, cls.rateResetsAt ?? null, nowMs());
+  if (cls.exit === 'account-refused') markRefused(pool, accountId, cls.refusal ?? 'refused', nowMs(), nowIso());
+
+  deps.store.savePoolState(poolState(pool));
+}
+
+/** The real activity set the Temporal worker registers. */
+export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
+  const pipeline = deps.pipeline ?? specDrivenPipeline;
+  const cfg = deps.config;
+
+  const snapshotFn =
+    deps.snapshotFn ??
+    ((input: WorkerRunInput) =>
+      snapshot({
+        cwd: cfg.repoCwd,
+        tasksFile: `${cfg.repoCwd}/specs/${input.specId}/tasks.md`,
+        handoffFile: `${cfg.repoCwd}/HANDOFF.md`,
+      }));
+
+  let lastInput: WorkerRunInput = { specId: 'unknown', run: 0 };
+
+  const activityDeps: ActivityDeps = {
+    provider: deps.provider,
+
+    async buildPacket(input: WorkerRunInput) {
+      lastInput = input;
+      const pool = loadPoolFromStore(deps);
+      const nowMs = deps.nowMs ?? Date.now;
+      const account = pickAccount(pool, nowMs());
+      if (!account) {
+        // The activity fails; Temporal's retry policy re-runs it after backoff — the
+        // durable equivalent of the prototype's sleep-to-earliest-reset.
+        throw new NoWarmAccountError(earliestWarmMs(pool), describePool(pool, nowMs()));
+      }
+
+      const snap = await snapshotFn(input);
+      // Phase 1: stage selection is task-list-driven — execute while open tasks exist.
+      const stage = snap.tasks.exists
+        ? pipeline.stages.find((s) => s.id === 'execute') ?? pipeline.stages[0]
+        : pipeline.stages[0];
+
+      const ctx: PacketContext = {
+        projectName: cfg.projectName,
+        runNumber: input.run,
+        specId: input.specId,
+        stage,
+        position: {
+          branch: snap.git.branch,
+          head: snap.git.head,
+          headSubject: snap.git.headSubject,
+          dirty: snap.git.dirty,
+          dirtyPaths: snap.git.dirtyPaths,
+          tasksDone: snap.tasks.done,
+          tasksOpen: snap.tasks.open,
+          nextTaskIds: snap.tasks.nextTaskIds,
+        },
+        readFirst: [
+          { what: '`HANDOFF.md`', why: 'the baton — position, gate state, traps. Verify against the tree.' },
+          { what: `\`specs/${input.specId}/tasks.md\``, why: 'your work list. The open items are the job.' },
+        ],
+        protectedPaths: cfg.worker.protectedPaths,
+        gateRecordPath: cfg.gateExportPath,
+        parkedPath: cfg.parkedPath,
+      };
+
+      return {
+        prompt: buildPacket(ctx),
+        cwd: cfg.repoCwd,
+        account: { id: account.id, env: account.env, configDir: account.configDir },
+        model: cfg.worker.model,
+        effort: cfg.worker.effort,
+        disallowedTools: cfg.worker.disallowedTools,
+        protectedPaths: cfg.worker.protectedPaths,
+      };
+    },
+
+    snapshot: () => snapshotFn(lastInput),
+
+    async onClassified(cls, accountId) {
+      settlePool(deps, cls, accountId);
+      deps.store.appendRun({
+        tick: lastInput.run,
+        exit: cls.exit,
+        costUsd: cls.costUsd,
+        tasksClosed: cls.tasksClosed,
+        commits: cls.commits,
+        overageStatus: cls.overageStatus,
+        usedOverage: cls.usedOverage,
+        account: accountId,
+      });
+    },
+  };
+
+  return createActivities(activityDeps);
+}

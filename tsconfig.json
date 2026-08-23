@@ -14,6 +14,15 @@
     },
     {
       "path": "./packages/orchestrator"
+    },
+    {
+      "path": "./packages/pipeline"
+    },
+    {
+      "path": "./packages/store"
+    },
+    {
+      "path": "./packages/runner"
     }
   ],
   "compilerOptions": {}

@@ -1,0 +1,28 @@
+{
+  "name": "@spicyspec/runner",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "tslib": "^2.3.0",
+    "@spicyspec/core": "workspace:*",
+    "@spicyspec/orchestrator": "workspace:*",
+    "@spicyspec/pipeline": "workspace:*",
+    "@spicyspec/provider": "workspace:*",
+    "@spicyspec/provider-claude": "workspace:*",
+    "@spicyspec/store": "workspace:*",
+    "@temporalio/worker": "^1.22.0",
+    "zod": "^4.4.3"
+  }
+}
