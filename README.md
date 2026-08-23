@@ -25,13 +25,20 @@ plane · WinSW/systemd runner services · vitest · zod.
 
 ## Status
 
-**Phase 0 — extract.** Porting the battle-tested domain logic from the Airvia build-loop
-prototype (48h unattended, 191 tasks closed, 47 machinery defects recorded and each one encoded
-here as a named regression test) into typed, tested `packages/core`.
+**Phase 1 — engine skeleton proven.** Domain logic ported from the Airvia build-loop prototype
+(48h unattended, 191 tasks closed, 47 machinery defects — each encoded here as a named regression
+test); provider/orchestrator/runner wired end to end. 143 tests green across 7 packages.
 
 | Package | What | Status |
 |---|---|---|
-| `packages/core` | Pure domain logic: queue invariants, tick classification, attribution guard, gate records | porting |
+| `packages/core` | Pure domain logic: queue invariants, classification, attribution, gates, account pool, evidence harvest, ledger | done |
+| `packages/provider` | Vendor contract: normalized `WorkerEvent` stream | done |
+| `packages/provider-claude` | Claude adapter on the Agent SDK — guardrails enforced via `canUseTool` | done |
+| `packages/orchestrator` | Temporal `specRunWorkflow` + heartbeating activities | done |
+| `packages/pipeline` | Declarative stage definitions + generalized packet builder | done |
+| `packages/store` | `node:sqlite` state: runs, gates (+JSONL export), pool, queue | done |
+| `packages/runner` | Composition root: config, git snapshots, pool settle, Temporal worker entry | skeleton |
+| control plane + Angular UI | Phase 2 | next |
 
 ## Workspace
 
