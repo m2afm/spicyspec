@@ -4,7 +4,7 @@
  */
 import { collectSession } from '@spicyspec/provider';
 import { describe, expect, it } from 'vitest';
-import { createClaudeAdapter, mapMessage, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
+import { createClaudeAdapter, mapMessage, protectedPathsHook, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
 
 const assistant = (parent: string | null, ...content: unknown[]) => ({
   type: 'assistant',
@@ -100,6 +100,49 @@ describe('collectSession over the adapter', () => {
     await iterator.next();
     await s.interrupt();
     expect(interrupted).toBe(true);
+  });
+});
+
+describe('B25 round 2 (live-smoke catch): the PreToolUse hook is the real enforcement', () => {
+  // bypassPermissions never consults canUseTool (SDK CLAUDE_SDK_CAN_USE_TOOL_SHADOWED);
+  // the hook path fires in every permission mode.
+  const hook = protectedPathsHook(['.spicyspec/']);
+
+  it('denies a protected write with a deny decision and a reason', async () => {
+    const out = await hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: 'C:/repo/.spicyspec/queue.json' },
+      tool_use_id: 't1',
+    });
+    expect(out).toMatchObject({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+    });
+  });
+
+  it('stays silent for allowed writes and other events', async () => {
+    expect(await hook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } })).toEqual({});
+    expect(await hook({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: {} })).toEqual({});
+  });
+
+  it('the adapter registers the hook when protectedPaths is set', () => {
+    let captured: Record<string, unknown> | undefined;
+    const q: QueryFn = (params) => {
+      captured = params.options;
+      return { async *[Symbol.asyncIterator]() { /* empty */ } };
+    };
+    const s = createClaudeAdapter({ queryFn: q }).createSession({
+      prompt: 'p',
+      cwd: '.',
+      account: { id: 'a', env: {}, configDir: null },
+      protectedPaths: ['.spicyspec/'],
+    });
+    // start the stream so the query is created
+    void s.events()[Symbol.asyncIterator]().next();
+    return new Promise((r) => setTimeout(r, 10)).then(() => {
+      const hooks = captured?.['hooks'] as Record<string, unknown> | undefined;
+      expect(hooks?.['PreToolUse']).toBeDefined();
+    });
   });
 });
 

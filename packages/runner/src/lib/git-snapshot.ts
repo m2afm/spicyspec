@@ -40,10 +40,27 @@ export function parsePorcelain(output: string): GitStatus {
   return { dirty: dirtyPaths.length > 0, dirtyPaths };
 }
 
+/**
+ * Drop the orchestrator's own paths from a dirty listing — B2: the prototype's state
+ * files made every tree look dirty, so every run was told to reconcile a diff that was
+ * just the ledger. Reproduced verbatim by the first live smoke (`.spicyspec/runner.db`
+ * kept the tree "dirty", which also blocked the spec-complete classification).
+ */
+export function filterSelfOwned(paths: readonly string[], selfOwnedPaths: readonly string[]): string[] {
+  if (!selfOwnedPaths.length) return [...paths];
+  const prefixes = selfOwnedPaths.map((p) => p.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase());
+  return paths.filter((path) => {
+    const normalized = path.replace(/\\/g, '/').replace(/^"|"$/g, '').toLowerCase();
+    return !prefixes.some((prefix) => normalized.startsWith(prefix));
+  });
+}
+
 export interface SnapshotOptions {
   cwd: string;
   /** absolute path of the active task list, or null when the spec has none yet */
   tasksFile: string | null;
+  /** orchestrator-owned paths excluded from the dirty computation (B2) */
+  selfOwnedPaths?: string[];
   /** file whose mtime marks a handoff update; optional */
   handoffFile?: string | null;
   execFn?: ExecFn;
@@ -76,7 +93,9 @@ export async function snapshot(options: SnapshotOptions): Promise<FullSnapshot> 
     git(['status', '--porcelain']),
   ]);
 
-  const status = parsePorcelain(porcelain);
+  const rawStatus = parsePorcelain(porcelain);
+  const dirtyPaths = filterSelfOwned(rawStatus.dirtyPaths, options.selfOwnedPaths ?? []);
+  const status = { dirty: dirtyPaths.length > 0, dirtyPaths };
 
   let tasksText: string | null = null;
   if (options.tasksFile) {

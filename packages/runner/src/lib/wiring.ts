@@ -79,6 +79,8 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         cwd: cfg.repoCwd,
         tasksFile: `${cfg.repoCwd}/specs/${input.specId}/tasks.md`,
         handoffFile: `${cfg.repoCwd}/HANDOFF.md`,
+        // B2: the runner's own state (the store, parked file) must never dirty the tree
+        selfOwnedPaths: cfg.worker.protectedPaths,
       }));
 
   let lastInput: WorkerRunInput = { specId: 'unknown', run: 0 };

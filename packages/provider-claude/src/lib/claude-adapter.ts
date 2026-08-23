@@ -165,6 +165,36 @@ export function violatesProtectedPaths(
   return null;
 }
 
+/**
+ * The PreToolUse hook that actually enforces protectedPaths.
+ *
+ * Proven necessary by the first live smoke: under `permissionMode: 'bypassPermissions'`
+ * the SDK warns `canUseTool will not be invoked … auto-approves every tool call … use a
+ * PreToolUse hook instead`. So an adapter relying on canUseTool alone was ADVERTISING the
+ * guardrail, not enforcing it — the exact B25 defect class this layer exists to kill.
+ * The hook path fires in every permission mode; canUseTool stays as the belt for
+ * prompting modes.
+ */
+export function protectedPathsHook(protectedPaths: readonly string[]) {
+  return async (input: unknown): Promise<Record<string, unknown>> => {
+    const hook = input as { hook_event_name?: string; tool_name?: string; tool_input?: unknown };
+    if (hook?.hook_event_name !== 'PreToolUse') return {};
+    const violation = violatesProtectedPaths(
+      String(hook.tool_name ?? ''),
+      (hook.tool_input ?? {}) as Record<string, unknown>,
+      protectedPaths,
+    );
+    if (!violation) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Spicyspec: "${violation}" is a protected path — orchestrator state is never worker-writable (RFC-001 §7.6).`,
+      },
+    };
+  };
+}
+
 /* -------------------------------------------------------------------- the adapter ---- */
 
 export interface ClaudeAdapterOptions {
@@ -198,11 +228,16 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
         env,
         model: options.model,
         effort: options.effort,
-        // The worker runs unattended; guardrails are the denylist + canUseTool below,
-        // both ENFORCED by the runtime rather than advertised in a prompt (B25).
+        // The worker runs unattended; guardrails are the denylist + the PreToolUse hook
+        // below, both ENFORCED by the runtime rather than advertised in a prompt (B25).
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         disallowedTools: options.disallowedTools,
+        // PreToolUse fires in EVERY permission mode — bypassPermissions skips canUseTool
+        // entirely (SDK CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning, caught by live smoke).
+        hooks: protectedPaths.length
+          ? { PreToolUse: [{ hooks: [protectedPathsHook(protectedPaths)] }] }
+          : undefined,
         // Project-scope settings only: the prototype burned a full session replying to a
         // user-tier chat hook (tick 27 / B31) — a headless worker loads repo config, never
         // the operator's personal tier.

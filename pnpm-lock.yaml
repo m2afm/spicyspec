@@ -57,6 +57,18 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/judge:
+    dependencies:
+      '@spicyspec/core':
+        specifier: workspace:*
+        version: link:../core
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/orchestrator:
     dependencies:
       '@spicyspec/core':
@@ -147,6 +159,13 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      '@temporalio/client':
+        specifier: ^1.22.0
+        version: 1.22.0
+      '@temporalio/testing':
+        specifier: ^1.22.0
+        version: 1.22.0(@swc/helpers@0.5.18)
 
   packages/store:
     dependencies:

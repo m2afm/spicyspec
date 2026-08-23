@@ -7,7 +7,7 @@ import { openStore } from '@spicyspec/store';
 import type { ProviderAdapter, WorkerEvent } from '@spicyspec/provider';
 import { describe, expect, it } from 'vitest';
 import { parseRunnerConfig } from './config.js';
-import { parsePorcelain, snapshot } from './git-snapshot.js';
+import { filterSelfOwned, parsePorcelain, snapshot } from './git-snapshot.js';
 import { countTasks } from './tasks.js';
 import { createRunnerActivities, loadPoolFromStore, NoWarmAccountError, settlePool, type RunnerDeps } from './wiring.js';
 
@@ -48,6 +48,30 @@ describe('parsePorcelain — B1: never trim the status line', () => {
 
   it('a clean tree is clean', () => {
     expect(parsePorcelain('')).toEqual({ dirty: false, dirtyPaths: [] });
+  });
+});
+
+describe('filterSelfOwned — B2: own state must never dirty the tree', () => {
+  it('drops orchestrator-owned prefixes, slash- and case-insensitively', () => {
+    expect(
+      filterSelfOwned(['.spicyspec/runner.db', '.SPICYSPEC\\gates.jsonl', 'src/app.ts'], ['.spicyspec/']),
+    ).toEqual(['src/app.ts']);
+  });
+
+  it('the live-smoke reproduction: only .spicyspec/ dirty means the tree is clean', async () => {
+    const snap = await snapshot({
+      cwd: '/repo',
+      tasksFile: null,
+      selfOwnedPaths: ['.spicyspec/'],
+      execFn: async (_c, args) =>
+        args.slice(1).join(' ') === 'status --porcelain' ? '?? .spicyspec/\n' : 'x\n',
+    });
+    expect(snap.git.dirty).toBe(false);
+    expect(snap.git.dirtyPaths).toEqual([]);
+  });
+
+  it('no self-owned config filters nothing', () => {
+    expect(filterSelfOwned(['a.ts'], [])).toEqual(['a.ts']);
   });
 });
 
