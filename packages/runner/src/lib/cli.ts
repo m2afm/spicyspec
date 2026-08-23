@@ -13,32 +13,47 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export interface CliArgs {
-  command: 'init' | 'start' | 'service-xml' | 'help';
+  command: 'init' | 'start' | 'service-xml' | 'seed' | 'handoff' | 'help';
   configPath: string;
+  catalogPath: string;
+  outPath: string | null;
   problems: string[];
 }
+
+const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | 'outPath'>> = {
+  '--config': 'configPath',
+  '--catalog': 'catalogPath',
+  '--out': 'outPath',
+};
 
 export function parseCliArgs(argv: readonly string[]): CliArgs {
   const problems: string[] = [];
   const [raw, ...rest] = argv;
-  const known = new Set(['init', 'start', 'service-xml', 'help']);
-  const command = (known.has(raw ?? '') ? raw : raw === undefined ? 'help' : 'help') as CliArgs['command'];
+  const known = new Set(['init', 'start', 'service-xml', 'seed', 'handoff', 'help']);
+  const command = (known.has(raw ?? '') ? raw : 'help') as CliArgs['command'];
   if (raw !== undefined && !known.has(raw)) problems.push(`unknown command "${raw}"`);
 
-  let configPath = 'spicyspec.runner.json';
+  const args: CliArgs = {
+    command,
+    configPath: 'spicyspec.runner.json',
+    catalogPath: 'spicyspec.catalog.json',
+    outPath: null,
+    problems,
+  };
   for (let i = 0; i < rest.length; i += 1) {
-    if (rest[i] === '--config') {
+    const field = FLAGS[rest[i]];
+    if (field) {
       const value = rest[i + 1];
-      if (!value || value.startsWith('--')) problems.push('--config needs a path');
+      if (!value || value.startsWith('--')) problems.push(`${rest[i]} needs a path`);
       else {
-        configPath = value;
+        args[field] = value;
         i += 1;
       }
     } else {
       problems.push(`unknown argument "${rest[i]}"`);
     }
   }
-  return { command, configPath, problems };
+  return args;
 }
 
 export const STARTER_CONFIG = {
@@ -105,6 +120,73 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { startRunner } = await import('./main.js');
       await startRunner(resolve(args.configPath));
       return 0;
+    }
+
+    case 'seed': {
+      // Catalog in, pending queue out. Refuses to clobber an existing queue — a stray
+      // re-seed that resets live statuses is the B21 defect class from the other side.
+      const { readFile } = await import('node:fs/promises');
+      const { openStore } = await import('@spicyspec/store');
+      const { parseRunnerConfig } = await import('./config.js');
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const catalog = JSON.parse(await readFile(resolve(args.catalogPath), 'utf8')) as Array<{ id: string }>;
+      if (!Array.isArray(catalog) || catalog.some((e) => !e?.id)) {
+        console.error('spicyspec-runner: the catalog must be a JSON array of { id, ... } entries');
+        return 1;
+      }
+      const store = openStore(config.storePath);
+      try {
+        if (store.loadQueue().entries.length) {
+          console.error('spicyspec-runner: the queue is not empty — refusing to re-seed over live state');
+          return 1;
+        }
+        store.saveQueue({ entries: catalog.map((e) => ({ id: String(e.id), status: 'pending' })) });
+        console.log(`seeded ${catalog.length} pending entr${catalog.length === 1 ? 'y' : 'ies'} into ${config.storePath}`);
+        return 0;
+      } finally {
+        store.close();
+      }
+    }
+
+    case 'handoff': {
+      const { readFile, writeFile } = await import('node:fs/promises');
+      const { openStore } = await import('@spicyspec/store');
+      const { closingGate } = await import('@spicyspec/core');
+      const { renderHandoffPackage } = await import('@spicyspec/pipeline');
+      const { snapshot } = await import('./git-snapshot.js');
+      const { parseRunnerConfig } = await import('./config.js');
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const store = openStore(config.storePath);
+      try {
+        const snap = await snapshot({ cwd: config.repoCwd, tasksFile: null, selfOwnedPaths: config.worker.protectedPaths });
+        const gates = store.listGates();
+        let parked = '';
+        try {
+          parked = await readFile(resolve(config.repoCwd, config.parkedPath), 'utf8');
+        } catch {
+          /* nothing parked yet */
+        }
+        const md = renderHandoffPackage({
+          projectName: config.projectName,
+          generatedAt: new Date().toISOString(),
+          frozen: { sha: snap.git.head, branch: snap.git.branch, subject: snap.git.headSubject },
+          specs: store.loadQueue().entries.map((e) => ({
+            id: e.id,
+            status: String(e.status),
+            stage: e.stage ?? null,
+            closingGate: closingGate(gates, e.id).state,
+          })),
+          runs: store.listRuns(),
+          parked,
+          gatesJsonl: store.exportGatesJsonl(),
+        });
+        const out = resolve(args.outPath ?? 'HANDOFF-PACKAGE.md');
+        await writeFile(out, md, 'utf8');
+        console.log(`wrote ${out}`);
+        return 0;
+      } finally {
+        store.close();
+      }
     }
   }
 }

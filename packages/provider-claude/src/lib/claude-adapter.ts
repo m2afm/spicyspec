@@ -153,11 +153,15 @@ export function violatesProtectedPaths(
   toolName: string,
   input: Record<string, unknown>,
   protectedPaths: readonly string[],
+  exceptions: readonly string[] = [],
 ): string | null {
   if (!WRITING_TOOLS.has(toolName)) return null;
   const target = input['file_path'] ?? input['notebook_path'];
   if (!target) return null;
   const p = normalize(String(target));
+  // The packet may promise one file inside a protected dir (the parked-items append).
+  // A promise the hook then denies is B25 mirrored — the exception must be enforced too.
+  if (exceptions.some((e) => p.includes(normalize(e)))) return null;
   for (const protectedPath of protectedPaths) {
     const needle = normalize(protectedPath);
     if (p.includes(needle)) return protectedPath;
@@ -175,7 +179,7 @@ export function violatesProtectedPaths(
  * The hook path fires in every permission mode; canUseTool stays as the belt for
  * prompting modes.
  */
-export function protectedPathsHook(protectedPaths: readonly string[]) {
+export function protectedPathsHook(protectedPaths: readonly string[], exceptions: readonly string[] = []) {
   return async (input: unknown): Promise<Record<string, unknown>> => {
     const hook = input as { hook_event_name?: string; tool_name?: string; tool_input?: unknown };
     if (hook?.hook_event_name !== 'PreToolUse') return {};
@@ -183,6 +187,7 @@ export function protectedPathsHook(protectedPaths: readonly string[]) {
       String(hook.tool_name ?? ''),
       (hook.tool_input ?? {}) as Record<string, unknown>,
       protectedPaths,
+      exceptions,
     );
     if (!violation) return {};
     return {
@@ -222,6 +227,7 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
       if (options.account.configDir) env['CLAUDE_CONFIG_DIR'] = options.account.configDir;
 
       const protectedPaths = options.protectedPaths ?? [];
+      const exceptions = options.protectedPathExceptions ?? [];
 
       const sdkOptions: Record<string, unknown> = {
         cwd: options.cwd,
@@ -236,14 +242,14 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
         // PreToolUse fires in EVERY permission mode — bypassPermissions skips canUseTool
         // entirely (SDK CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning, caught by live smoke).
         hooks: protectedPaths.length
-          ? { PreToolUse: [{ hooks: [protectedPathsHook(protectedPaths)] }] }
+          ? { PreToolUse: [{ hooks: [protectedPathsHook(protectedPaths, exceptions)] }] }
           : undefined,
         // Project-scope settings only: the prototype burned a full session replying to a
         // user-tier chat hook (tick 27 / B31) — a headless worker loads repo config, never
         // the operator's personal tier.
         settingSources: ['project', 'local'],
         canUseTool: (toolName: string, input: Record<string, unknown>) => {
-          const hit = violatesProtectedPaths(toolName, input, protectedPaths);
+          const hit = violatesProtectedPaths(toolName, input, protectedPaths, exceptions);
           if (hit) {
             return Promise.resolve({
               behavior: 'deny' as const,

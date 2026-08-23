@@ -159,3 +159,28 @@ describe('B25: protectedPaths is ENFORCED, not advertised', () => {
     expect(violatesProtectedPaths('Bash', { command: 'cat .spicyspec/queue.json' }, ['.spicyspec/'])).toBeNull();
   });
 });
+
+describe('B25 mirrored: a promised exception inside a protected path is HONORED', () => {
+  it('the parked file is writable while the rest of the dir stays denied', () => {
+    const paths = ['.spicyspec/'];
+    const exceptions = ['.spicyspec/PARKED.md'];
+    expect(violatesProtectedPaths('Edit', { file_path: 'C:/repo/.spicyspec/PARKED.md' }, paths, exceptions)).toBeNull();
+    expect(violatesProtectedPaths('Write', { file_path: 'C:/repo/.spicyspec/queue.json' }, paths, exceptions)).toBe('.spicyspec/');
+  });
+
+  it('the hook honors the exception too', async () => {
+    const hook = protectedPathsHook(['.spicyspec/'], ['.spicyspec/PARKED.md']);
+    const allowed = await hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: '/repo/.spicyspec/PARKED.md' },
+    });
+    expect(allowed).toEqual({});
+    const denied = await hook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: '/repo/.spicyspec/gates.jsonl' },
+    });
+    expect(denied).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+  });
+});

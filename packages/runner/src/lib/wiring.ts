@@ -164,6 +164,9 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         effort: cfg.worker.effort,
         disallowedTools: cfg.worker.disallowedTools,
         protectedPaths: cfg.worker.protectedPaths,
+        // The one file inside protected space the packet PROMISES append access to —
+        // the hook must honor the promise (B25 mirrored).
+        protectedPathExceptions: [cfg.parkedPath],
       };
     },
 

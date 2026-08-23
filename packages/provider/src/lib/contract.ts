@@ -37,6 +37,12 @@ export interface SessionOptions {
    * advertised-but-unenforced guardrail is a defect (prototype B25, RFC-001 §7.6).
    */
   protectedPaths?: string[];
+  /**
+   * Exceptions inside protected paths (e.g. the parked-items file the packet tells the
+   * worker to append to). A promise in the prompt that the hook then denies is the same
+   * defect class as B25, mirrored.
+   */
+  protectedPathExceptions?: string[];
   /** free-form vendor extras; adapters validate what they understand */
   vendorOptions?: Record<string, unknown>;
 }

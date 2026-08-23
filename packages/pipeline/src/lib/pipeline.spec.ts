@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parsePipeline, specDrivenPipeline, stageAfter } from './definition.js';
 import { buildPacket, STATUS_TOKENS, type PacketContext } from './packet.js';
+import { renderHandoffPackage } from './handoff.js';
 
 describe('parsePipeline', () => {
   it('the default spec-driven pipeline is valid and ordered', () => {
@@ -130,5 +131,43 @@ describe('buildPacket', () => {
     const p = buildPacket(ctx({ extraSections: [{ title: 'Verification tiers', body: 'pnpm nx affected -t test' }] }));
     expect(p).toContain('## Verification tiers');
     expect(p).toContain('pnpm nx affected -t test');
+  });
+});
+
+describe('renderHandoffPackage — the output contract', () => {
+  const input = {
+    projectName: 'Acme',
+    generatedAt: '2026-08-24T00:00:00Z',
+    frozen: { sha: 'abc1234', branch: 'main', subject: 'feat(001): done' },
+    specs: [
+      { id: '001', status: 'awaiting-review', stage: 'handoff', closingGate: 'approved' as const },
+      { id: '002', status: 'pending', stage: null, closingGate: 'unknown' as const },
+    ],
+    runs: [
+      { tick: 1, exit: 'clean', costUsd: 2, tasksClosed: 3, judgedBy: 'kimi', judgeHonest: true },
+      { tick: 1, exit: 'rate-limited', costUsd: 0.5, tasksClosed: 0 },
+      { tick: 2, exit: 'spec-complete', costUsd: 1.5, tasksClosed: 1, judgedBy: 'kimi', judgeHonest: false },
+    ],
+    parked: '1. Open hello.txt\n2. Confirm it reads hello',
+    gatesJsonl: '{"at":"x","spec":"001","gate":"closing","verdict":"APPROVE"}',
+  };
+
+  it('carries the frozen position, gate labels, and derived economics', () => {
+    const md = renderHandoffPackage(input);
+    expect(md).toContain('commit `abc1234`');
+    expect(md).toContain('| 001 | awaiting-review | handoff | APPROVED |');
+    expect(md).toContain('UNKNOWN — no record; never read as a pass');
+    expect(md).toContain('2 distinct runs (3 rows');
+    expect(md).toContain('~$4.00');
+    expect(md).toContain('1 flagged dishonest');
+    expect(md).toContain('1. Open hello.txt');
+    expect(md).toContain('"verdict":"APPROVE"');
+  });
+
+  it('absence is stated, never papered over', () => {
+    const md = renderHandoffPackage({ ...input, runs: [], parked: '', gatesJsonl: '' });
+    expect(md).toContain('honesty checks were not configured');
+    expect(md).toContain('No parked journeys were recorded');
+    expect(md).toContain('(empty — no gate verdicts were recorded)');
   });
 });
