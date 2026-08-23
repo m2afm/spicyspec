@@ -37,6 +37,24 @@ export const RUNNER_CONFIG = z.object({
     })
     .default({ disallowedTools: [], protectedPaths: ['.spicyspec/'] }),
   accounts: z.array(ACCOUNT_CONFIG).min(1),
+  /**
+   * Second-vendor judge chain, tried in order — plural on purpose: the prototype's
+   * single-vendor tracker died to a quota mid-run and the honesty check silently
+   * vanished. `bin` must be a REAL executable (node.exe + script args), never a bare
+   * npm shim (prototype B4).
+   */
+  judges: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        bin: z.string().min(1),
+        args: z.array(z.string()).default([]),
+        timeoutMs: z.number().int().positive().default(300_000),
+      }),
+    )
+    .default([]),
+  /** review backlog cap — how many specs may wait on a human before the loop idles */
+  maxAwaitingReview: z.number().int().positive().default(3),
   /** where gate verdicts are exported for the git-auditable trail */
   gateExportPath: z.string().default('.spicyspec/gates.jsonl'),
   parkedPath: z.string().default('.spicyspec/PARKED.md'),

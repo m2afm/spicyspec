@@ -252,3 +252,95 @@ describe('createRunnerActivities', () => {
     expect(new Set(seen).size).toBe(2); // alternated, not hammered
   });
 });
+
+/* ------------------------------------------------------------------- judge wiring ---- */
+
+describe('judge wiring — evidence to the chain, verdict to the next packet', () => {
+  const VALID_VERDICT = {
+    assessment: 'story overstates: suite claim has no matching command',
+    honest: false,
+    claimsUnverified: ['all 674 tests pass'],
+    action: 'redispatch',
+    reason: 'claimed green with zero verification commands',
+    confidence: 0.85,
+  };
+
+  it('runs the chain with harvest+story, stores the verdict, and stamps the ledger row', async () => {
+    const deps = makeDeps();
+    let judgePrompt = '';
+    deps.judgeProviders = [
+      {
+        id: 'kimi',
+        invoke: async (p: string) => {
+          judgePrompt = p;
+          return JSON.stringify(VALID_VERDICT);
+        },
+      },
+    ];
+    const activities = createRunnerActivities(deps);
+    await activities.runWorkerSession({ specId: '006', run: 1 });
+
+    expect(judgePrompt).toContain('Machine facts');
+    expect(judgePrompt).toContain('run 1 of spec 006');
+    const stored = JSON.parse(deps.store.getKv('judge:last:006')!);
+    expect(stored.judgedBy).toBe('kimi');
+    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: 'kimi', judgeHonest: false, judgeAction: 'redispatch' });
+  });
+
+  it('the NEXT run packet carries the verdict as predecessor guidance', async () => {
+    const deps = makeDeps();
+    deps.judgeProviders = [{ id: 'kimi', invoke: async () => JSON.stringify(VALID_VERDICT) }];
+    const prompts: string[] = [];
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        prompts.push(opts.prompt);
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    const activities = createRunnerActivities(deps);
+    await activities.runWorkerSession({ specId: '006', run: 1 });
+    await activities.runWorkerSession({ specId: '006', run: 2 });
+
+    expect(prompts[0]).not.toContain('reviewed your predecessor');
+    expect(prompts[1]).toContain('reviewed your predecessor');
+    expect(prompts[1]).toContain('all 674 tests pass');
+    expect(prompts[1]).toContain('redispatch');
+  });
+
+  it('C3: a dead chain is RECORDED on the run row, never silent, never fatal', async () => {
+    const deps = makeDeps();
+    deps.judgeProviders = [
+      { id: 'kimi', invoke: async () => { throw new Error('quota'); } },
+      { id: 'glm', invoke: async () => 'not json' },
+    ];
+    const activities = createRunnerActivities(deps);
+    const outcome = await activities.runWorkerSession({ specId: '006', run: 1 });
+    expect(outcome.exit).toBeDefined(); // the run outcome survived the dead chain
+    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: null, judgeFailures: 2 });
+  });
+
+  it('no judges configured → no judge fields claimed', async () => {
+    const deps = makeDeps();
+    const activities = createRunnerActivities(deps);
+    await activities.runWorkerSession({ specId: '006', run: 1 });
+    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: null, judgeFailures: 0 });
+    expect(deps.store.getKv('judge:last:006')).toBeNull();
+  });
+
+  it('the queue stage outranks the task heuristic in the packet', async () => {
+    const deps = makeDeps();
+    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'plan' }] });
+    let prompt = '';
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        prompt = opts.prompt;
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect(prompt).toContain('stage plan');
+    expect(prompt).toContain('This stage: Plan');
+  });
+});

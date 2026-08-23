@@ -8,6 +8,8 @@ import {
   outcomeOf,
   redFirstResidue,
   summariseHarvest,
+  harvestEvents,
+  type HarvestableEvent,
 } from './harvest.js';
 
 /** Build one stream line carrying content blocks. */
@@ -134,5 +136,27 @@ describe('summariseHarvest', () => {
     expect(s.verificationOutcomes).toEqual({ passed: 1, failed: 1 });
     expect(s.failingCommands).toHaveLength(1);
     expect(s.failingCommands[0].command).toContain('test b');
+  });
+});
+
+describe('harvestEvents — the live activity path (no JSONL round-trip)', () => {
+  it('produces the same facts as the stream path', () => {
+    const events: HarvestableEvent[] = [
+      { type: 'tool_use', id: '1', name: 'Bash', input: { command: 'pnpm nx test core' } },
+      { type: 'tool_result', toolUseId: '1', isError: false, text: '53 passed' },
+      { type: 'tool_use', id: '2', name: 'Agent', input: { subagent_type: 'qa-critic', description: 'gate' } },
+      { type: 'assistant_text' },
+    ];
+    const viaEvents = harvestEvents(events);
+    expect(viaEvents.toolCalls).toBe(2);
+    expect(viaEvents.verification[0]).toMatchObject({ command: 'pnpm nx test core', outcome: 'passed' });
+    expect(viaEvents.subagents[0]).toMatchObject({ subagent: 'qa-critic', returned: false });
+  });
+
+  it('red-first residue works over events too (B30)', () => {
+    const h = harvestEvents([
+      { type: 'tool_use', id: '1', name: 'Edit', input: { file_path: 'apps/api/src/auth/guard.ts', new_string: 'if (false && holdsRole) {' } },
+    ]);
+    expect(h.redFirstResidue).toHaveLength(1);
   });
 });

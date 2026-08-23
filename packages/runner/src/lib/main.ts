@@ -35,7 +35,7 @@ export async function startRunner(configPath: string): Promise<void> {
       connection,
       namespace: config.temporal.namespace,
       taskQueue: config.temporal.taskQueue,
-      workflowsPath: fileURLToPath(new URL('../../../orchestrator/src/lib/workflows.ts', import.meta.url)),
+      workflowsPath: fileURLToPath(new URL('../../../orchestrator/src/lib/workflows-entry.ts', import.meta.url)),
       activities,
     });
     // eslint-disable-next-line no-console

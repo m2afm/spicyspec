@@ -113,6 +113,14 @@ const REVIEW_MARKERS = [
   /cannot be performed by a script/i,
 ];
 
+/**
+ * Worker-declared stage completion. Artifact stages (specify, plan…) have no task list,
+ * so task-count inference cannot see them finish — the worker declares it. Guarded by
+ * evidence: the declaration only counts on a CLEAN tree (a declaration over uncommitted
+ * work is exactly the fabrication class the judge exists to catch).
+ */
+const COMPLETE_MARKERS = [/(?:RUN|TICK)_STATUS:\s*spec-complete/i];
+
 function movedForward(before: EvidenceSnapshot, after: EvidenceSnapshot): boolean {
   return (
     before.git.head !== after.git.head ||
@@ -199,6 +207,9 @@ export function classify(run: RunResult, before: EvidenceSnapshot, after: Eviden
 
   if (REVIEW_MARKERS.some((re) => re.test(text))) {
     return { ...base, exit: EXIT.AWAITING_REVIEW };
+  }
+  if (COMPLETE_MARKERS.some((re) => re.test(text)) && !after.git.dirty) {
+    return { ...base, exit: EXIT.SPEC_COMPLETE };
   }
   if (after.tasks.exists && after.tasks.open === 0 && !after.git.dirty) {
     return { ...base, exit: EXIT.SPEC_COMPLETE };

@@ -4,3 +4,4 @@ export * from './lib/git-snapshot.js';
 export * from './lib/wiring.js';
 export * from './lib/main.js';
 export * from './lib/cli.js';
+export * from './lib/queue-activities.js';

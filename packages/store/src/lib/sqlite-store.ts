@@ -41,7 +41,12 @@ export interface QueueStore {
   saveQueue(queue: Queue): void;
 }
 
-export type Store = RunStore & GateStore & PoolStore & QueueStore & { close(): void };
+export interface KvStore {
+  getKv(key: string): string | null;
+  setKv(key: string, value: string): void;
+}
+
+export type Store = RunStore & GateStore & PoolStore & QueueStore & KvStore & { close(): void };
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -164,6 +169,19 @@ export function openStore(path: string): Store {
         db.exec('ROLLBACK');
         throw err;
       }
+    },
+
+    /* -------------------------------------------------------------------- kv ---- */
+    getKv(key: string): string | null {
+      const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
+      return row?.value ?? null;
+    },
+
+    setKv(key: string, value: string): void {
+      db.prepare('INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
+        key,
+        value,
+      );
     },
 
     close(): void {

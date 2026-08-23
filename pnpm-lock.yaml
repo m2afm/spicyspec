@@ -135,6 +135,9 @@ importers:
       '@spicyspec/core':
         specifier: workspace:*
         version: link:../core
+      '@spicyspec/judge':
+        specifier: workspace:*
+        version: link:../judge
       '@spicyspec/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

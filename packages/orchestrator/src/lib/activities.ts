@@ -5,7 +5,15 @@
  * prototype's watchdog killing a healthy 12-minute-silent test run, B6).
  */
 import { heartbeat } from '@temporalio/activity';
-import { classify, type Classification, type EvidenceSnapshot } from '@spicyspec/core';
+import {
+  classify,
+  harvestEvents,
+  summariseHarvest,
+  type Classification,
+  type EvidenceSnapshot,
+  type HarvestableEvent,
+  type HarvestSummary,
+} from '@spicyspec/core';
 import { collectSession, type ProviderAdapter, type SessionOptions } from '@spicyspec/provider';
 
 export interface WorkerRunInput {
@@ -33,10 +41,15 @@ export interface ActivityDeps {
   snapshot(): Promise<EvidenceSnapshot>;
   /**
    * Called with the full classification after every run — where the runner settles the
-   * account pool (mark cold on a limit, sideline on a refusal, record the observed
-   * window) and appends the run ledger. Failures here must not mask the run outcome.
+   * account pool, appends the run ledger, and convenes the second-vendor judge with the
+   * EVIDENCE (harvest) and the STORY (worker text). Failures here must not mask the run
+   * outcome.
    */
-  onClassified?(cls: Classification, accountId: string): Promise<void>;
+  onClassified?(
+    cls: Classification,
+    accountId: string,
+    evidence: { harvest: HarvestSummary; workerText: string },
+  ): Promise<void>;
   /** heartbeat cadence while draining the session stream */
   heartbeatEveryNEvents?: number;
 }
@@ -63,6 +76,9 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
       let text = '';
       let envelope = null as Awaited<ReturnType<typeof collectSession>>['envelope'];
       let rateLimit = null as Awaited<ReturnType<typeof collectSession>>['rateLimit'];
+      // Kept whole for the evidence layer: the judge weighs the story against the
+      // commands that actually ran (B8) — a tail window is not a total (B5).
+      const harvested: HarvestableEvent[] = [];
 
       for await (const event of session.events()) {
         events += 1;
@@ -70,6 +86,10 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
         switch (event.type) {
           case 'tool_use':
             toolCalls += 1;
+            harvested.push({ type: 'tool_use', id: event.id, name: event.name, input: event.input });
+            break;
+          case 'tool_result':
+            harvested.push({ type: 'tool_result', toolUseId: event.toolUseId, isError: event.isError, text: event.text });
             break;
           case 'assistant_text':
             if (event.topLevel) text += (text ? '\n' : '') + event.text;
@@ -94,9 +114,10 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
 
       if (deps.onClassified) {
         try {
-          await deps.onClassified(cls, packet.account.id);
+          const summary = summariseHarvest(harvestEvents(harvested));
+          await deps.onClassified(cls, packet.account.id, { harvest: summary, workerText: text });
         } catch {
-          // Pool/ledger bookkeeping must never mask the run outcome the workflow needs.
+          // Pool/ledger/judge bookkeeping must never mask the run outcome the workflow needs.
         }
       }
 

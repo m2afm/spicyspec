@@ -109,13 +109,47 @@ export interface HarvestOptions {
   recordFilePatterns?: RegExp[];
 }
 
+export interface ToolUseLike {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultLike {
+  isError: boolean;
+  text: string;
+}
+
+/**
+ * Structural event shape shared with the provider layer's normalized WorkerEvent — core
+ * cannot import the provider package (dependency direction), so the contract is
+ * structural: anything carrying these fields harvests identically.
+ */
+export type HarvestableEvent =
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; toolUseId: string; isError: boolean; text: string }
+  | { type: string };
+
+/** Harvest directly from normalized events — the live activity path (no JSONL round-trip). */
+export function harvestEvents(events: Iterable<HarvestableEvent>, options: HarvestOptions = {}): Harvest {
+  const uses = new Map<string, ToolUseLike>();
+  const results = new Map<string, ToolResultLike>();
+  for (const event of events) {
+    if (event.type === 'tool_use') {
+      const e = event as Extract<HarvestableEvent, { type: 'tool_use' }>;
+      uses.set(e.id, { id: e.id, name: e.name, input: e.input });
+    } else if (event.type === 'tool_result') {
+      const e = event as Extract<HarvestableEvent, { type: 'tool_result' }>;
+      results.set(e.toolUseId, { isError: e.isError, text: e.text });
+    }
+  }
+  return buildHarvest(uses, results, options);
+}
+
 /** Pair tool_use↔tool_result across a stream-JSONL transcript and extract machine facts. */
 export function harvestStream(streamText: string, options: HarvestOptions = {}): Harvest {
-  const verificationPatterns = [...DEFAULT_VERIFICATION_PATTERNS, ...(options.extraVerificationPatterns ?? [])];
-  const recordFiles = options.recordFilePatterns ?? DEFAULT_RECORD_FILES;
-
-  const uses = new Map<string, ContentBlock>();
-  const results = new Map<string, ContentBlock>();
+  const uses = new Map<string, ToolUseLike>();
+  const results = new Map<string, ToolResultLike>();
 
   for (const line of streamText.split('\n')) {
     if (!line.trim()) continue;
@@ -126,10 +160,24 @@ export function harvestStream(streamText: string, options: HarvestOptions = {}):
       continue;
     }
     for (const block of event.message?.content ?? []) {
-      if (block.type === 'tool_use' && block.id) uses.set(block.id, block);
-      if (block.type === 'tool_result' && block.tool_use_id) results.set(block.tool_use_id, block);
+      if (block.type === 'tool_use' && block.id && block.name) {
+        uses.set(block.id, { id: block.id, name: block.name, input: block.input ?? {} });
+      }
+      if (block.type === 'tool_result' && block.tool_use_id) {
+        results.set(block.tool_use_id, { isError: block.is_error === true, text: textOf(block) });
+      }
     }
   }
+  return buildHarvest(uses, results, options);
+}
+
+function buildHarvest(
+  uses: ReadonlyMap<string, ToolUseLike>,
+  results: ReadonlyMap<string, ToolResultLike>,
+  options: HarvestOptions,
+): Harvest {
+  const verificationPatterns = [...DEFAULT_VERIFICATION_PATTERNS, ...(options.extraVerificationPatterns ?? [])];
+  const recordFiles = options.recordFilePatterns ?? DEFAULT_RECORD_FILES;
 
   const verification: VerificationFact[] = [];
   const subagents: SubagentFact[] = [];
@@ -138,8 +186,8 @@ export function harvestStream(streamText: string, options: HarvestOptions = {}):
 
   for (const [id, use] of uses) {
     const result = results.get(id);
-    const output = textOf(result);
-    const isError = result?.is_error === true;
+    const output = result?.text ?? '';
+    const isError = result?.isError === true;
     if (isError) errors += 1;
 
     if (use.name === 'Bash' && use.input?.['command']) {
@@ -179,10 +227,25 @@ export function harvestStream(streamText: string, options: HarvestOptions = {}):
     verification: verification.slice(-MAX_COMMANDS),
     subagents,
     recordWrites,
-    redFirstResidue: redFirstResidue(streamText),
+    redFirstResidue: residueFromWrites(writesOf(uses)),
     toolCalls: uses.size,
     errors,
   };
+}
+
+/** Ordered Write/Edit calls — map insertion order is stream order, so last write wins. */
+function writesOf(uses: ReadonlyMap<string, ToolUseLike>): Array<{ path: string; body: string }> {
+  const writes: Array<{ path: string; body: string }> = [];
+  for (const use of uses.values()) {
+    if (use.name !== 'Write' && use.name !== 'Edit') continue;
+    const path = use.input?.['file_path'];
+    if (!path) continue;
+    writes.push({
+      path: String(path),
+      body: String(use.input?.['content'] ?? use.input?.['new_string'] ?? ''),
+    });
+  }
+  return writes;
 }
 
 /**
@@ -218,9 +281,25 @@ export function isProductionSource(path: string): boolean {
   return true;
 }
 
-export function redFirstResidue(streamText: string): ResidueFact[] {
+export function residueFromWrites(writes: ReadonlyArray<{ path: string; body: string }>): ResidueFact[] {
   const touched = new Map<string, string | null>();
+  for (const { path, body } of writes) {
+    if (!isProductionSource(path)) continue;
+    const hit = RED_FIRST_MARKERS.find((re) => re.test(body));
+    // Last write wins: a later restore clears an earlier break.
+    touched.set(path, hit ? hit.source : null);
+  }
+  return [...touched.entries()]
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .map(([path, marker]) => ({
+      file: path.replace(/\\/g, '/').split('/').slice(-3).join('/'),
+      marker,
+    }));
+}
 
+/** Stream-text convenience wrapper — same rules, JSONL in. */
+export function redFirstResidue(streamText: string): ResidueFact[] {
+  const writes: Array<{ path: string; body: string }> = [];
   for (const line of streamText.split('\n')) {
     if (!line.trim()) continue;
     let event: { message?: { content?: ContentBlock[] } };
@@ -233,20 +312,11 @@ export function redFirstResidue(streamText: string): ResidueFact[] {
       if (block.type !== 'tool_use') continue;
       if (block.name !== 'Write' && block.name !== 'Edit') continue;
       const path = block.input?.['file_path'];
-      if (!path || !isProductionSource(String(path))) continue;
-      const body = String(block.input?.['content'] ?? block.input?.['new_string'] ?? '');
-      const hit = RED_FIRST_MARKERS.find((re) => re.test(body));
-      // Last write wins: a later restore clears an earlier break.
-      touched.set(String(path), hit ? hit.source : null);
+      if (!path) continue;
+      writes.push({ path: String(path), body: String(block.input?.['content'] ?? block.input?.['new_string'] ?? '') });
     }
   }
-
-  return [...touched.entries()]
-    .filter((entry): entry is [string, string] => Boolean(entry[1]))
-    .map(([path, marker]) => ({
-      file: path.replace(/\\/g, '/').split('/').slice(-3).join('/'),
-      marker,
-    }));
+  return residueFromWrites(writes);
 }
 
 export interface HarvestSummary {

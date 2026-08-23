@@ -13,7 +13,7 @@ import type { SpecRunActivities, WorkerRunOutcome } from './activities.js';
 import { reviewSignal, specRunWorkflow, stateQuery } from './workflows.js';
 
 const TASK_QUEUE = 'spicyspec-test';
-const workflowsPath = fileURLToPath(new URL('./workflows.ts', import.meta.url));
+const workflowsPath = fileURLToPath(new URL('./workflows-entry.ts', import.meta.url));
 
 let env: TestWorkflowEnvironment;
 

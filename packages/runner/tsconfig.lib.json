@@ -11,6 +11,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../judge/tsconfig.lib.json"
+    },
+    {
       "path": "../store/tsconfig.lib.json"
     },
     {

@@ -178,3 +178,28 @@ describe('detectLoopOfDoom — consecutive fix-shaped commits', () => {
     expect(detectLoopOfDoom([c('1', 'fix(006): a')], 3)).toBeNull();
   });
 });
+
+describe('worker-declared stage completion', () => {
+  it('RUN_STATUS: spec-complete on a CLEAN tree classifies spec-complete (artifact stages have no task list)', () => {
+    const c = classify(
+      run({ text: 'wrote the plan.\nRUN_STATUS: spec-complete' }),
+      snap('a', 0, 0, false, 1),
+      snap('b', 0, 0, false, 2),
+    );
+    expect(c.exit).toBe(EXIT.SPEC_COMPLETE);
+  });
+
+  it('the declaration is IGNORED on a dirty tree — evidence outranks narration', () => {
+    const c = classify(
+      run({ text: 'RUN_STATUS: spec-complete' }),
+      snap('a', 0, 0, false, 1),
+      snap('b', 0, 0, true, 2),
+    );
+    expect(c.exit).toBe(EXIT.CLEAN);
+  });
+
+  it('legacy TICK_STATUS marker still counts', () => {
+    const c = classify(run({ text: 'TICK_STATUS: spec-complete' }), snap('a', 0, 0, false, 1), snap('b', 0, 0, false, 2));
+    expect(c.exit).toBe(EXIT.SPEC_COMPLETE);
+  });
+});

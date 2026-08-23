@@ -23,7 +23,8 @@
     "@spicyspec/provider-claude": "workspace:*",
     "@spicyspec/store": "workspace:*",
     "@temporalio/worker": "^1.22.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@spicyspec/judge": "workspace:*"
   },
   "devDependencies": {
     "@temporalio/testing": "^1.22.0",

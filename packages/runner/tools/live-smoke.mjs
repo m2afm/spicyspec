@@ -69,7 +69,7 @@ const env = await TestWorkflowEnvironment.createLocal();
 log('temporal up');
 
 const workflowsPath = fileURLToPath(
-  new URL('../../orchestrator/src/lib/workflows.ts', import.meta.url),
+  new URL('../../orchestrator/src/lib/workflows-entry.ts', import.meta.url),
 );
 
 try {

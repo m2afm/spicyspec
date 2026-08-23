@@ -18,8 +18,9 @@ import {
   type Classification,
   type Pool,
 } from '@spicyspec/core';
+import { buildJudgePrompt, cliJudgeProvider, judgeChain, type JudgeProvider, type JudgeResult } from '@spicyspec/judge';
 import { createActivities, type ActivityDeps, type SpecRunActivities, type WorkerRunInput } from '@spicyspec/orchestrator';
-import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefinition } from '@spicyspec/pipeline';
+import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefinition, type PredecessorVerdict } from '@spicyspec/pipeline';
 import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
 import type { RunnerConfig } from './config.js';
@@ -34,8 +35,24 @@ export interface RunnerDeps {
   secrets?: Record<string, { env?: Record<string, string> }>;
   /** injected for tests */
   snapshotFn?: (input: WorkerRunInput) => Promise<FullSnapshot>;
+  judgeProviders?: JudgeProvider[];
+  judgeChainFn?: typeof judgeChain;
   nowMs?: () => number;
   nowIso?: () => string;
+}
+
+const judgeKey = (specId: string) => `judge:last:${specId}`;
+
+/** Map a judge verdict to what the next run's packet carries. */
+export function verdictForPacket(result: JudgeResult | null): PredecessorVerdict | null {
+  if (!result?.verdict) return null;
+  const v = result.verdict;
+  return {
+    assessment: v.assessment,
+    claimsUnverified: v.claimsUnverified,
+    correction: v.honest ? undefined : v.reason,
+    nextAction: v.action === 'continue' ? undefined : `${v.action} — ${v.reason}`,
+  };
 }
 
 export class NoWarmAccountError extends Error {
@@ -100,10 +117,19 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       }
 
       const snap = await snapshotFn(input);
-      // Phase 1: stage selection is task-list-driven — execute while open tasks exist.
-      const stage = snap.tasks.exists
-        ? pipeline.stages.find((s) => s.id === 'execute') ?? pipeline.stages[0]
-        : pipeline.stages[0];
+      // Stage comes from the queue entry (the rotation workflow advances it); the
+      // task-list heuristic is only the fallback for a spec the queue does not know.
+      const queueStage = deps.store.loadQueue().entries.find((e) => e.id === input.specId)?.stage;
+      const stage =
+        pipeline.stages.find((s) => s.id === queueStage) ??
+        (snap.tasks.exists ? pipeline.stages.find((s) => s.id === 'execute') ?? pipeline.stages[0] : pipeline.stages[0]);
+
+      // The judge's verdict on the predecessor run steers this one (unverified claims are
+      // re-checked, corrections applied) — the prototype tracker's loop, made durable.
+      const storedVerdict = deps.store.getKv(judgeKey(input.specId));
+      const predecessorVerdict = storedVerdict
+        ? verdictForPacket(JSON.parse(storedVerdict) as JudgeResult)
+        : null;
 
       const ctx: PacketContext = {
         projectName: cfg.projectName,
@@ -127,6 +153,7 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         protectedPaths: cfg.worker.protectedPaths,
         gateRecordPath: cfg.gateExportPath,
         parkedPath: cfg.parkedPath,
+        predecessorVerdict,
       };
 
       return {
@@ -142,8 +169,34 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
 
     snapshot: () => snapshotFn(lastInput),
 
-    async onClassified(cls, accountId) {
+    async onClassified(cls, accountId, evidence) {
       settlePool(deps, cls, accountId);
+
+      // Second-vendor honesty check — evidence first, story second. A dead chain is
+      // recorded, never silent (C3), and never blocks the run it was judging.
+      const providers =
+        deps.judgeProviders ??
+        cfg.judges.map((j) => cliJudgeProvider({ id: j.id, bin: j.bin, args: j.args, timeoutMs: j.timeoutMs }));
+      let judged: JudgeResult | null = null;
+      if (providers.length) {
+        const prompt = buildJudgePrompt({
+          projectName: cfg.projectName,
+          specId: lastInput.specId,
+          runNumber: lastInput.run,
+          classification: {
+            exit: cls.exit,
+            commits: cls.commits,
+            tasksClosed: cls.tasksClosed,
+            costUsd: cls.costUsd,
+            costKnown: cls.costKnown,
+          },
+          harvest: evidence.harvest,
+          workerText: evidence.workerText,
+        });
+        judged = await (deps.judgeChainFn ?? judgeChain)(providers, prompt);
+        deps.store.setKv(judgeKey(lastInput.specId), JSON.stringify(judged));
+      }
+
       deps.store.appendRun({
         tick: lastInput.run,
         exit: cls.exit,
@@ -153,6 +206,10 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         overageStatus: cls.overageStatus,
         usedOverage: cls.usedOverage,
         account: accountId,
+        judgedBy: judged?.judgedBy ?? null,
+        judgeHonest: judged?.verdict?.honest ?? null,
+        judgeAction: judged?.verdict?.action ?? null,
+        judgeFailures: judged?.failures?.length ?? 0,
       });
     },
   };
