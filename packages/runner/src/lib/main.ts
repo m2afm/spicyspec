@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { parseRunnerConfig } from './config.js';
 import { registerRunner, startHeartbeat } from '@spicyspec/store';
 import { clearLockView, writeLockView } from './compat-view.js';
-import { createAllActivities } from './wiring.js';
+import { createAllActivities, sweepOrphanedLeases } from './wiring.js';
 
 export async function startRunner(configPath: string): Promise<void> {
   const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')));
@@ -30,6 +30,9 @@ export async function startRunner(configPath: string): Promise<void> {
   }
 
   const store = await openConfiguredStore(config.storePath);
+  const swept = await sweepOrphanedLeases(store);
+  // eslint-disable-next-line no-console
+  if (swept.length) console.log(`released ${swept.length} orphaned account lease(s): ${swept.join(', ')}`);
   const provider = createClaudeAdapter();
   const activities = createAllActivities({ config, store, provider, secrets });
 

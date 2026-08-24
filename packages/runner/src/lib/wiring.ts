@@ -65,6 +65,42 @@ export function verdictForPacket(result: JudgeResult | null): PredecessorVerdict
   };
 }
 
+/** A lease whose recorded holder pid is not alive on this machine is orphaned. */
+function isLeaseHolderDead(pid: number | undefined): boolean {
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+/**
+ * Startup lease sweep — a killed runner leaves fresh-looking leases behind (its
+ * onClassified never ran), and the very first re-ignited packet build then finds every
+ * account "leased" and fails the whole rotation. Leases carry the claiming pid; at
+ * startup, any lease whose pid is dead on this machine is released. Cross-machine
+ * runners will need runner-id heartbeats instead — today's deployment is one runner
+ * per machine per project.
+ */
+export async function sweepOrphanedLeases(store: RunnerDeps['store']): Promise<string[]> {
+  const swept: string[] = [];
+  for (const { key, value } of await store.listKv('account:lease:')) {
+    let pid: number | undefined;
+    try {
+      pid = (JSON.parse(value) as { pid?: number }).pid;
+    } catch {
+      pid = undefined;
+    }
+    if (pid === undefined || isLeaseHolderDead(pid)) {
+      await store.release(key);
+      swept.push(key);
+    }
+  }
+  return swept;
+}
+
 export class NoWarmAccountError extends Error {
   constructor(public readonly earliestWarmAtMs: number | null, poolDescription: string) {
     super(`every account is cold (${poolDescription})`);
@@ -133,14 +169,14 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       for (const candidate of [...pool.accounts].sort((a, b) => a.uses - b.uses)) {
         if (candidate.coldUntilMs > nowMs()) continue;
         const leaseKey = `account:lease:${candidate.id}`;
-        const claim = JSON.stringify({ specId: input.specId, run: input.run, at: nowMs() });
+        const claim = JSON.stringify({ specId: input.specId, run: input.run, at: nowMs(), pid: process.pid });
         if (await deps.store.tryReserve(leaseKey, claim)) {
           account = candidate;
           break;
         }
         const heldRaw = await deps.store.getKv(leaseKey);
-        const heldAt = heldRaw ? (JSON.parse(heldRaw) as { at?: number }).at ?? 0 : 0;
-        if (nowMs() - heldAt > 6 * 3600_000) {
+        const held = heldRaw ? (JSON.parse(heldRaw) as { at?: number; pid?: number }) : {};
+        if (nowMs() - (held.at ?? 0) > 6 * 3600_000 || isLeaseHolderDead(held.pid)) {
           await deps.store.release(leaseKey);
           if (await deps.store.tryReserve(leaseKey, claim)) {
             account = candidate;

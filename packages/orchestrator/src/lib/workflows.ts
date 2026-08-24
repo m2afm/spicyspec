@@ -52,10 +52,16 @@ const activities = proxyActivities<SpecRunActivities>({
   startToCloseTimeout: '4 hours',
   heartbeatTimeout: '20 minutes',
   retry: {
-    // Infrastructure exits (account-refused, rate-limited) are handled by the ACTIVITY
-    // (switch account, wait) or surfaced as outcomes — a workflow-level retry storm on a
-    // failing spec is the loop-of-doom shape, so retries stay small here.
-    maximumAttempts: 2,
+    // Session failures are OUTCOMES, not throws — an activity throw here means
+    // infrastructure: no warm account (retry until one frees or warms), a provider 529,
+    // a store hiccup. maximumAttempts: 2 killed a healthy re-ignition in seconds when
+    // stale leases held all accounts; patience is the durable equivalent of the
+    // prototype's sleep-to-earliest-reset, with no loop-of-doom risk since failing
+    // SPECS never throw.
+    initialInterval: '30 seconds',
+    backoffCoefficient: 2,
+    maximumInterval: '15 minutes',
+    maximumAttempts: 12,
   },
 });
 
