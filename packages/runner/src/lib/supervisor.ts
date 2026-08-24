@@ -23,10 +23,11 @@
  */
 import { notifyAll, type Notification, type NotifyChannel } from '@spicyspec/notify';
 import { listRunners, type Store } from '@spicyspec/store';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { Socket } from 'node:net';
 import { hostname } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseRunnerConfig, type RunnerConfig } from './config.js';
 import { sweepStaleAgentFlags } from './control-flags.js';
@@ -653,6 +654,8 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 /* ------------------------------------------------------------- the command ---- */
 
 export interface SuperviseCommandOptions {
+  /** where the sweep appends its own transcript; null disables file logging */
+  logPath?: string | null;
   configPath: string;
   once: boolean;
   intervalSeconds: number | null;
@@ -665,11 +668,37 @@ export interface SuperviseCommandOptions {
  * task or a systemd timer reports on — the reboot-survival answer that does not depend on
  * this process staying alive.
  */
+/**
+ * Append one line to the supervisor's log, tolerantly.
+ *
+ * The scheduled task used to redirect the whole process with cmd's `>>`. When ANYTHING else
+ * held that file — an overlapping sweep, a tail, an editor — the redirect failed before node
+ * ever started: the sweep ran no checks, repaired nothing, wrote zero bytes and reported
+ * failure with no diagnosis. Reproduced by holding the file open and running the launcher:
+ * exit 1, log grew by 0 bytes. Appending per line from inside the process opens and closes
+ * around each write, so a concurrent writer costs one line at worst instead of the night.
+ */
+function appendLogLine(path: string | null, line: string): void {
+  if (!path) return;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, line + '\n', 'utf8');
+  } catch {
+    /* a log that cannot be written must never cost a repair */
+  }
+}
+
 export async function superviseCommand(options: SuperviseCommandOptions): Promise<number> {
   const configPath = resolve(options.configPath);
   const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')), dirname(configPath));
-  // eslint-disable-next-line no-console
-  const log = options.log ?? ((line: string) => console.log(line));
+  const logPath = options.logPath ?? join(resolve(config.repoCwd, config.supervise.logDir), 'supervisor.log');
+  const log =
+    options.log ??
+    ((line: string) => {
+      // eslint-disable-next-line no-console
+      console.log(line);
+      appendLogLine(logPath, line);
+    });
   const store = await openConfiguredStore(config.storePath);
   const supervisor = createSupervisor({
     config,

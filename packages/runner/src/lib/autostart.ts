@@ -116,7 +116,10 @@ export function windowsLauncherScript(req: AutostartRequest): string {
     'REM One supervision sweep. The scheduled task runs it at logon and on an interval;',
     'REM the sweep is what restarts Temporal, the worker, the dashboard and the rotation.',
     `if not exist "${logDir}" mkdir "${logDir}"`,
-    `"${req.nodePath}" "${req.cliPath}" supervise --once --config "${req.configPath}" >> "${join(logDir, 'supervisor.log')}" 2>&1`,
+    // NO shell redirect: the supervisor appends to the log itself. cmd's `>>` opens the file
+    // for the whole process, so any other holder — an overlapping sweep, a tail — made the
+    // launcher exit 1 before node started, running no checks and writing nothing.
+    `"${req.nodePath}" "${req.cliPath}" supervise --once --config "${req.configPath}"`,
     '',
   ].join('\r\n');
 }

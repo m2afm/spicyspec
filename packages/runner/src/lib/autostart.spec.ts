@@ -111,7 +111,11 @@ describe('planAutostart — windows vectors', () => {
     expect(tr.length).toBeLessThan(261);
     const script = windowsLauncherScript(req());
     expect(script).toContain('supervise --once --config "C:/XIII/share/Work/airvia/spicyspec.runner.json"');
-    expect(script).toContain('supervisor.log');
+    // NO shell redirect. cmd's `>>` opens the log for the whole process, so any other holder
+    // — an overlapping sweep, a tail — made the launcher exit 1 BEFORE node started: no
+    // checks, no repairs, zero bytes written, no diagnosis. Reproduced by holding the file
+    // open and running the launcher. The supervisor appends the log itself, per line.
+    expect(script).not.toContain('>>');
     // .cmd files are parsed line-by-line by cmd.exe; a lone LF corrupts the last line.
     expect(script).toContain('\r\n');
   });
