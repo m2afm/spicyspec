@@ -54,8 +54,13 @@ export interface ActivityDeps {
   provider: ProviderAdapter;
   /** build the work packet for this run — pipeline stage prompts (Phase 1: injected) */
   buildPacket(input: WorkerRunInput): Promise<Pick<SessionOptions, 'prompt' | 'cwd' | 'account' | 'model' | 'effort' | 'disallowedTools' | 'protectedPaths'>>;
-  /** evidence snapshots around the session — repo head, task counts (Phase 1: injected) */
-  snapshot(): Promise<EvidenceSnapshot>;
+  /**
+   * Evidence snapshots around the session — repo head, task counts. Takes the RUN INPUT:
+   * three concurrent activities share one deps object, and a shared "current input"
+   * closure raced across lanes — a $30.82 run with real commits classified no-progress
+   * because its snapshots were read through another lane's tree.
+   */
+  snapshot(input: WorkerRunInput): Promise<EvidenceSnapshot>;
   /**
    * Called with the full classification after every run — where the runner settles the
    * account pool, appends the run ledger, and convenes the second-vendor judge with the
@@ -66,6 +71,7 @@ export interface ActivityDeps {
     cls: Classification,
     accountId: string,
     evidence: { harvest: HarvestSummary; workerText: string },
+    input: WorkerRunInput,
   ): Promise<void>;
   /** the review bridge — read (and mark delivered) a manager's recorded decision */
   checkReviewDecision?(specId: string): Promise<ReviewDecisionFound | null>;
@@ -94,7 +100,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
 
     async runWorkerSession(input: WorkerRunInput): Promise<WorkerRunOutcome> {
       const packet = await deps.buildPacket(input);
-      const before = await deps.snapshot();
+      const before = await deps.snapshot(input);
 
       const session = deps.provider.createSession(packet as SessionOptions);
       const sessionLog = deps.openSessionLog ? await deps.openSessionLog(input) : null;
@@ -137,7 +143,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
       }
 
       sessionLog?.close();
-      const after = await deps.snapshot();
+      const after = await deps.snapshot(input);
       const cls = classify(
         { killedFor: null, resultEnvelope: envelope, rateLimit, text, toolCalls },
         before,
@@ -147,7 +153,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
       if (deps.onClassified) {
         try {
           const summary = summariseHarvest(harvestEvents(harvested));
-          await deps.onClassified(cls, packet.account.id, { harvest: summary, workerText: text });
+          await deps.onClassified(cls, packet.account.id, { harvest: summary, workerText: text }, input);
         } catch {
           // Pool/ledger/judge bookkeeping must never mask the run outcome the workflow needs.
         }

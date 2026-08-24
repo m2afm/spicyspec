@@ -118,13 +118,10 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       });
     });
 
-  let lastInput: WorkerRunInput = { specId: 'unknown', run: 0 };
-
   const activityDeps: ActivityDeps = {
     provider: deps.provider,
 
     async buildPacket(input: WorkerRunInput) {
-      lastInput = input;
       const pool = await loadPoolFromStore(deps);
       const nowMs = deps.nowMs ?? Date.now;
 
@@ -232,7 +229,7 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       };
     },
 
-    snapshot: () => snapshotFn(lastInput),
+    snapshot: (input) => snapshotFn(input),
 
     // The review bridge: a manager's dashboard decision (store-KV intent) reaches the
     // parked workflow through this poll. Delivered AT MOST ONCE — the delivery marker
@@ -259,10 +256,10 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       });
     },
 
-    async onClassified(cls, accountId, evidence) {
+    async onClassified(cls, accountId, evidence, input) {
       // The session is over — free the account for the next concurrent packet build.
       await deps.store.release(`account:lease:${accountId}`).catch(() => undefined);
-      leasedAccountBySpec.delete(lastInput.specId);
+      leasedAccountBySpec.delete(input.specId);
       await settlePool(deps, cls, accountId);
 
       // Second-vendor honesty check — evidence first, story second. A dead chain is
@@ -274,8 +271,8 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       if (providers.length) {
         const prompt = buildJudgePrompt({
           projectName: cfg.projectName,
-          specId: lastInput.specId,
-          runNumber: lastInput.run,
+          specId: input.specId,
+          runNumber: input.run,
           classification: {
             exit: cls.exit,
             commits: cls.commits,
@@ -287,11 +284,12 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
           workerText: evidence.workerText,
         });
         judged = await (deps.judgeChainFn ?? judgeChain)(providers, prompt);
-        await deps.store.setKv(judgeKey(lastInput.specId), JSON.stringify(judged));
+        await deps.store.setKv(judgeKey(input.specId), JSON.stringify(judged));
       }
 
       await deps.store.appendRun({
-        tick: lastInput.run,
+        tick: input.run,
+        spec: input.specId,
         exit: cls.exit,
         costUsd: cls.costUsd,
         tasksClosed: cls.tasksClosed,
@@ -309,16 +307,16 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       if (cfg.compatLoopDir) {
         const compat = { repoCwd: cfg.repoCwd, loopDir: cfg.compatLoopDir };
         const queueNow = await deps.store.loadQueue();
-        const entry = queueNow.entries.find((e) => e.id === lastInput.specId);
+        const entry = queueNow.entries.find((e) => e.id === input.specId);
         await appendLedgerView(deps.store, compat, {
           exit: cls.exit,
           costUsd: cls.costUsd,
           tasksClosed: cls.tasksClosed,
           account: accountId,
-          specId: lastInput.specId,
+          specId: input.specId,
           stage: entry?.stage ?? 'execute',
           durationMinutes: Math.max(1, Math.round(cls.turns / 3)),
-          note: `run ${lastInput.run} of spec ${lastInput.specId}`,
+          note: `run ${input.run} of spec ${input.specId}`,
         }).catch(() => undefined);
         await exportAccountsView(deps.store, compat).catch(() => undefined);
       }

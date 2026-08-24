@@ -567,3 +567,35 @@ describe('ensureWorktree — N trees, N writers (B12 made parallel-safe)', () =>
     expect(calls[0]).toEqual(['worktree', 'add', '-B', 'spec/009', first.path, 'HEAD']);
   });
 });
+
+describe('the parallel-classification race (the $30.82 no-progress bug)', () => {
+  it('three interleaved runs each classify against THEIR OWN lane, not the last-started one', async () => {
+    const deps = makeDeps();
+    deps.config = parseRunnerConfig({
+      projectName: 'Acme', repoCwd: '/repo', maxParallelSpecs: 3,
+      accounts: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    });
+    deps.worktreeFn = async (repo, id) => ({ path: `${repo}/.spicyspec/worktrees/${id}`, branch: `spec/${id}`, created: true });
+    // per-spec snapshots: each lane's head is its own spec id; a race would cross them
+    const calls: string[] = [];
+    deps.snapshotFn = async (input) => {
+      calls.push(input.specId);
+      return {
+        git: { head: `head-${input.specId}`, dirty: false, branch: `spec/${input.specId}`, headSubject: 's', dirtyPaths: [] },
+        tasks: { exists: true, done: 1, open: 2, nextTaskIds: [] },
+        handoff: { mtimeMs: 1 },
+      };
+    };
+    const activities = createRunnerActivities(deps);
+    const outcomes = await Promise.all([
+      activities.runWorkerSession({ specId: '008', run: 2 }),
+      activities.runWorkerSession({ specId: '009', run: 1 }),
+      activities.runWorkerSession({ specId: '010', run: 1 }),
+    ]);
+    // before/after snapshots are lane-consistent → same head → no false movement either way
+    expect(outcomes.every((o) => o.exit === 'no-progress')).toBe(true);
+    // and every ledger row credits ITS spec
+    const rows = await deps.store.listRuns();
+    expect(rows.map((r) => r['spec']).sort()).toEqual(['008', '009', '010']);
+  });
+});
