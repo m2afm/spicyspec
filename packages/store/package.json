@@ -19,6 +19,7 @@
     "@spicyspec/core": "workspace:*"
   },
   "devDependencies": {
-    "pg-mem": "^3.0.5"
+    "pg-mem": "^3.0.5",
+    "pg": "^8.16.3"
   }
 }

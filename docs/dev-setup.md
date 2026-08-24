@@ -45,3 +45,26 @@ migrate between servers — cut over between runs (RFC-001 §4.1).
 | `@spicyspec/provider` | Vendor contract: normalized `WorkerEvent` stream |
 | `@spicyspec/provider-claude` | Claude adapter on the Agent SDK (guardrails enforced via `canUseTool`) |
 | `@spicyspec/orchestrator` | Temporal workflow (`specRunWorkflow`) + activities |
+
+## Team mode (Postgres)
+
+Point every runner's `storePath` at one Postgres URL and the machines share a single
+queue, ledger, gate trail, and runner directory:
+
+```jsonc
+// spicyspec.runner.json
+{ "storePath": "postgres://user:pass@your-host:5432/spicyspec" }
+```
+
+Anything that is not a `postgres://` URL stays a local SQLite file (solo mode). Same
+repository interface, one contract suite over both drivers, and the live proof:
+
+```bash
+docker run -d --name spicyspec-pg-proof -e POSTGRES_PASSWORD=scratch-proof   -e POSTGRES_DB=spicyspec_proof -p 127.0.0.1:55440:5432 postgres:16-alpine
+cd packages/store && node tools/live-pg-proof.mjs   # 9/9: rollback, round-trips, federation
+docker rm -f spicyspec-pg-proof
+```
+
+Reboot survival on Windows: `spicyspec-runner service-xml --config ... > spicyspec-runner.xml`,
+put it beside a downloaded WinSW exe renamed `spicyspec-runner-service.exe`, then
+`spicyspec-runner-service.exe install && spicyspec-runner-service.exe start`.
