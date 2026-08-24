@@ -1253,27 +1253,41 @@ function Accounts({ accounts, events }) {
       events.map((e, i) => h('li', { key: i }, h('span', { className: 'hint' }, e)))));
 }
 
-function LaneBlock({ lane, divider }) {
+/* The body of one lane: the four figures, the action feed, the last thing it said. Shared so
+   the single-lane panel is literally the prototype's Current tick (app.html:1244-1257) and the
+   multi-lane one is the same body under a per-lane headline. */
+function laneBody(lane) {
   const mins = lane.startedAt ? Math.round((Date.now() - lane.startedAt) / 60000) : null;
-  return h('div', { style: divider ? { borderTop: '2px solid var(--line)', marginTop: '0.9rem', paddingTop: '0.8rem' } : null },
-    h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.4rem' } },
-      h('span', null, 'Spec ' + lane.spec + ' · ' + lane.stage),
-      h('span', { className: 'sub' }, lane.account)),
-    h('div', { className: 'statrow', style: { marginBottom: '0.6rem' } },
+  return [
+    h('div', { key: 'stats', className: 'statrow', style: { marginBottom: '0.6rem' } },
       h(Stat, { n: fmtMin(mins), l: 'elapsed' }),
       h(Stat, { n: lane.tools ?? 0, l: 'tool calls' }),
       h(Stat, { n: lane.verification ?? 0, l: 'verify cmds' }),
       h(Stat, { n: lane.subagents ?? 0, l: 'subagents' })),
-    h('ul', { className: 'feed' }, (lane.actions || []).map((a, i) =>
+    h('ul', { key: 'feed', className: 'feed' }, (lane.actions || []).map((a, i) =>
       h('li', { key: i }, h('span', { className: 'tool' }, a.tool), h('span', { className: 'hint' }, a.hint)))),
-    lane.say && h('div', { className: 'quote' }, '“' + lane.say + '”'));
+    lane.say && h('div', { key: 'say', className: 'quote' }, '“' + lane.say + '”'),
+  ];
+}
+
+function LaneBlock({ lane, divider }) {
+  return h('div', { style: divider ? { borderTop: '2px solid var(--line)', marginTop: '0.9rem', paddingTop: '0.8rem' } : null },
+    h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.4rem' } },
+      h('span', null, 'Spec ' + lane.spec + ' · ' + lane.stage),
+      h('span', { className: 'sub' }, lane.account)),
+    laneBody(lane));
 }
 
 function Live({ live, lanes, running }) {
   if (!running) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'The loop is not running. Press START — it spawns detached and outlives this page.'));
   const all = (lanes && lanes.length) ? lanes : (live ? [live] : []);
   if (!all.length) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'starting up…'));
-  return h(Panel, { title: 'Current tick', sub: all.length + (all.length === 1 ? ' lane' : ' lanes') },
+  // One active spec is the normal case, and there it must LOOK like the prototype: the run id
+  // in the sub, the figures straight underneath. '1 lane' plus a 'Spec X · stage' headline was
+  // the multi-lane frame worn by a single lane — two extra lines of chrome saying what the
+  // Catalog already says. Multi-lane rendering is kept for the >1 case only.
+  if (all.length === 1) return h(Panel, { title: 'Current tick', sub: 'tick ' + all[0].id }, laneBody(all[0]));
+  return h(Panel, { title: 'Current tick', sub: all.length + ' lanes' },
     all.map((lane, i) => h(LaneBlock, { key: lane.spec || i, lane, divider: i > 0 })));
 }
 
@@ -1535,7 +1549,13 @@ function App() {
   const c = s.catalog;
   const active = s.active;
   const p = active && active.progress;
-  const status = s.killArmed ? ['warn', 'killing'] : s.stopArmed ? ['warn', 'stopping after tick'] : s.running ? ['on', 'running'] : ['off', 'stopped'];
+  // Armed is not the same as acting. Both flags stay armed until Clear stop, so with nothing
+  // running 'killing' described an event that had already finished — and 'stopping after tick'
+  // promised a tick that does not exist. The engine reads runner:stop at a run boundary and
+  // runner:kill-now inside a live run, so the chip says which of the two it is.
+  const status = s.killArmed ? ['warn', s.running ? 'killing' : 'kill armed']
+    : s.stopArmed ? ['warn', s.running ? 'stopping after tick' : 'stop armed']
+      : s.running ? ['on', 'running'] : ['off', 'stopped'];
 
   const byId = new Map(live.agents.map((a) => [a.id, a]));
   // Dispatched work only, for every count and statistic: the worker is not its own subagent,

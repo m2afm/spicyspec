@@ -77,6 +77,9 @@ export interface CompatRunRow {
   stage: string;
   durationMinutes: number;
   head?: string;
+  /** epoch SECONDS, as the provider reports it — the original room's window chip reads
+   * `last.rateResetsAt * 1000` off this row (ui/server.mjs:619). */
+  rateResetsAt?: number | null;
   note?: string;
 }
 
@@ -99,6 +102,7 @@ export async function appendLedgerView(store: Store, options: CompatViewOptions,
     spec: row.specId,
     stage: row.stage,
     head: row.head ?? null,
+    rateResetsAt: row.rateResetsAt ?? null,
     note: row.note ?? 'spicyspec run',
     commits: true,
   };

@@ -23,6 +23,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { exportQueueView } from './compat-view.js';
+import { rotationStopReason } from './control-flags.js';
+import { runsRootFor, writeParkDiagnosis } from './parked-writer.js';
+import { consumeReviewDecision, isReviewDecisionConsumed, markRecordedDecisionConsumed } from './review-consumption.js';
 import { findSpecDir } from './spec-dir.js';
 import type { RunnerDeps } from './wiring.js';
 
@@ -134,6 +137,19 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
 
   return {
     async openNextSpec(input: OpenNextInput): Promise<OpenNextResult> {
+      // The operator stop, read at the ONE boundary where new work is opened — the
+      // prototype polled its STOP files at exactly this point in the outer loop
+      // (driver.mjs:1020). A `halt` is what ends the rotation cleanly: in-flight children
+      // finish and settle, nothing new opens, and the workflow returns instead of idling
+      // resident. This is what makes the room's "stop armed" promise true even when its
+      // halt CLI could not be reached — the flag alone is enough.
+      //
+      // The flags are NOT cleared here. The room arms them and its START/RESUME actions
+      // release them; a rotation that disarmed its own stop would leave a founder's click
+      // undone by the very loop it was meant to stop.
+      const stopReason = await rotationStopReason(store);
+      if (stopReason) return { kind: 'halt', violations: [stopReason] };
+
       const busy = new Set(input?.busy ?? []);
       const maxParallel = Math.max(1, deps.runner.config.maxParallelSpecs);
       const queue: Queue = await store.loadQueue();
@@ -151,32 +167,49 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
       // openNextSpec idled forever, and a founder click at 3am resumed nothing.
       const promotions = promoteSignedOff(queue, ev.signedOff);
       for (const id of promotions) {
+        // The tag is permanent evidence and is re-credited on every iteration, as the
+        // prototype did. But the room's sign-off writes the tag AND a review decision, so a
+        // tag-credited entry left an UNSPENT decision behind — still live evidence the pass
+        // below would credit to a hand re-queue months later. Spending it here is what
+        // closes that: one sign-off, one consumption, whichever path saw it first.
+        // Best effort: the TAG is the permanent evidence and is re-credited every
+        // iteration, so a store hiccup spending the paired decision must not throw out of
+        // a promotion the tag already justifies.
+        try {
+          await markRecordedDecisionConsumed(store, id, await readReviewDecision(store, id));
+        } catch {
+          /* the tag stands on its own; the decision is spent on a later iteration */
+        }
         await announce('complete', id, 'founder sign-off found — the entry is done and its review slot is freed');
       }
       // The room's sign-off endpoint ALSO records a review decision, which is the path a
-      // manager approval takes when no tag is cut. Keyed to its own timestamp so it
-      // promotes at most once: a spec re-queued by hand after a past approval must not be
-      // auto-retired by the stale record. (The tag has no such key — a tag IS permanent
-      // evidence, and the prototype re-credited it on every iteration too.)
+      // manager approval takes when no tag is cut. Consumed through the marker the workflow
+      // bridge shares, so a decision either consumer has spent is spent for both.
+      // COMMIT THE QUEUE FIRST, THEN SPEND. A decision marked consumed while its entry is
+      // still 'awaiting-review' is a decision nothing can ever credit: unlike the tag path
+      // (permanent evidence, re-credited every iteration), a recorded-decision approval
+      // exists once. Crashing between the two used to lose the founder's approval outright.
+      const pendingSpend: Array<{ id: string; decision: { at?: string; approved?: boolean } }> = [];
       for (const entry of queue.entries) {
         if (entry.status !== 'awaiting-review') continue;
         const decision = await readReviewDecision(store, entry.id);
         if (decision?.approved !== true) continue;
-        const promotedKey = `review:promoted:${entry.id}`;
-        // A hand-written record with no timestamp still promotes exactly once: falling back
-        // to a constant makes the key match forever after, which errs toward "already
-        // credited" rather than re-retiring a re-queued spec on every rotation iteration.
-        const stamp = decision.at || 'undated';
-        if ((await store.getKv(promotedKey)) === stamp) continue;
+        if ((await isReviewDecisionConsumed(store, entry.id, decision))) continue;
         entry.status = 'done';
         entry.closedAt = new Date().toISOString();
-        await store.setKv(promotedKey, stamp);
         promotions.push(entry.id);
-        await announce('complete', entry.id, 'recorded review approval credited — the entry is done and its review slot is freed');
+        pendingSpend.push({ id: entry.id, decision });
       }
       if (promotions.length) {
         await store.saveQueue(queue);
         await mirrorQueue();
+      }
+      for (const { id, decision } of pendingSpend) {
+        // The atomic claim still decides the winner if the workflow bridge raced us here;
+        // losing it only means the decision was already credited, and the entry above is
+        // 'done' either way.
+        await consumeReviewDecision(store, id, decision).catch(() => false);
+        await announce('complete', id, 'recorded review approval credited — the entry is done and its review slot is freed');
       }
 
       awaitingCount = queue.entries.filter((e) => e.status === 'awaiting-review').length;
@@ -246,13 +279,38 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
           entry.status = 'awaiting-review';
           await announce('awaiting-review', entry.id);
           break;
+        case 'stopped': {
+          // The operator killed the run from the dashboard. That is not a worker outcome
+          // (B15) and must not touch the entry: the spec stays ACTIVE at its current
+          // stage, so clearing the stop resumes exactly where it left off. Parking it
+          // here would demand a founder decision for a button the founder just pressed.
+          await announce('stopped', entry.id, 'operator kill — the spec stays active at its stage');
+          break;
+        }
         case 'parked':
-        case 'exhausted':
+        case 'exhausted': {
           // exhausted = the maxRuns backstop fired — that is a parked spec with a note,
           // never a retirement (a runaway loop must not consume the catalog).
           entry.status = 'parked';
+          // The forensic half: a notification is not a record, and a park with no written
+          // diagnosis is one the founder cannot clear — the room lists it as a defect of its
+          // own. Best effort on purpose: a filesystem that refuses the append must not
+          // block the queue transition it describes (C3).
+          try {
+            writeParkDiagnosis(join(deps.runner.config.repoCwd, deps.runner.config.parkedPath), runsRootFor(deps.runner.config.repoCwd), {
+              specId: entry.id,
+              parkedFor: input.parkedFor,
+              status: input.status,
+              lastExit: input.lastExit,
+              stalls: input.stalls,
+              runs: input.runs,
+            });
+          } catch {
+            /* the diagnosis is evidence, never a gate */
+          }
           await announce('parked', entry.id, input.status === 'exhausted' ? 'the maxRuns backstop fired' : '');
           break;
+        }
         default:
           break;
       }

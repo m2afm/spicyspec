@@ -124,10 +124,11 @@ export interface RunningRoom {
 }
 
 /**
- * The two-level stop, as store flags. STOP (graceful: finish the current run, then halt)
- * and KILL-NOW (terminate the live session) were files in the prototype; here they are KV
- * rows the rotation and watchdog check, and this server reads them back as armed state so
- * the header's Kill button never claims a state it does not have.
+ * The two-level stop, as store flags — the prototype's STOP and STOP-NOW marker files.
+ * `runner:stop` is read at a run boundary (the run in flight finishes, then the rotation
+ * halts); `runner:kill-now` is read by the live run and ends the session where it stands.
+ * Both stay armed until RESUME clears them, and this server reads them back as armed state
+ * so the header's Kill button never claims a state it does not have.
  */
 export const STOP_KEY = 'runner:stop';
 export const KILL_KEY = 'runner:kill-now';
@@ -144,6 +145,17 @@ const STATUS_TO_ROOM: Record<string, string> = {
 
 /** The last non-empty line of a CLI's output — what these commands print as their answer. */
 const lastLine = (text: string): string => text.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
+
+/**
+ * Epoch milliseconds from a provider rate-limit timestamp. The provider reports SECONDS
+ * (core classify.ts rateResetsAt, the same field markCold multiplies by 1000), so a bare
+ * `* 1000` on a value that already arrived in ms would put the 'window HH:MM' chip in the
+ * year 33000. Anything past 1e12 is already ms.
+ */
+const epochMs = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return value > 1e12 ? value : value * 1000;
+};
 
 async function git(repoCwd: string, args: string[]): Promise<string> {
   try {
@@ -357,14 +369,10 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
         cost: rows.reduce((s, t) => s + (Number(t.costUsd) || 0), 0),
         rateStatus: (last?.['rateStatus'] as string) ?? null,
         utilization: typeof last?.['utilization'] === 'number' ? last['utilization'] : null,
-        // The original read the last ledger row's rateResetsAt (epoch seconds); the pool row
-        // may also carry a windowEndsAt in ms. Either populates the 'window HH:MM' chip.
-        windowEndsAt:
-          typeof (a as Record<string, unknown>)['windowEndsAt'] === 'number'
-            ? ((a as Record<string, unknown>)['windowEndsAt'] as number)
-            : typeof last?.['rateResetsAt'] === 'number'
-              ? (last['rateResetsAt'] as number) * 1000
-              : null,
+        // The original read the last ledger row's rateResetsAt (epoch seconds — server.mjs:619);
+        // the pool row may also carry a windowEndsAt already in ms. Either populates the
+        // 'window HH:MM' chip, and `epochMs` refuses to multiply a millisecond value.
+        windowEndsAt: epochMs((a as Record<string, unknown>)['windowEndsAt']) ?? epochMs(last?.['rateResetsAt']),
         overageStatus: (last?.['overageStatus'] as string) ?? null,
       };
     }),
@@ -484,6 +492,8 @@ async function isSignedOff(repoCwd: string, id: string): Promise<boolean> {
  * ------------------------------------------------------------------------------------ */
 
 interface LaneTail {
+  /** the spec id this tail belongs to — carried so a retired tail stays addressable */
+  lane: string;
   dir: string;
   offset: number;
   partial: string;
@@ -493,8 +503,8 @@ interface LaneTail {
   ended: boolean;
   // Current-tick panel counters — kept here so the panel costs nothing extra to serve.
   tools: number;
-  bash: number;
-  /** Bash calls matching the verification patterns ONLY — 'verify cmds' once counted every
+  shell: number;
+  /** Shell calls matching the verification patterns ONLY — 'verify cmds' once counted every
    * Bash call, so a worker doing 30 greps showed 30 "verifications". The number must mean
    * what the label says (prototype harvest.mjs classifier). */
   verify: number;
@@ -518,6 +528,15 @@ export interface LaneLive {
 
 const LANE_FRESH_MS = 15 * 60_000;
 
+/** Both shells are commands to be counted. The gate was `name === 'Bash'`, and this
+ * workspace is win32 where the provider adapter treats PowerShell as a shell tool
+ * (provider-claude claude-adapter SHELL_TOOLS) — so 'verify cmds' read 0 through a whole
+ * run of `pnpm nx test` calls made from PowerShell. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+
+/** How many reaped lane registries stay addressable — see `retire` below. */
+const REAPED_KEPT = 8;
+
 /**
  * Multi-lane pump: one tail per live run directory. The single-tail version followed the
  * NEWEST dir by mtime — under 3 concurrent lanes that flip-flopped every poll, resetting
@@ -526,6 +545,18 @@ const LANE_FRESH_MS = 15 * 60_000;
  */
 function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (event: string, data: unknown) => void) {
   const tails = new Map<string, LaneTail>(); // keyed by lane (spec id)
+  /**
+   * Ended lanes, still addressable. The prototype NEVER deleted a registry — it replaced it
+   * on a tick roll and pushed reset:true (ui/server.mjs:238-243), so the sheet could always
+   * resolve whatever the page was still showing. Deleting a reaped tail here broke that: the
+   * History list is accumulated in the page and survives the reap, so its rows opened a 404
+   * once a lane went quiet. Newest last, capped at REAPED_KEPT.
+   */
+  const reaped: LaneTail[] = [];
+  const retire = (tail: LaneTail) => {
+    reaped.push(tail);
+    if (reaped.length > REAPED_KEPT) reaped.splice(0, reaped.length - REAPED_KEPT);
+  };
 
   const readMeta = (dir: string): Record<string, unknown> | null => {
     try {
@@ -556,7 +587,8 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     }
   };
 
-  const newTail = (dir: string, meta: Record<string, unknown>): LaneTail => ({
+  const newTail = (lane: string, dir: string, meta: Record<string, unknown>): LaneTail => ({
+    lane,
     dir,
     offset: 0,
     partial: '',
@@ -569,7 +601,7 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     seen: new Map(),
     ended: false,
     tools: 0,
-    bash: 0,
+    shell: 0,
     verify: 0,
     subagents: 0,
     actions: [],
@@ -595,8 +627,8 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
           tail.tools += 1;
           const name = String(b['name'] ?? '');
           if (name === 'Task' || name === 'Agent') tail.subagents += 1;
-          if (name === 'Bash') {
-            tail.bash += 1;
+          if (SHELL_TOOLS.has(name)) {
+            tail.shell += 1;
             const command = String((b['input'] as Record<string, unknown>)?.['command'] ?? '').replace(/\s+/g, ' ');
             if (DEFAULT_VERIFICATION_PATTERNS.some((re) => re.test(command))) tail.verify += 1;
           }
@@ -683,8 +715,11 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
       const lane = String(meta['spec'] ?? dir.split(/[\\/]/).pop());
       const existing = tails.get(lane);
       if (!existing || existing.dir !== dir) {
-        // A newer run for this lane replaces the old tail — reset only THIS lane.
-        tails.set(lane, newTail(dir, meta));
+        // A newer run for this lane replaces the old tail — reset only THIS lane. The
+        // replaced registry is retired, not dropped: a page that missed the reset frame
+        // (an SSE reconnect) is still showing its rows.
+        if (existing) retire(existing);
+        tails.set(lane, newTail(lane, dir, meta));
         broadcast('tick', { id: dir.split(/[\\/]/).pop(), lane, meta, reset: true });
       }
     }
@@ -696,7 +731,10 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
       } catch {
         stale = true;
       }
-      if (tail.ended && stale) tails.delete(lane);
+      if (tail.ended && stale) {
+        tails.delete(lane);
+        retire(tail);
+      }
     }
   };
 
@@ -716,15 +754,21 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
      * The full record for one agent, by its lane-namespaced id ('<lane>·<rawId>'). Fetched
      * once when a sheet opens — prompt and summary are too big to push on every frame, which
      * is why the feed strips them and this endpoint exists.
+     *
+     * Retired registries are searched after the live one, newest first: agent ids are the
+     * run's own tool_use ids, so a miss in the live registry is not ambiguous, and a
+     * History row whose lane has since been reaped must still open.
      */
     detail(namespacedId: string): Record<string, unknown> | null {
       const sep = namespacedId.indexOf('·');
       if (sep < 0) return null;
       const lane = namespacedId.slice(0, sep);
       const rawId = namespacedId.slice(sep + 1);
-      const tail = tails.get(lane);
-      if (!tail) return null;
-      const d = agentsMod.agentDetail(tail.reg, rawId);
+      const liveTail = tails.get(lane);
+      let d = liveTail ? agentsMod.agentDetail(liveTail.reg, rawId) : null;
+      for (let i = reaped.length - 1; !d && i >= 0; i -= 1) {
+        if (reaped[i].lane === lane) d = agentsMod.agentDetail(reaped[i].reg, rawId);
+      }
       if (!d) return null;
       // Re-namespace every id the sheet joins against the feed's agents — the feed sent
       // namespaced ids, so a bare child id here would match nothing.
@@ -942,11 +986,20 @@ data: ${JSON.stringify(data)}
     return { ok: true, message: `spec ${id} is tagged signed-off/${id} and the review decision is recorded — the rotation collects it.` };
   };
 
-  /* Two-level stop, prototype semantics: STOP is graceful (the current run finishes, then
-   * the rotation halts — armed via the store flag AND the runner CLI's durable halt), KILL
-   * terminates the live worker now (halt + kill the runner's process tree, in-flight session
-   * work may be lost). RESUME clears the armed flags; REPORT writes the handoff brief. The
-   * previous version aliased kill to stop, so the scarier confirm ran the gentler action. */
+  /* Two-level stop, prototype semantics (server.mjs:648-706), and every message below says
+   * only what the engine does:
+   *   STOP  — pause after the current run. Arms `runner:stop`, which the rotation reads at
+   *           the next run boundary, and cancels the workflow through the halt CLI (Temporal
+   *           cancellation is cooperative: the activity in flight finishes). Nothing
+   *           interrupts the live session, so the button is labelled 'Pause after tick'.
+   *   KILL  — now. Arms `runner:kill-now`, which the live run reads, cancels the workflow,
+   *           and kills the runner's process tree; work not yet committed is lost.
+   *   RESUME— disarms both flags. It does not restart anything; START does that.
+   *   REPORT— the runner CLI writes the handoff and prints the path it wrote.
+   * The armed flag is the durable half of STOP and KILL: it outlives this page and an
+   * unreachable CLI, which is why an execFileSync failure there is reported as armed-with-a-
+   * note rather than as a refusal. The previous version aliased kill to stop, so the scarier
+   * confirm ran the gentler action. */
   const actions: Record<string, () => Promise<{ ok: boolean; message: string }> | { ok: boolean; message: string }> = {
     start: async () => {
       await options.store.release(STOP_KEY).catch(() => undefined);
@@ -955,7 +1008,14 @@ data: ${JSON.stringify(data)}
         cwd: options.repoCwd, detached: true, stdio: 'ignore', windowsHide: true,
       });
       child.unref();
-      return { ok: true, message: 'rotation start dispatched (idempotent) — a runner must be up: spicyspec-runner start' };
+      // Dispatched, not started: the child is detached and its exit is never read here, so
+      // claiming the rotation is running would be a promise this server cannot keep.
+      return {
+        ok: true,
+        message:
+          'stop flags cleared and the rotation dispatched detached — it outlives this page, and joins the rotation if one is already up. ' +
+          'A worker must be hosted for it to move: spicyspec-runner start',
+      };
     },
     stop: async () => {
       await options.store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
@@ -963,15 +1023,25 @@ data: ${JSON.stringify(data)}
         const out = execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
           cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 30_000,
         });
-        return { ok: true, message: out.trim().split('\n')[0] || 'stop armed — the current run finishes, then the rotation ends' };
+        const said = lastLine(out);
+        return { ok: true, message: 'stop armed — the run in flight finishes and settles, then the rotation ends' + (said ? ' · ' + said : '') };
       } catch (err) {
-        // The flag is still armed: the rotation reads it between activities even when the
-        // CLI could not be reached from here.
-        return { ok: true, message: 'stop armed (halt CLI unreachable: ' + String((err as Error).message).split('\n')[0] + ')' };
+        // The flag is the durable half: the rotation reads it at the one boundary where new
+        // work is opened (runner queue-activities.ts), whether or not the CLI could be
+        // reached from here. Armed with a note, not a refusal.
+        return {
+          ok: true,
+          message:
+            'stop armed — the run in flight finishes and settles, then the rotation ends at the next boundary (halt CLI unreachable: ' +
+            String((err as Error).message).split('\n')[0] + ')',
+        };
       }
     },
     kill: async () => {
-      const messages: string[] = [];
+      // Exactly what the engine does with the flag: the in-session watchdog interrupts the
+      // live run (scored `aborted`, never a worker failure) and the rotation opens nothing
+      // further while it is armed (runner control-flags.ts).
+      const messages: string[] = ['kill-now armed — the live session is interrupted and the rotation opens nothing further'];
       await options.store.setKv(KILL_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
       try {
         execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
@@ -1005,14 +1075,16 @@ data: ${JSON.stringify(data)}
           messages.push('kill: ' + String((err as Error).message).split('\n')[0]);
         }
       } else {
-        messages.push('no live runner');
+        // The flag stays armed, so this is not "nothing happened": the next run to read it
+        // dies on arrival. Saying so is the difference between a disarm and a surprise.
+        messages.push('no live runner to kill — the flag stays armed until Clear stop');
       }
       return { ok: true, message: messages.join(' · ') };
     },
     resume: async () => {
       await options.store.release(STOP_KEY).catch(() => undefined);
       await options.store.release(KILL_KEY).catch(() => undefined);
-      return { ok: true, message: 'stop flags cleared — START dispatches the rotation' };
+      return { ok: true, message: 'stop and kill-now disarmed — nothing is restarted by this; START dispatches the rotation' };
     },
     report: () => {
       try {

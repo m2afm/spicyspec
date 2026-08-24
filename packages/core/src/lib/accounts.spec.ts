@@ -171,3 +171,41 @@ describe('describePool', () => {
     expect(s).toContain('secondary COLD 360m REFUSED');
   });
 });
+
+describe('windowEndsAt — the account panel had no writer for its window chip (GAP 11)', () => {
+  it('a reported reset is recorded UN-buffered and survives the round trip', () => {
+    // The chip renders the provider's window end. coldUntilMs is that instant PLUS the
+    // runner's own safety margin, so rendering it would show a time nobody reported.
+    const pool = threeAccounts();
+    markCold(pool, 'primary', 2_000, NOW);
+    const primary = pool.accounts.find((a) => a.id === 'primary');
+    expect(primary?.windowEndsAt).toBe(2_000 * 1000);
+    expect(primary?.coldUntilMs).toBe(2_000 * 1000 + 60_000);
+
+    const reloaded = buildPool([{ id: 'primary' }], {}, poolState(pool));
+    expect(reloaded.accounts[0].windowEndsAt).toBe(2_000 * 1000);
+  });
+
+  it('an unobserved window is null, never a guess', () => {
+    const pool = threeAccounts();
+    expect(pool.accounts[0].windowEndsAt).toBeNull();
+    // No reset reported: the fixed cooldown is a decision about when to RETRY, not an
+    // observation of when the window ends.
+    markCold(pool, 'primary', null, NOW);
+    expect(pool.accounts[0].coldUntilMs).toBe(NOW + DEFAULT_COOLDOWN_MS);
+    expect(pool.accounts[0].windowEndsAt).toBeNull();
+  });
+
+  it('a later limit with no reported reset does not erase an observed window', () => {
+    const pool = threeAccounts();
+    markCold(pool, 'primary', 2_000, NOW);
+    markCold(pool, 'primary', null, NOW);
+    expect(pool.accounts[0].windowEndsAt).toBe(2_000 * 1000);
+  });
+
+  it('a refusal is not a rate-limit window and leaves it alone', () => {
+    const pool = threeAccounts();
+    markRefused(pool, 'primary', 'org disabled access', NOW, AT);
+    expect(pool.accounts[0].windowEndsAt).toBeNull();
+  });
+});

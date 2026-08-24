@@ -37,6 +37,14 @@ export interface AccountState {
    */
   limitType?: string | null;
   limitTypeSeenAt?: string | null;
+  /**
+   * The provider's OWN reset instant for the observed limit window, in ms — not the same
+   * number as `coldUntilMs`, which is this instant plus the runner's safety buffer. The
+   * control room renders its `window HH:MM` chip from the provider's number, so the buffer
+   * must never leak into it. Round-trips for the same reason `limitType` does: a window is
+   * observed at most once every few hours and the runner restarts far more often.
+   */
+  windowEndsAt?: number | null;
 }
 
 export interface PoolAccount {
@@ -50,6 +58,7 @@ export interface PoolAccount {
   refusedAt: string | null;
   limitType: string | null;
   limitTypeSeenAt: string | null;
+  windowEndsAt: number | null;
 }
 
 export interface Pool {
@@ -77,6 +86,7 @@ export function buildPool(
       refusedAt: state[a.id]?.refusedAt ?? null,
       limitType: state[a.id]?.limitType ?? null,
       limitTypeSeenAt: state[a.id]?.limitTypeSeenAt ?? null,
+      windowEndsAt: state[a.id]?.windowEndsAt ?? null,
     }));
   return { accounts };
 }
@@ -93,6 +103,7 @@ export function poolState(pool: Pool): Record<string, Required<AccountState>> {
         refusedAt: a.refusedAt,
         limitType: a.limitType,
         limitTypeSeenAt: a.limitTypeSeenAt,
+        windowEndsAt: a.windowEndsAt,
       },
     ]),
   );
@@ -157,11 +168,19 @@ export function earliestWarmMs(pool: Pool): number | null {
 /**
  * Mark an account cold. `resetsAtSeconds` comes straight from the provider's rate-limit
  * event; when missing, fall back to a fixed cooldown rather than guessing a window length.
+ *
+ * The reported reset is ALSO recorded as `windowEndsAt` — un-buffered, because the buffer
+ * is the runner's own margin and not something the provider said. A missing reset leaves
+ * the previous window untouched rather than nulling it: the fallback cooldown is a guess
+ * about when to retry, never an observation of when the window ends, and overwriting a
+ * real observation with a guess is how the account panel came to show numbers nobody
+ * reported.
  */
 export function markCold(pool: Pool, accountId: string, resetsAtSeconds: number | null | undefined, nowMs: number, bufferMs = 60_000): boolean {
   const account = pool.accounts.find((a) => a.id === accountId);
   if (!account) return false;
   account.coldUntilMs = resetsAtSeconds ? resetsAtSeconds * 1000 + bufferMs : nowMs + DEFAULT_COOLDOWN_MS;
+  if (resetsAtSeconds) account.windowEndsAt = resetsAtSeconds * 1000;
   return true;
 }
 

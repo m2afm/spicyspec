@@ -24,10 +24,25 @@ export interface LedgerEntry {
   commits?: boolean;
   tasksClosed?: number;
   costUsd?: number;
-  head?: string;
+  /** HEAD of the worked tree after the run. `null` is unknown, same as absent. */
+  head?: string | null;
   note?: string;
   overageStatus?: string | null;
   usedOverage?: boolean | null;
+  /**
+   * Provider rate-limit facts as reported ON THIS RUN — the account panel's rate,
+   * utilization and window chips have no other source, and read the LAST row per account.
+   * `rateResetsAt` is epoch SECONDS, as the provider states it.
+   */
+  rateStatus?: string | null;
+  utilization?: number | null;
+  rateResetsAt?: number | null;
+  /**
+   * Red-first residue left behind by this run. Declared, not left to the index signature,
+   * because the distinction is load-bearing: an EMPTY list means clean, an absent field
+   * means unknown, and the control room renders those differently on purpose.
+   */
+  redFirstResidue?: Array<{ file: string; marker: string }>;
   [key: string]: unknown;
 }
 

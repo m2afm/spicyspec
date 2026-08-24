@@ -39,6 +39,17 @@ export type OpenNextResult =
 export interface SettleInput {
   specId: string;
   status: SpecRunStatus;
+  /**
+   * Forensics for a park, carried from the child's final state. A park with no written
+   * diagnosis is a park no founder can clear — the prototype's third bug in this area was
+   * writing nothing at all (driver.mjs:620-623), so PARKED.md gets the exit class, the
+   * stall count and the run-dir pointers rather than the bare word "parked". Optional:
+   * a settle for any non-park status carries none of it.
+   */
+  parkedFor?: 'stalls' | 'review-rejected' | 'blocked' | 'infra-retry-cap' | 'operator-kill' | null;
+  lastExit?: string | null;
+  stalls?: number;
+  runs?: number;
 }
 
 export interface SettleResult {
@@ -208,7 +219,14 @@ export async function queueRunWorkflow(input: QueueRunInput): Promise<QueueRunSt
     state.status = 'running';
     const done = await Promise.race(inFlight.values());
     inFlight.delete(done.specId);
-    const settled = await queue.settleSpecOutcome({ specId: done.specId, status: done.result.status });
+    const settled = await queue.settleSpecOutcome({
+      specId: done.specId,
+      status: done.result.status,
+      parkedFor: done.result.parkedFor,
+      lastExit: done.result.lastExit,
+      stalls: done.result.stalls,
+      runs: done.result.runs,
+    });
     state.settled.push({ specId: done.specId, stage: done.stage, runStatus: done.result.status, queueStatus: settled.queueStatus });
 
     // A stall-park HALTS the rotation — the prototype's rule (driver.mjs:617-638):

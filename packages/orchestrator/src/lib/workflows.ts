@@ -35,6 +35,8 @@ export type SpecRunStatus =
   | 'awaiting-review'
   | 'complete'
   | 'parked'
+  /** the operator killed this run from the dashboard — not a worker outcome (B15) */
+  | 'stopped'
   | 'exhausted';
 
 export interface SpecRunState {
@@ -49,7 +51,7 @@ export interface SpecRunState {
    */
   attempt: number;
   /** why the spec parked, when it did — the rotation halts on 'stalls', nothing else */
-  parkedFor: 'stalls' | 'review-rejected' | 'blocked' | 'infra-retry-cap' | null;
+  parkedFor: 'stalls' | 'review-rejected' | 'blocked' | 'infra-retry-cap' | 'operator-kill' | null;
 }
 
 export interface ReviewDecision {
@@ -203,10 +205,14 @@ export async function specRunWorkflow(input: SpecRunInput): Promise<SpecRunState
 
     if (outcome.exit === 'aborted') {
       // An operator kill is not a worker outcome and must never be scored as one (B15) —
-      // so no stall. It DOES consume its run, unlike an infra retry: the kill flag lives
-      // outside this workflow, so a non-scoring abort would re-dispatch instantly and spin
-      // for as long as the operator held the kill down. The budget is the only brake here.
-      continue;
+      // so no stall. It is also TERMINAL for this spec run: the kill flag lives outside
+      // this workflow and stays armed until the operator clears it, so re-dispatching
+      // spun a fresh billed session per iteration until the run budget ran out. KILL
+      // means stop, exactly as the prototype's marker did; the operator's Clear-stop
+      // (or a fresh rotation) is what resumes work.
+      state.status = 'stopped';
+      state.parkedFor = 'operator-kill';
+      return state;
     }
 
     // Every remaining scored exit follows the prototype's single stall rule

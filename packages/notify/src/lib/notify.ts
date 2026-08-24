@@ -11,7 +11,7 @@
  * was announcing (the C3 pattern: degrade visibly, never silently).
  */
 
-export type NotifyEvent = 'awaiting-review' | 'parked' | 'halted' | 'complete';
+export type NotifyEvent = 'awaiting-review' | 'parked' | 'halted' | 'complete' | 'stopped';
 
 export interface Notification {
   event: NotifyEvent;
@@ -37,6 +37,7 @@ const NTFY_PRIORITY: Record<NotifyEvent, string> = {
   halted: '5',
   'awaiting-review': '4',
   parked: '4',
+  stopped: '3',
   complete: '3',
 };
 
@@ -44,6 +45,7 @@ const NTFY_TAGS: Record<NotifyEvent, string> = {
   halted: 'rotating_light',
   'awaiting-review': 'eyes',
   parked: 'construction',
+  stopped: 'octagonal_sign',
   complete: 'white_check_mark',
 };
 
@@ -124,12 +126,14 @@ export function notificationFor(event: NotifyEvent, projectName: string, specId:
     'awaiting-review': `${projectName}: spec ${specId ?? '?'} awaits YOUR review`,
     parked: `${projectName}: spec ${specId ?? '?'} parked`,
     halted: `${projectName}: rotation HALTED`,
+    stopped: `${projectName}: spec ${specId ?? '?'} stopped by you`,
     complete: `${projectName}: spec ${specId ?? '?'} complete`,
   };
   const bodies: Record<NotifyEvent, string> = {
     'awaiting-review': detail || 'Walk the journey by clicking, then Approve/Reject on the dashboard. Nothing moves until you do.',
     parked: detail || 'It needs a decision or a fix the loop cannot make.',
     halted: detail || 'The queue is in a state the loop refuses to guess about.',
+    stopped: detail || 'Your kill ended the run. The spec keeps its stage — Clear stop to resume it.',
     complete: detail || 'Stage advanced.',
   };
   return { event, specId, title: titles[event], body: bodies[event] };

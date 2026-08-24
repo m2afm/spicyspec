@@ -154,12 +154,34 @@ describe('runWorkerSession — a wedged session is KILLED and SCORED, not waited
     expect(interrupts.length).toBe(4);
   });
 
-  it('an armed kill interrupts the live session and the run scores `aborted`', async () => {
+  it('a kill armed BEFORE the run spawns no session at all — one button press must not bill 40', async () => {
     const interrupts: string[] = [];
     let fake = T0;
     const deps = depsFor(wedgedSession(interrupts), () => fake);
+    let packets = 0;
+    const realBuild = deps.buildPacket;
+    deps.buildPacket = async (input) => {
+      packets += 1;
+      return realBuild(input);
+    };
     deps.killRequested = async () => true;
+    const outcome = await createActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect(outcome.exit).toBe('aborted');
+    // The flag stays armed until the operator clears it, so the pre-flight check is what
+    // stops the rotation from spending an account lease and a real session per iteration.
+    expect(packets).toBe(0);
+    expect(interrupts).toEqual([]);
+  });
+
+  it('a kill armed MID-RUN interrupts the live session and scores `aborted`', async () => {
+    const interrupts: string[] = [];
+    let fake = T0;
+    let armed = false;
+    const deps = depsFor(wedgedSession(interrupts), () => fake);
+    deps.killRequested = async () => armed;
     const run = createActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    await vi.advanceTimersByTimeAsync(1000);
+    armed = true;
     for (let i = 0; i < 6; i += 1) await vi.advanceTimersByTimeAsync(1000);
     const outcome = await run;
     expect(outcome.exit).toBe('aborted');

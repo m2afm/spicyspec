@@ -7,7 +7,7 @@
  * Kill button whose armed state never displayed.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore, type Store } from '@spicyspec/store';
@@ -26,17 +26,23 @@ const write = (path: string, text: string) => {
   writeFileSync(path, text, 'utf8');
 };
 
-/** A run directory the pump will tail: fresh mtime, a meta.json, one assistant turn. */
-function seedRun(spec: string, lines: unknown[]): void {
-  const dir = join(repo, '.spicyspec', 'runs', '1');
+/** A run directory the pump will tail: fresh mtime, a meta.json, one assistant turn.
+ *  Returns the stream path so a test can age it into the pump's stale window. */
+function seedRun(spec: string, lines: unknown[], number = 1): string {
+  const dir = join(repo, '.spicyspec', 'runs', String(number));
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'meta.json'),
-    JSON.stringify({ number: 1, spec, stage: 'build', account: 'primary', startedAt: new Date().toISOString() }),
+    JSON.stringify({ number, spec, stage: 'build', account: 'primary', startedAt: new Date().toISOString() }),
     'utf8',
   );
-  writeFileSync(join(dir, 'stream.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8');
+  const stream = join(dir, 'stream.jsonl');
+  writeFileSync(stream, lines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8');
+  return stream;
 }
+
+/** One pump interval plus slack for the read and the ingest. */
+const onePump = () => new Promise((r) => setTimeout(r, 1400));
 
 beforeEach(async () => {
   repo = mkdtempSync(join(tmpdir(), 'room-repo-'));
@@ -189,10 +195,54 @@ describe('room state', () => {
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'pnpm nx test control-plane' } }] } },
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'c', name: 'Bash', input: { command: 'npx vitest run' } }] } },
     ]);
-    await new Promise((r) => setTimeout(r, 1400)); // one pump tick
+    await onePump();
     const lanes = (await state())['lanes'] as unknown as Array<Record<string, unknown>>;
     expect(lanes[0]).toMatchObject({ tools: 3, verification: 2 });
   }, 10_000);
+
+  it('counts a PowerShell verification too — the Bash-only gate read every PowerShell test run as zero', async () => {
+    seedRun('002', [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'p1', name: 'PowerShell', input: { command: 'pnpm nx test control-plane' } }] } },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'p2', name: 'PowerShell', input: { command: 'Get-ChildItem -Recurse' } }] } },
+    ]);
+    await onePump();
+    const lanes = (await state())['lanes'] as unknown as Array<Record<string, unknown>>;
+    expect(lanes[0]).toMatchObject({ tools: 2, verification: 1 });
+  }, 10_000);
+
+  it('reports the rate window from rateResetsAt in seconds without multiplying a millisecond value', async () => {
+    const resetsAt = Math.floor(Date.parse('2026-08-24T18:00:00.000Z') / 1000);
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', rateStatus: 'allowed_warning', utilization: 0.93, rateResetsAt: resetsAt });
+    const seconds = ((await state())['accounts'] as unknown as Array<Record<string, unknown>>)[0];
+    expect(seconds).toMatchObject({ rateStatus: 'allowed_warning', utilization: 0.93, windowEndsAt: resetsAt * 1000 });
+
+    await store.appendRun({ tick: 2, account: 'primary', exit: 'clean', rateResetsAt: resetsAt * 1000 });
+    const millis = ((await state())['accounts'] as unknown as Array<Record<string, unknown>>)[0];
+    expect(millis['windowEndsAt']).toBe(resetsAt * 1000);
+  });
+
+  it('lights up the founder numbers the engine persists on a run row: minutes, dur, head and redFirst', async () => {
+    await store.appendRun({
+      tick: 1,
+      account: 'primary',
+      exit: 'clean',
+      durationMinutes: 12.4,
+      head: 'abc1234',
+      startedAt: '2026-08-24T09:00:00.000Z',
+      tasksClosed: 3,
+      costUsd: 1.5,
+      redFirstResidue: [{ file: 'a.spec.ts', marker: 'it.skip' }],
+    });
+    await store.appendRun({ tick: 2, account: 'primary', exit: 'clean', durationMinutes: 5 });
+    const s = await state();
+    expect(s['totals']).toMatchObject({ minutes: 17, closed: 3, rows: 2, ticks: 2 });
+    const ticks = s['ticks'] as unknown as Array<Record<string, unknown>>;
+    const first = ticks.find((t) => t['tick'] === 1);
+    expect(first).toMatchObject({ minutes: 12, head: 'abc1234', startedAt: '2026-08-24T09:00:00.000Z' });
+    expect(first?.['redFirst']).toEqual([{ file: 'a.spec.ts', marker: 'it.skip' }]);
+    // Absence is unknown, never clean — the column renders '—' only for null.
+    expect(ticks.find((t) => t['tick'] === 2)?.['redFirst']).toBeNull();
+  });
 });
 
 /* --------------------------------------------------------------------- feed ---- */
@@ -235,7 +285,7 @@ describe('live feed', () => {
         prompt: 'Read the diff and report findings.',
       },
     ]);
-    await new Promise((r) => setTimeout(r, 1400));
+    await onePump();
     const hello = (await (await fetch(base + '/api/agents')).json()) as { agents: Array<{ id: string }> };
     const child = hello.agents.find((a) => a.id.endsWith('t1'));
     expect(child, 'the pump must register a task_started agent').toBeTruthy();
@@ -244,6 +294,82 @@ describe('live feed', () => {
     expect(detail['id']).toBe(child!.id);
     expect((await fetch(base + '/api/agent?id=002%C2%B7nope')).status).toBe(404);
   }, 10_000);
+
+  it('still opens the sheet for a lane the pump has reaped — the History list survives the reap and its rows 404d', async () => {
+    const stream = seedRun('002', [
+      {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 't9',
+        tool_use_id: 'u9',
+        task_type: 'local_agent',
+        subagent_type: 'qa-critic',
+        description: 'review the diff',
+        prompt: 'Read the diff and report findings.',
+      },
+      { type: 'session_end' },
+    ]);
+    await onePump();
+    const hello = (await (await fetch(base + '/api/agents')).json()) as { agents: Array<{ id: string }> };
+    const id = hello.agents.find((a) => a.id.endsWith('t9'))?.id;
+    expect(id, 'the pump must register the agent while the lane is live').toBeTruthy();
+
+    // Age the stream past LANE_FRESH_MS: the ended lane is now stale, which is what reaps it.
+    const old = new Date(Date.now() - 30 * 60_000);
+    utimesSync(stream, old, old);
+    await onePump();
+
+    const after = (await (await fetch(base + '/api/agents')).json()) as { agents: Array<{ id: string }> };
+    expect(after.agents.some((a) => a.id === id), 'the tail must really have been reaped').toBe(false);
+    const sheet = await fetch(base + '/api/agent?id=' + encodeURIComponent(id!));
+    expect(sheet.status).toBe(200);
+    expect(((await sheet.json()) as Record<string, unknown>)['prompt']).toContain('Read the diff');
+  }, 15_000);
+});
+
+/* ----------------------------------------------------------------- controls ---- */
+
+describe('controls', () => {
+  it('arms the durable stop flag and promises pause-after-tick, not a kill, when the halt CLI cannot be reached', async () => {
+    const res = (await (await post('/api/action/stop', {})).json()) as { ok: boolean; message: string };
+    expect(res.ok).toBe(true);
+    expect(res.message).toMatch(/^stop armed — the run in flight finishes and settles/);
+    expect(res.message).toContain('halt CLI unreachable');
+    expect(await store.getKv(STOP_KEY)).toBeTruthy();
+    expect(await state()).toMatchObject({ stopArmed: true });
+  }, 40_000);
+
+  it('says the kill flag stays armed when there is no live runner — silence there reads as a disarm', async () => {
+    const res = (await (await post('/api/action/kill', {})).json()) as { ok: boolean; message: string };
+    expect(res.message).toContain('kill-now armed — the live session is interrupted and the rotation opens nothing further');
+    expect(res.message).toContain('no live runner to kill');
+    expect(res.message).toContain('Clear stop');
+    expect(await store.getKv(KILL_KEY)).toBeTruthy();
+    expect(await state()).toMatchObject({ killArmed: true });
+  }, 40_000);
+
+  it('resume disarms both flags and does not claim to have restarted anything', async () => {
+    await store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
+    await store.setKv(KILL_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
+    const res = (await (await post('/api/action/resume', {})).json()) as { ok: boolean; message: string };
+    expect(res.message).toContain('disarmed');
+    expect(res.message).toContain('START dispatches the rotation');
+    expect(await store.getKv(STOP_KEY)).toBeNull();
+    expect(await store.getKv(KILL_KEY)).toBeNull();
+    expect(await state()).toMatchObject({ stopArmed: false, killArmed: false });
+  });
+
+  it("frames a single lane the way the prototype did — '1 lane' was a multi-lane frame worn by one lane", async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).toContain("sub: 'tick ' + all[0].id");
+    expect(page).not.toContain("' lane' : ' lanes'");
+  });
+
+  it('the header chip says armed, not acting, while nothing is running — a flag is not an event', async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).toContain("s.running ? 'killing' : 'kill armed'");
+    expect(page).toContain("s.running ? 'stopping after tick' : 'stop armed'");
+  });
 });
 
 /* -------------------------------------------------------------------- roles ---- */

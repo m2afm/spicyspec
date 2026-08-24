@@ -57,6 +57,22 @@ export interface SpecRunActivities {
   checkReviewDecision(input: ReviewDecisionInput): Promise<ReviewDecisionFound | null>;
 }
 
+/**
+ * Everything about a finished run that is NOT in its `Classification` — the facts a run row
+ * needs and only this activity holds. `head` and `startedAt` are here because the run row
+ * carried neither: the control room's tick table renders a HEAD link and a start time per
+ * run, and both were structurally null while the snapshots and the clock lived only inside
+ * runWorkerSession.
+ */
+export interface RunEvidence {
+  harvest: HarvestSummary;
+  workerText: string;
+  /** HEAD of the worked tree AFTER the session — the run row's commit pointer */
+  head: string | null;
+  /** ISO instant the session started, from the same clock the watchdog uses */
+  startedAt: string;
+}
+
 export interface ActivityDeps {
   provider: ProviderAdapter;
   /** build the work packet for this run — pipeline stage prompts (Phase 1: injected) */
@@ -77,7 +93,7 @@ export interface ActivityDeps {
   onClassified?(
     cls: Classification,
     accountId: string,
-    evidence: { harvest: HarvestSummary; workerText: string },
+    evidence: RunEvidence,
     input: WorkerRunInput,
   ): Promise<void>;
   /** the review bridge — read (and mark delivered) a manager's recorded decision */
@@ -206,6 +222,23 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
     },
 
     async runWorkerSession(input: WorkerRunInput): Promise<WorkerRunOutcome> {
+      // Pre-flight kill check, BEFORE leasing an account or spawning a provider session.
+      // The kill flag lives outside this workflow and stays armed until the operator
+      // clears it, so without this check an armed kill spawns a real session, waits a
+      // whole watchdog poll (60s), then aborts — and the rotation re-dispatches, up to
+      // maxRunsPerSpec times. That is ~40 billed sessions and 40 account uses for one
+      // button press.
+      // A store hiccup is NOT a kill (same discipline the watchdog applies): failing to
+      // read the flag must never abort work the operator did not ask to stop.
+      let killArmed = false;
+      try {
+        killArmed = deps.killRequested ? await deps.killRequested(input) : false;
+      } catch {
+        killArmed = false;
+      }
+      if (killArmed) {
+        return { exit: 'aborted', costUsd: 0, costKnown: true, commits: false, tasksClosed: 0, progressed: false };
+      }
       const packet = await deps.buildPacket(input);
       const before = await deps.snapshot(input);
 
@@ -337,7 +370,12 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
       if (deps.onClassified) {
         try {
           const summary = summariseHarvest(harvestEvents(harvested));
-          await deps.onClassified(cls, packet.account.id, { harvest: summary, workerText: text }, input);
+          await deps.onClassified(
+            cls,
+            packet.account.id,
+            { harvest: summary, workerText: text, head: after.git.head ?? null, startedAt: new Date(startedMs).toISOString() },
+            input,
+          );
         } catch {
           // Pool/ledger/judge bookkeeping must never mask the run outcome the workflow needs.
         }

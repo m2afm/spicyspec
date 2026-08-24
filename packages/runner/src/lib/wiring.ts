@@ -31,8 +31,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { RunnerConfig } from './config.js';
 import { appendLedgerView, exportAccountsView } from './compat-view.js';
+import { isKillArmed } from './control-flags.js';
 import { createQueueActivities } from './queue-activities.js';
 import { snapshot, type FullSnapshot } from './git-snapshot.js';
+import { runsRootFor } from './parked-writer.js';
+import { consumeReviewDecision } from './review-consumption.js';
 import { findSpecDir } from './spec-dir.js';
 import { openSessionLogDir } from './session-log.js';
 import { ensureWorktree } from './worktree.js';
@@ -58,6 +61,15 @@ export interface RunnerDeps {
 const execFileAsync = promisify(execFile);
 
 const judgeKey = (specId: string) => `judge:last:${specId}`;
+
+/**
+ * Minutes a run is credited with, from the turn count — the prototype's estimate, because a
+ * subscription session reports turns and not wall time. Exported and used by BOTH surfaces
+ * that state a duration (the store's run row and the compat LEDGER row): they were computed
+ * in two places, so the control room's `minutes` total and the original room's could differ
+ * on the same run.
+ */
+export const durationMinutesFor = (turns: number): number => Math.max(1, Math.round(turns / 3));
 
 /** Map a judge verdict to what the next run's packet carries. */
 export function verdictForPacket(result: JudgeResult | null): PredecessorVerdict | null {
@@ -197,6 +209,15 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       }
     },
 
+    /**
+     * The control room's KILL, reaching the live session. Declared by the watchdog since
+     * it existed but supplied by nobody, so the only kill that ever landed was a hard
+     * process kill of the runner tree — which produces no classified run at all, where the
+     * whole point of `aborted` is that an operator kill is recorded and is never scored as
+     * a worker failure (B15). Armed = the row exists; clearing is the room's RESUME.
+     */
+    killRequested: () => isKillArmed(deps.store),
+
     async buildPacket(input: WorkerRunInput) {
       const pool = await loadPoolFromStore(deps);
       const nowMs = deps.nowMs ?? Date.now;
@@ -317,22 +338,20 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
     snapshot: (input) => snapshotFn(input),
 
     // The review bridge: a manager's dashboard decision (store-KV intent) reaches the
-    // parked workflow through this poll. Delivered AT MOST ONCE — the delivery marker
-    // pins the decision's own timestamp, so a NEW decision (different `at`) delivers
-    // again while a retried poll of the same one does not.
+    // parked workflow through this poll. Consumed AT MOST ONCE, and through the marker the
+    // ROTATION shares — a decision this bridge spends must not still read as live evidence
+    // to the promotion pass months later (see review-consumption.ts).
     async checkReviewDecision(specId) {
       const decision = await readReviewDecision(deps.store, specId);
       if (!decision) return null;
-      const deliveredKey = `review:delivered:${specId}`;
-      if ((await deps.store.getKv(deliveredKey)) === decision.at) return null;
-      await deps.store.setKv(deliveredKey, decision.at);
+      if (!(await consumeReviewDecision(deps.store, specId, decision))) return null;
       return { approved: decision.approved, note: decision.note, by: decision.by };
     },
 
     async openSessionLog(input) {
       const queueNow = await deps.store.loadQueue();
       const entry = queueNow.entries.find((e) => e.id === input.specId);
-      return openSessionLogDir(`${cfg.repoCwd}/.spicyspec/runs`, {
+      return openSessionLogDir(runsRootFor(cfg.repoCwd), {
         number: input.run,
         spec: input.specId,
         stage: entry?.stage ?? 'execute',
@@ -385,6 +404,13 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
               ? 'no-attempt-retry'
               : null;
 
+      // The control room reads every field below off the run row and has no other source
+      // for any of them. Five were missing, so five numbers were STRUCTURALLY zero or '—'
+      // no matter what the run did: minutes and the minutes total, the HEAD link, the start
+      // time, the account panel's rate/utilization/window chips, and the redFirst column.
+      // Readers use `?? null`, so the row stays backward compatible with rows written before
+      // these existed — absence means unknown there, never clean.
+      const durationMinutes = durationMinutesFor(cls.turns);
       await deps.store.appendRun({
         tick: input.run,
         attempt,
@@ -396,6 +422,18 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         overageStatus: cls.overageStatus,
         usedOverage: cls.usedOverage,
         account: accountId,
+        // Same value the compat LEDGER row below carries: computed once so the two surfaces
+        // cannot state different durations for one run.
+        durationMinutes,
+        startedAt: evidence.startedAt,
+        head: evidence.head,
+        rateStatus: cls.rateStatus,
+        utilization: cls.utilization,
+        rateResetsAt: cls.rateResetsAt,
+        // Handed to the judge since harvest existed, and to nobody else — so the room's
+        // redFirst column rendered '—' (unknown) forever, including on the clean runs where
+        // an empty list is the answer.
+        redFirstResidue: evidence.harvest.redFirstResidue,
         judgedBy: judged?.judgedBy ?? null,
         judgeHonest: judged?.verdict?.honest ?? null,
         judgeAction: judged?.verdict?.action ?? null,
@@ -414,7 +452,12 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
           account: accountId,
           specId: input.specId,
           stage: entry?.stage ?? 'execute',
-          durationMinutes: Math.max(1, Math.round(cls.turns / 3)),
+          durationMinutes,
+          head: evidence.head ?? undefined,
+          // The ORIGINAL room derives its `window HH:MM` chip from the last LEDGER row's
+          // rateResetsAt (ui/server.mjs:619) — the field was never written, so that chip
+          // could not render over this engine.
+          rateResetsAt: cls.rateResetsAt,
           note: `run ${input.run} of spec ${input.specId}`,
         }).catch(() => undefined);
         await exportAccountsView(deps.store, compat).catch(() => undefined);
