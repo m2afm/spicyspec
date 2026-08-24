@@ -29,6 +29,9 @@
     },
     {
       "path": "./packages/packs"
+    },
+    {
+      "path": "./packages/control-plane"
     }
   ],
   "compilerOptions": {}

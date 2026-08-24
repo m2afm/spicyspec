@@ -13,23 +13,25 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export interface CliArgs {
-  command: 'init' | 'start' | 'service-xml' | 'seed' | 'handoff' | 'help';
+  command: 'init' | 'start' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
   configPath: string;
   catalogPath: string;
   outPath: string | null;
+  port: number | null;
   problems: string[];
 }
 
-const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | 'outPath'>> = {
+const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | 'outPath' | 'port'>> = {
   '--config': 'configPath',
   '--catalog': 'catalogPath',
   '--out': 'outPath',
+  '--port': 'port',
 };
 
 export function parseCliArgs(argv: readonly string[]): CliArgs {
   const problems: string[] = [];
   const [raw, ...rest] = argv;
-  const known = new Set(['init', 'start', 'service-xml', 'seed', 'handoff', 'help']);
+  const known = new Set(['init', 'start', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
   const command = (known.has(raw ?? '') ? raw : 'help') as CliArgs['command'];
   if (raw !== undefined && !known.has(raw)) problems.push(`unknown command "${raw}"`);
 
@@ -38,14 +40,20 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     configPath: 'spicyspec.runner.json',
     catalogPath: 'spicyspec.catalog.json',
     outPath: null,
+    port: null,
     problems,
   };
   for (let i = 0; i < rest.length; i += 1) {
     const field = FLAGS[rest[i]];
     if (field) {
       const value = rest[i + 1];
-      if (!value || value.startsWith('--')) problems.push(`${rest[i]} needs a path`);
-      else {
+      if (!value || value.startsWith('--')) problems.push(`${rest[i]} needs a value`);
+      else if (field === 'port') {
+        const n = Number(value);
+        if (!Number.isInteger(n) || n < 0 || n > 65535) problems.push('--port must be a valid port number');
+        else args.port = n;
+        i += 1;
+      } else {
         args[field] = value;
         i += 1;
       }
@@ -187,6 +195,29 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       } finally {
         store.close();
       }
+    }
+
+    case 'dashboard': {
+      const { readFile } = await import('node:fs/promises');
+      const { openStore } = await import('@spicyspec/store');
+      const { startControlPlane } = await import('@spicyspec/control-plane');
+      const { parseRunnerConfig } = await import('./config.js');
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const store = openStore(config.storePath);
+      const cp = await startControlPlane({ store, projectName: config.projectName, port: args.port ?? 4477 });
+      console.log(`dashboard: http://127.0.0.1:${cp.port}  (Ctrl+C to stop)`);
+      // hold open until signalled; the store closes on shutdown
+      await new Promise<void>((r) => {
+        const stop = () => {
+          void cp.close().then(() => {
+            store.close();
+            r();
+          });
+        };
+        process.on('SIGINT', stop);
+        process.on('SIGTERM', stop);
+      });
+      return 0;
     }
   }
 }

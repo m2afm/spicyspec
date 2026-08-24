@@ -25,7 +25,8 @@
     "@temporalio/worker": "^1.22.0",
     "zod": "^4.4.3",
     "@spicyspec/judge": "workspace:*",
-    "@spicyspec/packs": "workspace:*"
+    "@spicyspec/packs": "workspace:*",
+    "@spicyspec/control-plane": "workspace:*"
   },
   "devDependencies": {
     "@temporalio/testing": "^1.22.0",

@@ -48,6 +48,21 @@ importers:
         specifier: ~4.1.0
         version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(terser@5.50.0)(yaml@2.9.0))
 
+  packages/control-plane:
+    dependencies:
+      '@spicyspec/core':
+        specifier: workspace:*
+        version: link:../core
+      '@spicyspec/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
+      '@spicyspec/store':
+        specifier: workspace:*
+        version: link:../store
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+
   packages/core:
     dependencies:
       tslib:
@@ -147,6 +162,9 @@ importers:
 
   packages/runner:
     dependencies:
+      '@spicyspec/control-plane':
+        specifier: workspace:*
+        version: link:../control-plane
       '@spicyspec/core':
         specifier: workspace:*
         version: link:../core

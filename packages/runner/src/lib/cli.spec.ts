@@ -18,7 +18,7 @@ describe('parseCliArgs', () => {
 
   it('unknown commands and dangling flags are problems, never guesses', () => {
     expect(parseCliArgs(['strat']).problems).toHaveLength(1);
-    expect(parseCliArgs(['start', '--config']).problems).toEqual(['--config needs a path']);
+    expect(parseCliArgs(['start', '--config']).problems).toEqual(['--config needs a value']);
     expect(parseCliArgs(['start', '--verbose']).problems).toEqual(['unknown argument "--verbose"']);
   });
 });
@@ -52,5 +52,18 @@ describe('parseCliArgs — seed and handoff', () => {
     const a = parseCliArgs(['seed']);
     expect(a.catalogPath).toBe('spicyspec.catalog.json');
     expect(a.outPath).toBeNull();
+  });
+});
+
+describe('parseCliArgs — dashboard', () => {
+  it('parses dashboard with a port', () => {
+    expect(parseCliArgs(['dashboard', '--port', '4477'])).toMatchObject({ command: 'dashboard', port: 4477 });
+  });
+  it('rejects a non-numeric or out-of-range port', () => {
+    expect(parseCliArgs(['dashboard', '--port', 'abc']).problems).toContain('--port must be a valid port number');
+    expect(parseCliArgs(['dashboard', '--port', '99999']).problems).toContain('--port must be a valid port number');
+  });
+  it('port defaults to null (the command supplies 4477)', () => {
+    expect(parseCliArgs(['dashboard']).port).toBeNull();
   });
 });
