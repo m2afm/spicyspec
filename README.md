@@ -25,9 +25,11 @@ plane · WinSW/systemd runner services · vitest · zod.
 
 ## Status
 
-**Phase 1 — engine skeleton proven.** Domain logic ported from the Airvia build-loop prototype
-(48h unattended, 191 tasks closed, 47 machinery defects — each encoded here as a named regression
-test); provider/orchestrator/runner wired end to end. 143 tests green across 7 packages.
+**Phase 2 — live-proven end to end.** Domain logic ported from the Airvia build-loop prototype
+(48h unattended, 191 tasks closed, 47 machinery defects — each encoded as a named regression test).
+Three live proofs on real infrastructure: a single-run smoke (8/8), a three-stage rotation through
+real Claude sessions (10/10, $0.25), and the manager dashboard rendering a live store in a browser.
+269 tests across 11 packages.
 
 | Package | What | Status |
 |---|---|---|
@@ -37,8 +39,12 @@ test); provider/orchestrator/runner wired end to end. 143 tests green across 7 p
 | `packages/orchestrator` | Temporal `specRunWorkflow` + heartbeating activities | done |
 | `packages/pipeline` | Declarative stage definitions + generalized packet builder | done |
 | `packages/store` | `node:sqlite` state: runs, gates (+JSONL export), pool, queue | done |
-| `packages/runner` | Composition root: config, git snapshots, pool settle, Temporal worker entry | skeleton |
-| control plane + Angular UI | Phase 2 | next |
+| `packages/runner` | Composition root: config, snapshots, pool settle, judge wiring, CLI (init/start/seed/handoff/dashboard/service-xml) | done |
+| `packages/judge` | Second-vendor honesty chain: zod verdicts, quota fall-through, absence=UNKNOWN | done |
+| `packages/packs` | Gate packs: frontend/a11y/backend/security — 62 evidence-bearing checklist items | done |
+| `packages/control-plane` | Managers page: read API + CSRF-guarded review + self-contained live dashboard | done |
+| `packages/create-spicyspec` | `npx create-spicyspec my-project` — five commands to a running loop | done |
+| team runner federation, Postgres driver, Angular UI upgrade | Phase 3 | next |
 
 ## Workspace
 

@@ -32,6 +32,9 @@
     },
     {
       "path": "./packages/control-plane"
+    },
+    {
+      "path": "./packages/create-spicyspec"
     }
   ],
   "compilerOptions": {}
