@@ -116,8 +116,10 @@ function specProgress(repoCwd: string, dir: string | null, specId?: string): { d
   const path = candidates.find((c) => existsSync(c));
   if (!path) return null;
   const text = readFileSync(path, 'utf8');
-  const done = (text.match(/^\s*[-*] \[[xX]\] \*\*T\d+\*\*/gm) ?? []).length;
-  const open = (text.match(/^\s*[-*] \[ \] \*\*T\d+\*\*/gm) ?? []).length;
+  // Both id styles are real: the prototype wrote `- [x] **T001**`, airvia's lanes write
+  // `- [x] T001` — the strict bold-only match rendered a working spec as "0 of 0".
+  const done = (text.match(/^\s*[-*] \[[xX]\] (?:\*\*)?T\d+/gm) ?? []).length;
+  const open = (text.match(/^\s*[-*] \[ \] (?:\*\*)?T\d+/gm) ?? []).length;
   return { done, open, held: 0, total: done + open };
 }
 
