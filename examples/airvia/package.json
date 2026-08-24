@@ -1,0 +1,9 @@
+{
+  "name": "@spicyspec/example-airvia",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@spicyspec/core": "workspace:*",
+    "@spicyspec/store": "workspace:*"
+  }
+}

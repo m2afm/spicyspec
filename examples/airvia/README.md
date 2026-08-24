@@ -18,15 +18,22 @@ orchestrators on one tree is the double-writer incident (prototype B12) at syste
 ## Steps
 
 1. Copy `spicyspec.runner.json` from here, fix `repoCwd` to the airvia checkout path.
-2. Fill `spicyspec.catalog.json` from `docs/mockups/00-feature-catalog.md` — one entry per
-   remaining feature, `id` matching the spec directory number (`006`, `008`, …). Entries
-   already built and founder-signed stay OUT of the catalog (the queue is remaining work,
-   not history).
-3. Seed and go:
+2. Migrate the prototype's state (queue + gate trail) instead of seeding fresh:
+
+```bash
+node migrate.mjs C:/XIII/share/Work/airvia
+```
+
+   The script refuses while the prototype loop's heartbeat is fresh, refuses over a
+   non-empty store, maps `awaiting-founder` to `awaiting-review`, derives each active
+   entry's stage FROM ITS ARTIFACTS (tasks.md -> execute, plan.md -> tasks, ...), and
+   imports all machine-readable gate records. Prototype LEDGER/ACCOUNTS/PARKED prose
+   stays where it is, as history.
+
+3. Go:
 
 ```bash
 temporal server start-dev --db-filename .spicyspec/temporal.db
-spicyspec-runner seed --config spicyspec.runner.json --catalog spicyspec.catalog.json
 spicyspec-runner start --config spicyspec.runner.json
 spicyspec-runner dashboard --config spicyspec.runner.json --port 4477
 ```

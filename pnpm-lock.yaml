@@ -57,6 +57,15 @@ importers:
         specifier: ~4.1.0
         version: 4.1.11(@types/node@24.13.3)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.13.3)(terser@5.50.0)(yaml@2.9.0))
 
+  examples/airvia:
+    dependencies:
+      '@spicyspec/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@spicyspec/store':
+        specifier: workspace:*
+        version: link:../../packages/store
+
   packages/control-plane:
     dependencies:
       '@spicyspec/core':
