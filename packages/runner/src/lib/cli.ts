@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export interface CliArgs {
-  command: 'init' | 'start' | 'run' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
+  command: 'init' | 'start' | 'run' | 'halt' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
   configPath: string;
   catalogPath: string;
   outPath: string | null;
@@ -31,7 +31,7 @@ const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | '
 export function parseCliArgs(argv: readonly string[]): CliArgs {
   const problems: string[] = [];
   const [raw, ...rest] = argv;
-  const known = new Set(['init', 'start', 'run', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
+  const known = new Set(['init', 'start', 'run', 'halt', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
   const command = (known.has(raw ?? '') ? raw : 'help') as CliArgs['command'];
   if (raw !== undefined && !known.has(raw)) problems.push(`unknown command "${raw}"`);
 
@@ -116,6 +116,30 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       await writeFile(path, JSON.stringify(STARTER_CONFIG, null, 2) + '\n', 'utf8');
       console.log(`wrote ${path} — edit repoCwd and accounts, then: spicyspec-runner start --config ${args.configPath}`);
       return 0;
+    }
+
+    case 'halt': {
+      // Graceful stop: cancel the rotation workflow. Temporal cancellation is cooperative —
+      // the in-flight activity finishes, the workflow ends. The durable twin of the
+      // prototype's STOP marker: no work lost.
+      const { readFile } = await import('node:fs/promises');
+      const { Client, Connection } = await import('@temporalio/client');
+      const { parseRunnerConfig } = await import('./config.js');
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const connection = await Connection.connect({ address: config.temporal.address });
+      try {
+        const client = new Client({ connection, namespace: config.temporal.namespace });
+        const workflowId = `queue-${config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        try {
+          await client.workflow.getHandle(workflowId).cancel();
+          console.log(`rotation ${workflowId} cancelled — the current run finishes, then the rotation ends`);
+        } catch (err) {
+          console.log(`nothing to halt (${String((err as Error).message).split('\n')[0]})`);
+        }
+        return 0;
+      } finally {
+        await connection.close();
+      }
     }
 
     case 'service-xml': {

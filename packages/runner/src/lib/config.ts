@@ -78,6 +78,13 @@ export const RUNNER_CONFIG = z.object({
   handoffPath: z.string().default('HANDOFF.md'),
   /** where spec directories live; a spec id matches `<id>` or `<id>-<slug>` */
   specsDir: z.string().default('specs'),
+  /**
+   * Loop Control Room compatibility: when set (e.g. `.specify/loop`), the runner projects
+   * QUEUE.json / LEDGER.jsonl / ACCOUNTS.json / RUN.lock into that directory so the
+   * original control-room UI keeps working over the new engine. The store stays the truth;
+   * the files are read-only views.
+   */
+  compatLoopDir: z.string().nullable().default(null),
 });
 
 export type RunnerConfig = z.infer<typeof RUNNER_CONFIG>;

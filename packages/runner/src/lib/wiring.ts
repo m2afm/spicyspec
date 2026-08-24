@@ -26,6 +26,7 @@ import { packSectionsFor, type GatePack } from '@spicyspec/packs';
 import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
 import type { RunnerConfig } from './config.js';
+import { appendLedgerView, exportAccountsView } from './compat-view.js';
 import { snapshot, type FullSnapshot } from './git-snapshot.js';
 import { findSpecDir } from './spec-dir.js';
 
@@ -241,6 +242,24 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         judgeAction: judged?.verdict?.action ?? null,
         judgeFailures: judged?.failures?.length ?? 0,
       });
+
+      // Loop Control Room view: ledger row + accounts mirror (read-only projections).
+      if (cfg.compatLoopDir) {
+        const compat = { repoCwd: cfg.repoCwd, loopDir: cfg.compatLoopDir };
+        const queueNow = await deps.store.loadQueue();
+        const entry = queueNow.entries.find((e) => e.id === lastInput.specId);
+        await appendLedgerView(deps.store, compat, {
+          exit: cls.exit,
+          costUsd: cls.costUsd,
+          tasksClosed: cls.tasksClosed,
+          account: accountId,
+          specId: lastInput.specId,
+          stage: entry?.stage ?? 'execute',
+          durationMinutes: Math.max(1, Math.round(cls.turns / 3)),
+          note: `run ${lastInput.run} of spec ${lastInput.specId}`,
+        }).catch(() => undefined);
+        await exportAccountsView(deps.store, compat).catch(() => undefined);
+      }
     },
   };
 

@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { exportQueueView } from './compat-view.js';
 import { findSpecDir } from './spec-dir.js';
 import type { RunnerDeps } from './wiring.js';
 
@@ -97,6 +98,12 @@ export function channelsFromConfig(deps: QueueActivityDeps): NotifyChannel[] {
 export function createQueueActivities(deps: QueueActivityDeps): QueueActivities {
   const pipeline = deps.pipeline ?? specDrivenPipeline;
   const store = deps.runner.store;
+  const compat = deps.runner.config.compatLoopDir
+    ? { repoCwd: deps.runner.config.repoCwd, loopDir: deps.runner.config.compatLoopDir }
+    : null;
+  const mirrorQueue = async () => {
+    if (compat) await exportQueueView(store, compat).catch(() => undefined);
+  };
   const cap = deps.maxAwaitingReview ?? deps.runner.config.maxAwaitingReview;
   const firstStage = pipeline.stages[0].id;
   const channels = channelsFromConfig(deps);
@@ -138,13 +145,17 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
         return { kind: 'halt', violations };
       }
       const repaired = applyRepairs(queue, check.violations);
-      if (repaired.changed) await store.saveQueue(queue);
+      if (repaired.changed) {
+        await store.saveQueue(queue);
+        await mirrorQueue();
+      }
 
       const active = queue.entries.find((e) => e.status === 'active');
       if (active) {
         if (!active.stage) {
           active.stage = firstStage;
           await store.saveQueue(queue);
+          await mirrorQueue();
         }
         return { kind: 'next', next: { specId: active.id, stage: active.stage ?? firstStage } };
       }
@@ -159,6 +170,7 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
       pending.status = 'active';
       pending.stage = pending.stage ?? firstStage;
       await store.saveQueue(queue);
+      await mirrorQueue();
       return { kind: 'next', next: { specId: pending.id, stage: pending.stage } };
     },
 
@@ -196,6 +208,7 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
       }
 
       await store.saveQueue(queue);
+      await mirrorQueue();
       return {
         queueStatus: String(entry.status),
         nextStage: entry.status === 'active' ? (entry.stage ?? null) : null,

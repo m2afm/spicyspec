@@ -7,3 +7,4 @@ export * from './lib/cli.js';
 export * from './lib/queue-activities.js';
 export * from './lib/open-store.js';
 export * from './lib/spec-dir.js';
+export * from './lib/compat-view.js';

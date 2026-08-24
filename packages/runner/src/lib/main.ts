@@ -14,6 +14,7 @@ import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { parseRunnerConfig } from './config.js';
 import { registerRunner, startHeartbeat } from '@spicyspec/store';
+import { clearLockView, writeLockView } from './compat-view.js';
 import { createRunnerActivities } from './wiring.js';
 
 export async function startRunner(configPath: string): Promise<void> {
@@ -47,6 +48,20 @@ export async function startRunner(configPath: string): Promise<void> {
   });
   const stopHeartbeat = startHeartbeat(store, runnerId, nowIso);
 
+  // Loop Control Room view: the RUNNING chip reads a fresh RUN.lock heartbeat.
+  let stopLockView: (() => void) | null = null;
+  if (config.compatLoopDir) {
+    const compat = { repoCwd: config.repoCwd, loopDir: config.compatLoopDir };
+    const startedAt = nowIso();
+    writeLockView(compat, startedAt);
+    const lockTimer = setInterval(() => writeLockView(compat, startedAt), 15_000);
+    lockTimer.unref?.();
+    stopLockView = () => {
+      clearInterval(lockTimer);
+      clearLockView(compat);
+    };
+  }
+
   const connection = await NativeConnection.connect({ address: config.temporal.address });
   try {
     const worker = await Worker.create({
@@ -63,6 +78,7 @@ export async function startRunner(configPath: string): Promise<void> {
     await worker.run();
   } finally {
     stopHeartbeat();
+    stopLockView?.();
     await connection.close();
     await store.close();
   }
