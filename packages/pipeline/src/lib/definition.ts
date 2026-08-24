@@ -19,7 +19,7 @@ export const GATE_SEAT = z.object({
 
 export const STAGE_GATE = z.object({
   /** recorded gate kind — must match core gates.GATE_KINDS */
-  kind: z.enum(['specify', 'design', 'wave', 'closing', 'terminal']),
+  kind: z.enum(['specify', 'design', 'tasks', 'wave', 'closing', 'terminal']),
   /**
    * Two seats by default: path owner + adversarial critic. The prototype measured wider
    * councils as rubber stamps (9 of 18 rulings) — widen only on conflict or low confidence.

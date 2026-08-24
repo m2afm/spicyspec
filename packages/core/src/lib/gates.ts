@@ -22,7 +22,7 @@ import { z } from 'zod';
 export const VERDICTS = ['APPROVE', 'REVISE', 'BLOCK'] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
-export const GATE_KINDS = ['specify', 'design', 'wave', 'closing', 'terminal'] as const;
+export const GATE_KINDS = ['specify', 'design', 'tasks', 'wave', 'closing', 'terminal'] as const;
 export type GateKind = (typeof GATE_KINDS)[number];
 
 export const gateRecordSchema = z

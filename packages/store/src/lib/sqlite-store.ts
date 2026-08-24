@@ -15,6 +15,8 @@
  * Gate records keep a JSONL EXPORT for the git-auditable trail (RFC-001 §7.7) — the DB is
  * truth, the JSONL is the ledger humans diff.
  */
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { serializeGateRecord, type AccountState, type GateRecord, type LedgerEntry, type Queue, type QueueEntry } from '@spicyspec/core';
 
@@ -81,6 +83,9 @@ CREATE TABLE IF NOT EXISTS kv (
 
 /** Open (or create) the store. Pass ':memory:' for tests. */
 export function openStore(path: string): Store {
+  // A fresh checkout has no state directory yet — first open creates it (found by the
+  // first real migration: ERR_SQLITE_ERROR 14 on a missing parent).
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);

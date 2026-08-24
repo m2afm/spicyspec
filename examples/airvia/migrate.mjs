@@ -15,7 +15,7 @@
  *
  * Run from examples/airvia:  node migrate.mjs [airvia-repo] [store-path]
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseGateRecords } from '@spicyspec/core';
 import { openStore } from '@spicyspec/store';
@@ -50,6 +50,18 @@ const STATUS_MAP = {
   active: 'active',
 };
 
+// The prototype's recorded `dir` can be stale (008 carried dir:null while the directory
+// existed on disk). Resolve by id against the filesystem, never trust the field.
+function resolveSpecDir(id) {
+  try {
+    const match = readdirSync(join(repo, 'specs')).filter((n) => n === id || n.startsWith(`${id}-`));
+    if (match.length > 1) throw new Error(`spec id ${id} ambiguous: ${match.join(', ')}`);
+    return match.length ? join('specs', match[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
 function stageFromArtifacts(dir) {
   const has = (f) => existsSync(join(repo, dir, f));
   if (has('tasks.md')) return 'execute';
@@ -67,12 +79,13 @@ for (const e of prototypeQueue.entries) {
   }
   const entry = { id: e.id, status };
   if (status === 'active' || status === 'pending') {
-    entry.stage = e.dir ? stageFromArtifacts(e.dir) : undefined;
+    const dir = resolveSpecDir(e.id);
+    entry.stage = dir ? stageFromArtifacts(dir) : 'intake';
   }
   entries.push(entry);
   log(
     `${e.id} ${e.slug ?? ''}: ${e.status} -> ${status}` +
-      (entry.stage ? ` @ stage ${entry.stage} (from artifacts in ${e.dir})` : ''),
+      (entry.stage ? ` @ stage ${entry.stage}` : ''),
   );
 }
 
