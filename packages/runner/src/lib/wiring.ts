@@ -21,6 +21,7 @@ import {
 import { buildJudgePrompt, cliJudgeProvider, judgeChain, type JudgeProvider, type JudgeResult } from '@spicyspec/judge';
 import { createActivities, type ActivityDeps, type SpecRunActivities, type WorkerRunInput } from '@spicyspec/orchestrator';
 import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefinition, type PredecessorVerdict } from '@spicyspec/pipeline';
+import { packSectionsFor, type GatePack } from '@spicyspec/packs';
 import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
 import type { RunnerConfig } from './config.js';
@@ -31,6 +32,8 @@ export interface RunnerDeps {
   store: Store;
   provider: ProviderAdapter;
   pipeline?: PipelineDefinition;
+  /** gate packs installed for this project — their checklists ride the packet at gated stages */
+  packs?: GatePack[];
   /** secrets keyed by account id, merged at build time — never persisted in the store */
   secrets?: Record<string, { env?: Record<string, string> }>;
   /** injected for tests */
@@ -154,6 +157,9 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         gateRecordPath: cfg.gateExportPath,
         parkedPath: cfg.parkedPath,
         predecessorVerdict,
+        // Installed packs whose checklist joins THIS stage ride the packet as
+        // evidence-demanding sections — the seat is told to prove each item, not tick it.
+        extraSections: packSectionsFor(stage, deps.packs ?? []),
       };
 
       return {

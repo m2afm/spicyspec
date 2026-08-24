@@ -97,6 +97,18 @@ importers:
         specifier: ^1.22.0
         version: 1.22.0(@swc/helpers@0.5.18)
 
+  packages/packs:
+    dependencies:
+      '@spicyspec/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/pipeline:
     dependencies:
       '@spicyspec/core':
@@ -144,6 +156,9 @@ importers:
       '@spicyspec/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
+      '@spicyspec/packs':
+        specifier: workspace:*
+        version: link:../packs
       '@spicyspec/pipeline':
         specifier: workspace:*
         version: link:../pipeline

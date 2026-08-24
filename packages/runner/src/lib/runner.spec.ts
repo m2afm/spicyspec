@@ -344,3 +344,52 @@ describe('judge wiring — evidence to the chain, verdict to the next packet', (
     expect(prompt).toContain('This stage: Plan');
   });
 });
+
+/* --------------------------------------------------------------------- gate packs ---- */
+
+import { parsePack } from '@spicyspec/packs';
+
+describe('gate packs ride the packet at gated stages', () => {
+  const fePack = parsePack({
+    id: 'frontend-checklist',
+    name: 'Frontend checklist',
+    stages: ['execute'],
+    seat: 'frontend-reviewer',
+    execute: true,
+    items: [{ id: 'FE-001', requirement: 'no console errors', severity: 'high', evidence: 'read_console_messages returns zero error entries' }],
+  });
+
+  it('a pack whose stage matches injects its evidence-demanding checklist into the packet', async () => {
+    const deps = makeDeps();
+    deps.packs = [fePack];
+    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
+    let prompt = '';
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        prompt = opts.prompt;
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect(prompt).toContain('Gate checklist — Frontend checklist');
+    expect(prompt).toContain('FE-001');
+    expect(prompt).toContain('checked against EVIDENCE');
+  });
+
+  it('a pack whose stage does NOT match stays out of the packet', async () => {
+    const deps = makeDeps();
+    deps.packs = [parsePack({ ...fePack, stages: ['plan'] })];
+    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
+    let prompt = '';
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        prompt = opts.prompt;
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect(prompt).not.toContain('Gate checklist');
+  });
+});
