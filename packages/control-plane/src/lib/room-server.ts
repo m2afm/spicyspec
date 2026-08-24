@@ -589,12 +589,29 @@ export interface SpecProgress {
  */
 export function specProgress(repoCwd: string, dir: string | null, specId?: string): SpecProgress | null {
   if (!dir) return null;
-  // Parallel lanes work in worktrees under .spicyspec/worktrees/<id>/ — the main tree's
-  // copy of tasks.md is stale the moment a lane commits. The lane's copy is the truth.
+  // Two copies of tasks.md can exist: the repo's, and a parallel lane's under
+  // .spicyspec/worktrees/<id>/. Preferring the worktree unconditionally froze the founder's
+  // progress bar at 35/61 for hours while the loop — back in single-spec mode, working the
+  // repo itself — had ticked its way to 43/72: the worktree had not been touched since the
+  // parallel era. Neither location is "the truth"; the one written most recently is.
   const candidates = specId
     ? [join(repoCwd, '.spicyspec', 'worktrees', specId, dir, 'tasks.md'), join(repoCwd, dir, 'tasks.md')]
     : [join(repoCwd, dir, 'tasks.md')];
-  const path = candidates.find((c) => existsSync(c));
+  let path: string | null = null;
+  let newest = -1;
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    let mtime = 0;
+    try {
+      mtime = statSync(candidate).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (mtime > newest) {
+      newest = mtime;
+      path = candidate;
+    }
+  }
   if (!path) return null;
 
   const seen = new Set<string>();

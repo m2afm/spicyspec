@@ -786,3 +786,36 @@ describe('stop flag authorship', () => {
     expect(parseArmedFlag(null)).toBeNull();
   });
 });
+
+describe('which tasks.md the progress bar believes', () => {
+  const mkSpec = (root: string, rel: string, body: string) => {
+    mkdirSync(join(root, rel), { recursive: true });
+    writeFileSync(join(root, rel, 'tasks.md'), body, 'utf8');
+  };
+
+  it('reads the copy written most recently, not the worktree by habit', () => {
+    // The founder watched 008 sit at 35/61 for hours while the loop ticked its way to 43/72:
+    // single-spec runs work the REPO, but the room preferred a worktree left over from the
+    // parallel era and never touched again. Recency is the only honest tie-breaker.
+    const root = mkdtempSync(join(tmpdir(), 'roomprog-'));
+    const rel = 'specs/008-x';
+    mkSpec(join(root, '.spicyspec', 'worktrees', '008'), rel, '- [x] T001 a\n- [ ] T002 b\n');
+    mkSpec(root, rel, '- [x] T001 a\n- [x] T002 b\n- [ ] T003 c\n');
+    // Make the repo copy unambiguously newer than the worktree's.
+    const stale = new Date(Date.now() - 3 * 3600_000);
+    utimesSync(join(root, '.spicyspec', 'worktrees', '008', rel, 'tasks.md'), stale, stale);
+
+    expect(specProgress(root, rel, '008')).toMatchObject({ done: 2, open: 1, total: 3 });
+  });
+
+  it('still prefers a lane worktree while that lane is the one being written', () => {
+    const root = mkdtempSync(join(tmpdir(), 'roomprog-'));
+    const rel = 'specs/009-y';
+    mkSpec(root, rel, '- [x] T001 a\n- [ ] T002 b\n- [ ] T003 c\n');
+    mkSpec(join(root, '.spicyspec', 'worktrees', '009'), rel, '- [x] T001 a\n- [x] T002 b\n- [ ] T003 c\n');
+    const stale = new Date(Date.now() - 3 * 3600_000);
+    utimesSync(join(root, rel, 'tasks.md'), stale, stale);
+
+    expect(specProgress(root, rel, '009')).toMatchObject({ done: 2, open: 1, total: 3 });
+  });
+});
