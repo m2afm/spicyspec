@@ -4,7 +4,7 @@
  */
 import { collectSession } from '@spicyspec/provider';
 import { describe, expect, it } from 'vitest';
-import { createClaudeAdapter, mapMessage, protectedPathsHook, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
+import { createClaudeAdapter, mapMessage, mirrorShellPatterns, protectedPathsHook, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
 
 const assistant = (parent: string | null, ...content: unknown[]) => ({
   type: 'assistant',
@@ -186,5 +186,32 @@ describe('B25 mirrored: a promised exception inside a protected path is HONORED'
       tool_input: { file_path: '/repo/.spicyspec/gates.jsonl' },
     });
     expect(denied).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+  });
+});
+
+describe('the detached-subagent tombstone class (live 009/011/013 parks)', () => {
+  it('worker env forces synchronous subagents', async () => {
+    let captured: Record<string, unknown> | undefined;
+    const q: QueryFn = (params) => {
+      captured = params.options;
+      return (async function* () {})() as ReturnType<QueryFn>;
+    };
+    const adapter = createClaudeAdapter({ queryFn: q });
+    const s = adapter.createSession({ prompt: 'x', cwd: '.', account: { id: 'a', env: {} } } as never);
+    for await (const _e of s.events()) void _e;
+    const env = (captured?.['env'] ?? {}) as Record<string, string>;
+    expect(env['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS']).toBe('1');
+    // canUseTool must NOT be passed: it arms requireCanUseTool, which defeats the
+    // PreToolUse allow hook for subagent calls.
+    expect(captured && 'canUseTool' in captured ? captured['canUseTool'] : undefined).toBeUndefined();
+  });
+
+  it('Bash disallow patterns gain PowerShell twins; bare names and non-Bash pass through', () => {
+    expect(mirrorShellPatterns(['Bash(git push --force*)', 'WebFetch'])).toEqual([
+      'Bash(git push --force*)',
+      'WebFetch',
+      'PowerShell(git push --force*)',
+    ]);
+    expect(mirrorShellPatterns(undefined)).toBeUndefined();
   });
 });

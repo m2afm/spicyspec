@@ -214,6 +214,25 @@ export function protectedPathsHook(protectedPaths: readonly string[], exceptions
   };
 }
 
+/**
+ * Mirror every `Bash(...)` disallow pattern with a `PowerShell(...)` twin. On Windows the
+ * CLI, seeing Bash-targeting rules with no PowerShell counterpart, appends a BARE
+ * PowerShell deny — silently disabling the entire PowerShell tool for the session. The
+ * guardrail's intent is the command pattern, not the shell it arrives through.
+ */
+export function mirrorShellPatterns(disallowed: readonly string[] | undefined): string[] | undefined {
+  if (!disallowed) return undefined;
+  const out = [...disallowed];
+  for (const rule of disallowed) {
+    const m = /^Bash\((.+)\)$/.exec(rule);
+    if (m) {
+      const twin = `PowerShell(${m[1]})`;
+      if (!out.includes(twin)) out.push(twin);
+    }
+  }
+  return out;
+}
+
 /* -------------------------------------------------------------------- the adapter ---- */
 
 export interface ClaudeAdapterOptions {
@@ -237,6 +256,12 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
       const env: Record<string, string> = {
         ...(process.env as Record<string, string>),
         ...options.account.env,
+        // Headless Task subagents otherwise default to DETACHED background agents
+        // (CLI 2.1.241: run_in_background defaults on for non-teammate spawns), which get
+        // shouldAvoidPermissionPrompts and tombstone their in-flight tool calls with
+        // "The user doesn't want to take this action right now" when the turn ends —
+        // live gate seats died on exactly that and parked healthy specs (009/011/013).
+        CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
       };
       if (options.account.configDir) env['CLAUDE_CONFIG_DIR'] = options.account.configDir;
 
@@ -252,7 +277,7 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
         // below, both ENFORCED by the runtime rather than advertised in a prompt (B25).
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
-        disallowedTools: options.disallowedTools,
+        disallowedTools: mirrorShellPatterns(options.disallowedTools),
         // PreToolUse fires in EVERY permission mode — bypassPermissions skips canUseTool
         // entirely (SDK CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning, caught by live smoke).
         hooks: { PreToolUse: [{ hooks: [protectedPathsHook(protectedPaths, exceptions)] }] },
@@ -260,16 +285,11 @@ export function createClaudeAdapter(adapterOptions: ClaudeAdapterOptions = {}): 
         // user-tier chat hook (tick 27 / B31) — a headless worker loads repo config, never
         // the operator's personal tier.
         settingSources: ['project', 'local'],
-        canUseTool: (toolName: string, input: Record<string, unknown>) => {
-          const hit = violatesProtectedPaths(toolName, input, protectedPaths, exceptions);
-          if (hit) {
-            return Promise.resolve({
-              behavior: 'deny' as const,
-              message: `Spicyspec: "${hit}" is a protected path — orchestrator state is never worker-writable (RFC-001 §7.6).`,
-            });
-          }
-          return Promise.resolve({ behavior: 'allow' as const, updatedInput: input });
-        },
+        // NO canUseTool here — deliberately. bypassPermissions never consults it in the
+        // main loop, but merely PASSING it arms the CLI's requireCanUseTool path, which
+        // runs the full permission pipeline for SUBAGENT tool calls even when the
+        // PreToolUse hook answers allow. The hook (above) is the single enforcement
+        // point; it fires in every permission mode and inside subagents.
         ...(options.vendorOptions ?? {}),
       };
 
