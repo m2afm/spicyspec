@@ -84,7 +84,7 @@ const config = parseRunnerConfig({
 });
 
 const store = openStore(config.storePath);
-store.saveQueue({ entries: [{ id: '001', status: 'pending' }] });
+await store.saveQueue({ entries: [{ id: '001', status: 'pending' }] });
 
 const runnerDeps = { config, store, provider: createClaudeAdapter(), pipeline };
 const activities = {
@@ -118,8 +118,8 @@ try {
 
   /* ---------------------------------------------------------------- the verdict ---- */
   log(`rotation returned: ${JSON.stringify(state)}`);
-  const queue = store.loadQueue();
-  const runs = store.listRuns();
+  const queue = await store.loadQueue();
+  const runs = await store.listRuns();
   log(`queue: ${JSON.stringify(queue.entries)}`);
   log(`runs: ${JSON.stringify(runs.map((r) => ({ tick: r.tick, exit: r.exit, cost: r.costUsd?.toFixed(3) })))}`);
 
@@ -154,5 +154,5 @@ try {
   process.exitCode = pass === checks.length ? 0 : 1;
 } finally {
   await env.teardown();
-  store.close();
+  await store.close();
 }

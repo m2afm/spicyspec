@@ -19,34 +19,34 @@ import { DatabaseSync } from 'node:sqlite';
 import { serializeGateRecord, type AccountState, type GateRecord, type LedgerEntry, type Queue, type QueueEntry } from '@spicyspec/core';
 
 export interface RunStore {
-  appendRun(entry: LedgerEntry): void;
-  listRuns(limit?: number): LedgerEntry[];
-  nextRunNumber(): number;
+  appendRun(entry: LedgerEntry): Promise<void>;
+  listRuns(limit?: number): Promise<LedgerEntry[]>;
+  nextRunNumber(): Promise<number>;
 }
 
 export interface GateStore {
-  appendGate(record: GateRecord): void;
-  listGates(specId?: string): GateRecord[];
+  appendGate(record: GateRecord): Promise<void>;
+  listGates(specId?: string): Promise<GateRecord[]>;
   /** git-auditable export — one JSON object per line, append order preserved */
-  exportGatesJsonl(): string;
+  exportGatesJsonl(): Promise<string>;
 }
 
 export interface PoolStore {
-  loadPoolState(): Record<string, AccountState>;
-  savePoolState(state: Record<string, AccountState>): void;
+  loadPoolState(): Promise<Record<string, AccountState>>;
+  savePoolState(state: Record<string, AccountState>): Promise<void>;
 }
 
 export interface QueueStore {
-  loadQueue(): Queue;
-  saveQueue(queue: Queue): void;
+  loadQueue(): Promise<Queue>;
+  saveQueue(queue: Queue): Promise<void>;
 }
 
 export interface KvStore {
-  getKv(key: string): string | null;
-  setKv(key: string, value: string): void;
+  getKv(key: string): Promise<string | null>;
+  setKv(key: string, value: string): Promise<void>;
 }
 
-export type Store = RunStore & GateStore & PoolStore & QueueStore & KvStore & { close(): void };
+export type Store = RunStore & GateStore & PoolStore & QueueStore & KvStore & { close(): Promise<void> };
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -86,25 +86,25 @@ export function openStore(path: string): Store {
 
   return {
     /* ------------------------------------------------------------------ runs ---- */
-    appendRun(entry: LedgerEntry): void {
+    async appendRun(entry: LedgerEntry): Promise<void> {
       if (typeof entry.tick !== 'number') throw new Error('a run entry needs a numeric tick');
       db.prepare('INSERT INTO runs(tick, json) VALUES (?, ?)').run(entry.tick, JSON.stringify(entry));
     },
 
-    listRuns(limit = 0): LedgerEntry[] {
+    async listRuns(limit = 0): Promise<LedgerEntry[]> {
       const sql = limit > 0 ? 'SELECT json FROM runs ORDER BY id DESC LIMIT ?' : 'SELECT json FROM runs ORDER BY id ASC';
       const rows = (limit > 0 ? db.prepare(sql).all(limit) : db.prepare(sql).all()) as Array<{ json: string }>;
       const entries = rows.map((r) => JSON.parse(r.json) as LedgerEntry);
       return limit > 0 ? entries.reverse() : entries;
     },
 
-    nextRunNumber(): number {
+    async nextRunNumber(): Promise<number> {
       const row = db.prepare('SELECT MAX(tick) AS m FROM runs').get() as { m: number | null };
       return (row.m ?? 0) + 1;
     },
 
     /* ----------------------------------------------------------------- gates ---- */
-    appendGate(record: GateRecord): void {
+    async appendGate(record: GateRecord): Promise<void> {
       // serializeGateRecord validates — a malformed verdict must throw, never append (core rule).
       const json = serializeGateRecord(record);
       const parsed = JSON.parse(json) as GateRecord;
@@ -116,7 +116,7 @@ export function openStore(path: string): Store {
       );
     },
 
-    listGates(specId?: string): GateRecord[] {
+    async listGates(specId?: string): Promise<GateRecord[]> {
       const rows = (
         specId
           ? db.prepare('SELECT json FROM gates WHERE spec = ? ORDER BY id ASC').all(String(specId))
@@ -125,18 +125,18 @@ export function openStore(path: string): Store {
       return rows.map((r) => JSON.parse(r.json) as GateRecord);
     },
 
-    exportGatesJsonl(): string {
+    async exportGatesJsonl(): Promise<string> {
       const rows = db.prepare('SELECT json FROM gates ORDER BY id ASC').all() as Array<{ json: string }>;
       return rows.map((r) => r.json).join('\n') + (rows.length ? '\n' : '');
     },
 
     /* ------------------------------------------------------------------ pool ---- */
-    loadPoolState(): Record<string, AccountState> {
+    async loadPoolState(): Promise<Record<string, AccountState>> {
       const rows = db.prepare('SELECT account, json FROM pool').all() as Array<{ account: string; json: string }>;
       return Object.fromEntries(rows.map((r) => [r.account, JSON.parse(r.json) as AccountState]));
     },
 
-    savePoolState(state: Record<string, AccountState>): void {
+    async savePoolState(state: Record<string, AccountState>): Promise<void> {
       const upsert = db.prepare(
         'INSERT INTO pool(account, json) VALUES (?, ?) ON CONFLICT(account) DO UPDATE SET json = excluded.json',
       );
@@ -151,12 +151,12 @@ export function openStore(path: string): Store {
     },
 
     /* ----------------------------------------------------------------- queue ---- */
-    loadQueue(): Queue {
+    async loadQueue(): Promise<Queue> {
       const rows = db.prepare('SELECT json FROM queue ORDER BY ord ASC').all() as Array<{ json: string }>;
       return { entries: rows.map((r) => JSON.parse(r.json) as QueueEntry) };
     },
 
-    saveQueue(queue: Queue): void {
+    async saveQueue(queue: Queue): Promise<void> {
       // Whole-queue replace inside one transaction: the reader never sees half a queue
       // (the B3/B22 class — a partially-rewritten state file observed mid-write).
       db.exec('BEGIN');
@@ -172,19 +172,19 @@ export function openStore(path: string): Store {
     },
 
     /* -------------------------------------------------------------------- kv ---- */
-    getKv(key: string): string | null {
+    async getKv(key: string): Promise<string | null> {
       const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
       return row?.value ?? null;
     },
 
-    setKv(key: string, value: string): void {
+    async setKv(key: string, value: string): Promise<void> {
       db.prepare('INSERT INTO kv(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(
         key,
         value,
       );
     },
 
-    close(): void {
+    async close(): Promise<void> {
       db.close();
     },
   };

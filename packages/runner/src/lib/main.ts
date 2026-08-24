@@ -7,7 +7,7 @@
  */
 import { NativeConnection, Worker } from '@temporalio/worker';
 import { createClaudeAdapter } from '@spicyspec/provider-claude';
-import { openStore } from '@spicyspec/store';
+import { openConfiguredStore } from './open-store.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parseRunnerConfig } from './config.js';
@@ -25,7 +25,7 @@ export async function startRunner(configPath: string): Promise<void> {
     /* no secrets file — ambient credentials */
   }
 
-  const store = openStore(config.storePath);
+  const store = await openConfiguredStore(config.storePath);
   const provider = createClaudeAdapter();
   const activities = createRunnerActivities({ config, store, provider, secrets });
 
@@ -45,6 +45,6 @@ export async function startRunner(configPath: string): Promise<void> {
     await worker.run();
   } finally {
     await connection.close();
-    store.close();
+    await store.close();
   }
 }

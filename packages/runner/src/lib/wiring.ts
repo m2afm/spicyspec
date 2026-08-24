@@ -70,22 +70,22 @@ export class NoWarmAccountError extends Error {
  * Build the pool fresh from store state on every pick — cooldowns recorded by a previous
  * process survive (C4), and two activities never share a stale in-memory pool.
  */
-export function loadPoolFromStore(deps: RunnerDeps): Pool {
-  return buildPool(deps.config.accounts, deps.secrets ?? {}, deps.store.loadPoolState());
+export async function loadPoolFromStore(deps: RunnerDeps): Promise<Pool> {
+  return buildPool(deps.config.accounts, deps.secrets ?? {}, await deps.store.loadPoolState());
 }
 
 /** Settle a run's classification into the pool — the single place cooldown rules live. */
-export function settlePool(deps: RunnerDeps, cls: Classification, accountId: string): void {
+export async function settlePool(deps: RunnerDeps, cls: Classification, accountId: string): Promise<void> {
   const nowMs = deps.nowMs ?? Date.now;
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
-  const pool = loadPoolFromStore(deps);
+  const pool = await loadPoolFromStore(deps);
 
   recordUse(pool, accountId);
   if (cls.rateLimitType) markLimitType(pool, accountId, cls.rateLimitType, nowIso());
   if (cls.exit === 'rate-limited') markCold(pool, accountId, cls.rateResetsAt ?? null, nowMs());
   if (cls.exit === 'account-refused') markRefused(pool, accountId, cls.refusal ?? 'refused', nowMs(), nowIso());
 
-  deps.store.savePoolState(poolState(pool));
+  await deps.store.savePoolState(poolState(pool));
 }
 
 /** The real activity set the Temporal worker registers. */
@@ -111,7 +111,7 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
 
     async buildPacket(input: WorkerRunInput) {
       lastInput = input;
-      const pool = loadPoolFromStore(deps);
+      const pool = await loadPoolFromStore(deps);
       const nowMs = deps.nowMs ?? Date.now;
       const account = pickAccount(pool, nowMs());
       if (!account) {
@@ -123,14 +123,14 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       const snap = await snapshotFn(input);
       // Stage comes from the queue entry (the rotation workflow advances it); the
       // task-list heuristic is only the fallback for a spec the queue does not know.
-      const queueStage = deps.store.loadQueue().entries.find((e) => e.id === input.specId)?.stage;
+      const queueStage = (await deps.store.loadQueue()).entries.find((e) => e.id === input.specId)?.stage;
       const stage =
         pipeline.stages.find((s) => s.id === queueStage) ??
         (snap.tasks.exists ? pipeline.stages.find((s) => s.id === 'execute') ?? pipeline.stages[0] : pipeline.stages[0]);
 
       // The judge's verdict on the predecessor run steers this one (unverified claims are
       // re-checked, corrections applied) — the prototype tracker's loop, made durable.
-      const storedVerdict = deps.store.getKv(judgeKey(input.specId));
+      const storedVerdict = await deps.store.getKv(judgeKey(input.specId));
       const predecessorVerdict = storedVerdict
         ? verdictForPacket(JSON.parse(storedVerdict) as JudgeResult)
         : null;
@@ -184,16 +184,16 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
     // pins the decision's own timestamp, so a NEW decision (different `at`) delivers
     // again while a retried poll of the same one does not.
     async checkReviewDecision(specId) {
-      const decision = readReviewDecision(deps.store, specId);
+      const decision = await readReviewDecision(deps.store, specId);
       if (!decision) return null;
       const deliveredKey = `review:delivered:${specId}`;
-      if (deps.store.getKv(deliveredKey) === decision.at) return null;
-      deps.store.setKv(deliveredKey, decision.at);
+      if ((await deps.store.getKv(deliveredKey)) === decision.at) return null;
+      await deps.store.setKv(deliveredKey, decision.at);
       return { approved: decision.approved, note: decision.note, by: decision.by };
     },
 
     async onClassified(cls, accountId, evidence) {
-      settlePool(deps, cls, accountId);
+      await settlePool(deps, cls, accountId);
 
       // Second-vendor honesty check — evidence first, story second. A dead chain is
       // recorded, never silent (C3), and never blocks the run it was judging.
@@ -217,10 +217,10 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
           workerText: evidence.workerText,
         });
         judged = await (deps.judgeChainFn ?? judgeChain)(providers, prompt);
-        deps.store.setKv(judgeKey(lastInput.specId), JSON.stringify(judged));
+        await deps.store.setKv(judgeKey(lastInput.specId), JSON.stringify(judged));
       }
 
-      deps.store.appendRun({
+      await deps.store.appendRun({
         tick: lastInput.run,
         exit: cls.exit,
         costUsd: cls.costUsd,

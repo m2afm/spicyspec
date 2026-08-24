@@ -97,24 +97,26 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
     if (!channels.length) return;
     const result = await notifyAll(channels, notificationFor(event, projectName, specId, detail));
     if (result.failures.length) {
-      store.setKv('notify:last-failures', JSON.stringify({ at: new Date().toISOString(), failures: result.failures }));
+      await store.setKv('notify:last-failures', JSON.stringify({ at: new Date().toISOString(), failures: result.failures }));
     }
   };
 
+  let awaitingCount = 0;
   const evidence = async (): Promise<QueueEvidence> => {
     const fns = await (deps.evidenceFn ?? (() => defaultEvidence(deps.runner.config.repoCwd)))();
     return {
       ...fns,
       reviewCapBlocks: () => {
-        const queue = store.loadQueue();
-        return queue.entries.filter((e) => e.status === 'awaiting-review').length >= cap;
+        // pre-resolved below: core checkQueue is synchronous
+        return awaitingCount >= cap;
       },
     };
   };
 
   return {
     async openNextSpec(): Promise<OpenNextResult> {
-      const queue: Queue = store.loadQueue();
+      const queue: Queue = await store.loadQueue();
+      awaitingCount = queue.entries.filter((e) => e.status === 'awaiting-review').length;
       const ev = await evidence();
 
       const check = checkQueue(queue, ev);
@@ -125,13 +127,13 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
         return { kind: 'halt', violations };
       }
       const repaired = applyRepairs(queue, check.violations);
-      if (repaired.changed) store.saveQueue(queue);
+      if (repaired.changed) await store.saveQueue(queue);
 
       const active = queue.entries.find((e) => e.status === 'active');
       if (active) {
         if (!active.stage) {
           active.stage = firstStage;
-          store.saveQueue(queue);
+          await store.saveQueue(queue);
         }
         return { kind: 'next', next: { specId: active.id, stage: active.stage ?? firstStage } };
       }
@@ -145,12 +147,12 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
 
       pending.status = 'active';
       pending.stage = pending.stage ?? firstStage;
-      store.saveQueue(queue);
+      await store.saveQueue(queue);
       return { kind: 'next', next: { specId: pending.id, stage: pending.stage } };
     },
 
     async settleSpecOutcome(input: SettleInput): Promise<SettleResult> {
-      const queue = store.loadQueue();
+      const queue = await store.loadQueue();
       const entry = queue.entries.find((e) => e.id === input.specId);
       if (!entry) throw new Error(`settleSpecOutcome: unknown spec "${input.specId}"`);
 
@@ -182,7 +184,7 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
           break;
       }
 
-      store.saveQueue(queue);
+      await store.saveQueue(queue);
       return {
         queueStatus: String(entry.status),
         nextStage: entry.status === 'active' ? (entry.stage ?? null) : null,

@@ -134,7 +134,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       // Catalog in, pending queue out. Refuses to clobber an existing queue — a stray
       // re-seed that resets live statuses is the B21 defect class from the other side.
       const { readFile } = await import('node:fs/promises');
-      const { openStore } = await import('@spicyspec/store');
+      const { openConfiguredStore } = await import('./open-store.js');
       const { parseRunnerConfig } = await import('./config.js');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
       const catalog = JSON.parse(await readFile(resolve(args.catalogPath), 'utf8')) as Array<{ id: string }>;
@@ -142,32 +142,32 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         console.error('spicyspec-runner: the catalog must be a JSON array of { id, ... } entries');
         return 1;
       }
-      const store = openStore(config.storePath);
+      const store = await openConfiguredStore(config.storePath);
       try {
-        if (store.loadQueue().entries.length) {
+        if ((await store.loadQueue()).entries.length) {
           console.error('spicyspec-runner: the queue is not empty — refusing to re-seed over live state');
           return 1;
         }
-        store.saveQueue({ entries: catalog.map((e) => ({ id: String(e.id), status: 'pending' })) });
+        await store.saveQueue({ entries: catalog.map((e) => ({ id: String(e.id), status: 'pending' })) });
         console.log(`seeded ${catalog.length} pending entr${catalog.length === 1 ? 'y' : 'ies'} into ${config.storePath}`);
         return 0;
       } finally {
-        store.close();
+        await store.close();
       }
     }
 
     case 'handoff': {
       const { readFile, writeFile } = await import('node:fs/promises');
-      const { openStore } = await import('@spicyspec/store');
+      const { openConfiguredStore } = await import('./open-store.js');
       const { closingGate } = await import('@spicyspec/core');
       const { renderHandoffPackage } = await import('@spicyspec/pipeline');
       const { snapshot } = await import('./git-snapshot.js');
       const { parseRunnerConfig } = await import('./config.js');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
-      const store = openStore(config.storePath);
+      const store = await openConfiguredStore(config.storePath);
       try {
         const snap = await snapshot({ cwd: config.repoCwd, tasksFile: null, selfOwnedPaths: config.worker.protectedPaths });
-        const gates = store.listGates();
+        const gates = await store.listGates();
         let parked = '';
         try {
           parked = await readFile(resolve(config.repoCwd, config.parkedPath), 'utf8');
@@ -178,39 +178,39 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           projectName: config.projectName,
           generatedAt: new Date().toISOString(),
           frozen: { sha: snap.git.head, branch: snap.git.branch, subject: snap.git.headSubject },
-          specs: store.loadQueue().entries.map((e) => ({
+          specs: (await store.loadQueue()).entries.map((e) => ({
             id: e.id,
             status: String(e.status),
             stage: e.stage ?? null,
             closingGate: closingGate(gates, e.id).state,
           })),
-          runs: store.listRuns(),
+          runs: await store.listRuns(),
           parked,
-          gatesJsonl: store.exportGatesJsonl(),
+          gatesJsonl: await store.exportGatesJsonl(),
         });
         const out = resolve(args.outPath ?? 'HANDOFF-PACKAGE.md');
         await writeFile(out, md, 'utf8');
         console.log(`wrote ${out}`);
         return 0;
       } finally {
-        store.close();
+        await store.close();
       }
     }
 
     case 'dashboard': {
       const { readFile } = await import('node:fs/promises');
-      const { openStore } = await import('@spicyspec/store');
+      const { openConfiguredStore } = await import('./open-store.js');
       const { startControlPlane } = await import('@spicyspec/control-plane');
       const { parseRunnerConfig } = await import('./config.js');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
-      const store = openStore(config.storePath);
+      const store = await openConfiguredStore(config.storePath);
       const cp = await startControlPlane({ store, projectName: config.projectName, port: args.port ?? 4477 });
       console.log(`dashboard: http://127.0.0.1:${cp.port}  (Ctrl+C to stop)`);
       // hold open until signalled; the store closes on shutdown
       await new Promise<void>((r) => {
         const stop = () => {
-          void cp.close().then(() => {
-            store.close();
+          void cp.close().then(async () => {
+            await store.close();
             r();
           });
         };

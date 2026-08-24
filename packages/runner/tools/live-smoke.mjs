@@ -92,9 +92,9 @@ try {
   /* ---------------------------------------------------------------- the verdict ---- */
   log(`workflow returned: ${JSON.stringify(state)}`);
 
-  const runs = store.listRuns();
+  const runs = await store.listRuns();
   log(`ledger rows: ${JSON.stringify(runs)}`);
-  const pool = store.loadPoolState();
+  const pool = await store.loadPoolState();
   log(`pool state: ${JSON.stringify(pool)}`);
 
   const hello = join(scratch, 'hello.txt');
@@ -128,5 +128,5 @@ try {
   process.exitCode = pass === checks.length ? 0 : 1;
 } finally {
   await env.teardown();
-  store.close();
+  await store.close();
 }

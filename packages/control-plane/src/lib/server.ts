@@ -93,7 +93,7 @@ export function startControlPlane(options: ControlPlaneOptions): Promise<Running
       const query: Record<string, string> = {};
       for (const [k, v] of url.searchParams) query[k] = v;
 
-      const response = handleApi(
+      const response = await handleApi(
         {
           method: req.method ?? 'GET',
           path,

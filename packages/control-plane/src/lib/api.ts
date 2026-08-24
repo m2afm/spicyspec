@@ -34,19 +34,19 @@ export interface ApiDeps {
 
 const json = (status: number, body: unknown): ApiResponse => ({ status, json: body });
 
-export function handleApi(req: ApiRequest, deps: ApiDeps): ApiResponse {
+export async function handleApi(req: ApiRequest, deps: ApiDeps): Promise<ApiResponse> {
   const { store } = deps;
 
   // Read surface — GET only, no token.
   if (req.method === 'GET') {
-    if (req.path === '/api/overview') return json(200, overview(store, deps.projectName, deps.now()));
+    if (req.path === '/api/overview') return json(200, await overview(store, deps.projectName, deps.now()));
     if (req.path === '/api/runs') {
       const limit = Math.min(Math.max(Number(req.query['limit'] ?? '50') || 50, 1), 500);
-      return json(200, runHistory(store, limit));
+      return json(200, await runHistory(store, limit));
     }
-    if (req.path === '/api/gates') return json(200, gateTrail(store, req.query['spec']));
+    if (req.path === '/api/gates') return json(200, await gateTrail(store, req.query['spec']));
     const m = /^\/api\/specs\/([^/]+)\/review$/.exec(req.path);
-    if (m) return json(200, { specId: m[1], decision: readReviewDecision(store, m[1]) });
+    if (m) return json(200, { specId: m[1], decision: await readReviewDecision(store, m[1]) });
     return json(404, { error: 'not found' });
   }
 
@@ -68,7 +68,7 @@ export function handleApi(req: ApiRequest, deps: ApiDeps): ApiResponse {
         by: String(body.by ?? 'unknown'),
         at: deps.now(),
       };
-      recordReviewDecision(store, record);
+      await recordReviewDecision(store, record);
       return json(200, { ok: true, decision: record });
     } catch (err) {
       return json(404, { error: String((err as Error).message) });

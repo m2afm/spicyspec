@@ -53,10 +53,10 @@ export interface ReviewDecisionRecord {
 
 export const REVIEW_DECISION_KEY = (specId: string) => `review:decision:${specId}`;
 
-export function overview(store: Store, projectName: string, generatedAt: string): OverviewView {
-  const queue = store.loadQueue();
-  const runs = store.listRuns();
-  const gates = store.listGates();
+export async function overview(store: Store, projectName: string, generatedAt: string): Promise<OverviewView> {
+  const queue = await store.loadQueue();
+  const runs = await store.listRuns();
+  const gates = await store.listGates();
 
   const counts: Record<string, number> = {};
   for (const e of queue.entries) counts[String(e.status)] = (counts[String(e.status)] ?? 0) + 1;
@@ -92,8 +92,8 @@ export function overview(store: Store, projectName: string, generatedAt: string)
   };
 }
 
-export function runHistory(store: Store, limit = 50): RunView[] {
-  return store.listRuns(limit).map((r) => ({
+export async function runHistory(store: Store, limit = 50): Promise<RunView[]> {
+  return (await store.listRuns(limit)).map((r) => ({
     tick: r.tick,
     exit: (r.exit as string) ?? null,
     costUsd: (r.costUsd as number) ?? null,
@@ -106,8 +106,8 @@ export function runHistory(store: Store, limit = 50): RunView[] {
   }));
 }
 
-export function gateTrail(store: Store, specId?: string) {
-  return store.listGates(specId).map((g) => ({
+export async function gateTrail(store: Store, specId?: string) {
+  return (await store.listGates(specId)).map((g) => ({
     at: g.at,
     spec: g.spec,
     gate: g.gate,
@@ -119,15 +119,15 @@ export function gateTrail(store: Store, specId?: string) {
 }
 
 /** Record a manager's review decision (the only write the control plane performs). */
-export function recordReviewDecision(store: Store, record: ReviewDecisionRecord): void {
-  const queue = store.loadQueue();
+export async function recordReviewDecision(store: Store, record: ReviewDecisionRecord): Promise<void> {
+  const queue = await store.loadQueue();
   if (!queue.entries.some((e) => e.id === record.specId)) {
     throw new Error(`review decision for unknown spec "${record.specId}"`);
   }
-  store.setKv(REVIEW_DECISION_KEY(record.specId), JSON.stringify(record));
+  await store.setKv(REVIEW_DECISION_KEY(record.specId), JSON.stringify(record));
 }
 
-export function readReviewDecision(store: Store, specId: string): ReviewDecisionRecord | null {
-  const raw = store.getKv(REVIEW_DECISION_KEY(specId));
+export async function readReviewDecision(store: Store, specId: string): Promise<ReviewDecisionRecord | null> {
+  const raw = await store.getKv(REVIEW_DECISION_KEY(specId));
   return raw ? (JSON.parse(raw) as ReviewDecisionRecord) : null;
 }

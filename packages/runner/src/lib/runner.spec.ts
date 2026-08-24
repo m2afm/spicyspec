@@ -181,20 +181,20 @@ async function* fakeEvents(): AsyncGenerator<WorkerEvent> {
 }
 
 describe('settlePool', () => {
-  it('a rate-limited run cools the account and the cooldown SURVIVES a reload (C4)', () => {
+  it('a rate-limited run cools the account and the cooldown SURVIVES a reload (C4)', async () => {
     const deps = makeDeps();
-    settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 2_000, rateLimitType: 'five_hour' }), 'primary');
-    const pool = loadPoolFromStore(deps);
+    await settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 2_000, rateLimitType: 'five_hour' }), 'primary');
+    const pool = (await loadPoolFromStore(deps));
     const primary = pool.accounts.find((a) => a.id === 'primary');
     expect(primary?.coldUntilMs).toBe(2_000 * 1000 + 60_000);
     expect(primary?.limitType).toBe('five_hour');
     expect(primary?.uses).toBe(1);
   });
 
-  it('B29: a refusal sidelines long and records the reason', () => {
+  it('B29: a refusal sidelines long and records the reason', async () => {
     const deps = makeDeps();
-    settlePool(deps, cls({ exit: 'account-refused', refusal: 'org disabled access' }), 'secondary');
-    const acc = loadPoolFromStore(deps).accounts.find((a) => a.id === 'secondary');
+    await settlePool(deps, cls({ exit: 'account-refused', refusal: 'org disabled access' }), 'secondary');
+    const acc = (await loadPoolFromStore(deps)).accounts.find((a) => a.id === 'secondary');
     expect(acc?.coldUntilMs).toBe(1_000_000 + 6 * 3600_000);
     expect(acc?.refusedReason).toBe('org disabled access');
   });
@@ -206,7 +206,7 @@ describe('createRunnerActivities', () => {
     const activities = createRunnerActivities(deps);
     const outcome = await activities.runWorkerSession({ specId: '006', run: 1 });
     expect(outcome.exit).toBe('no-progress'); // same snapshot before/after — nothing moved
-    const runs = deps.store.listRuns();
+    const runs = await deps.store.listRuns();
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({ tick: 1, exit: 'no-progress', account: 'primary' });
   });
@@ -229,8 +229,8 @@ describe('createRunnerActivities', () => {
 
   it('every account cold → NoWarmAccountError (Temporal retry takes over)', async () => {
     const deps = makeDeps();
-    settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'primary');
-    settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'secondary');
+    await settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'primary');
+    await settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'secondary');
     await expect(createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 2 })).rejects.toThrow(
       NoWarmAccountError,
     );
@@ -282,9 +282,9 @@ describe('judge wiring — evidence to the chain, verdict to the next packet', (
 
     expect(judgePrompt).toContain('Machine facts');
     expect(judgePrompt).toContain('run 1 of spec 006');
-    const stored = JSON.parse(deps.store.getKv('judge:last:006')!);
+    const stored = JSON.parse((await deps.store.getKv('judge:last:006'))!);
     expect(stored.judgedBy).toBe('kimi');
-    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: 'kimi', judgeHonest: false, judgeAction: 'redispatch' });
+    expect((await deps.store.listRuns())[0]).toMatchObject({ judgedBy: 'kimi', judgeHonest: false, judgeAction: 'redispatch' });
   });
 
   it('the NEXT run packet carries the verdict as predecessor guidance', async () => {
@@ -317,20 +317,20 @@ describe('judge wiring — evidence to the chain, verdict to the next packet', (
     const activities = createRunnerActivities(deps);
     const outcome = await activities.runWorkerSession({ specId: '006', run: 1 });
     expect(outcome.exit).toBeDefined(); // the run outcome survived the dead chain
-    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: null, judgeFailures: 2 });
+    expect((await deps.store.listRuns())[0]).toMatchObject({ judgedBy: null, judgeFailures: 2 });
   });
 
   it('no judges configured → no judge fields claimed', async () => {
     const deps = makeDeps();
     const activities = createRunnerActivities(deps);
     await activities.runWorkerSession({ specId: '006', run: 1 });
-    expect(deps.store.listRuns()[0]).toMatchObject({ judgedBy: null, judgeFailures: 0 });
-    expect(deps.store.getKv('judge:last:006')).toBeNull();
+    expect((await deps.store.listRuns())[0]).toMatchObject({ judgedBy: null, judgeFailures: 0 });
+    expect(await deps.store.getKv('judge:last:006')).toBeNull();
   });
 
   it('the queue stage outranks the task heuristic in the packet', async () => {
     const deps = makeDeps();
-    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'plan' }] });
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'plan' }] });
     let prompt = '';
     deps.provider = {
       id: 'fake',
@@ -362,7 +362,7 @@ describe('gate packs ride the packet at gated stages', () => {
   it('a pack whose stage matches injects its evidence-demanding checklist into the packet', async () => {
     const deps = makeDeps();
     deps.packs = [fePack];
-    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
     let prompt = '';
     deps.provider = {
       id: 'fake',
@@ -380,7 +380,7 @@ describe('gate packs ride the packet at gated stages', () => {
   it('a pack whose stage does NOT match stays out of the packet', async () => {
     const deps = makeDeps();
     deps.packs = [parsePack({ ...fePack, stages: ['plan'] })];
-    deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'active', stage: 'execute' }] });
     let prompt = '';
     deps.provider = {
       id: 'fake',
@@ -401,14 +401,14 @@ import { recordReviewDecision } from '@spicyspec/control-plane';
 describe('review bridge — dashboard intent to at-most-once delivery', () => {
   it('control-plane decision round-trips through the SAME store and delivers exactly once', async () => {
     const deps = makeDeps();
-    deps.store.saveQueue({ entries: [{ id: '006', status: 'awaiting-review', stage: 'handoff' }] });
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'awaiting-review', stage: 'handoff' }] });
     const activities = createRunnerActivities(deps);
 
     // nothing recorded yet
     expect(await activities.checkReviewDecision({ specId: '006' })).toBeNull();
 
     // the manager clicks Approve on the dashboard
-    recordReviewDecision(deps.store, { specId: '006', approved: true, note: 'walked', by: 'founder', at: '2026-08-24T01:00:00Z' });
+    await recordReviewDecision(deps.store, { specId: '006', approved: true, note: 'walked', by: 'founder', at: '2026-08-24T01:00:00Z' });
 
     const first = await activities.checkReviewDecision({ specId: '006' });
     expect(first).toMatchObject({ approved: true, note: 'walked', by: 'founder' });
@@ -416,7 +416,7 @@ describe('review bridge — dashboard intent to at-most-once delivery', () => {
     expect(await activities.checkReviewDecision({ specId: '006' })).toBeNull();
 
     // a NEW decision (different timestamp) delivers again
-    recordReviewDecision(deps.store, { specId: '006', approved: false, note: 'regression found', by: 'founder', at: '2026-08-24T02:00:00Z' });
+    await recordReviewDecision(deps.store, { specId: '006', approved: false, note: 'regression found', by: 'founder', at: '2026-08-24T02:00:00Z' });
     expect(await activities.checkReviewDecision({ specId: '006' })).toMatchObject({ approved: false });
   });
 });
