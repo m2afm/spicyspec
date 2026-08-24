@@ -74,6 +74,10 @@ export const RUNNER_CONFIG = z.object({
   /** where gate verdicts are exported for the git-auditable trail */
   gateExportPath: z.string().default('.spicyspec/gates.jsonl'),
   parkedPath: z.string().default('.spicyspec/PARKED.md'),
+  /** the baton file whose mtime marks a handoff update (Airvia keeps it at .specify/HANDOFF.md) */
+  handoffPath: z.string().default('HANDOFF.md'),
+  /** where spec directories live; a spec id matches `<id>` or `<id>-<slug>` */
+  specsDir: z.string().default('specs'),
 });
 
 export type RunnerConfig = z.infer<typeof RUNNER_CONFIG>;

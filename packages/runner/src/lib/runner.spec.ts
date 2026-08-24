@@ -451,3 +451,30 @@ describe('runner registration — liveness is a heartbeat, never a record (B17)'
     expect(runners[0].startedAt).toBe('2026-08-24T00:00:00Z');
   });
 });
+
+/* ---------------------------------------------------------------------- spec dirs ---- */
+
+import { findSpecDir } from './spec-dir.js';
+
+describe('findSpecDir — real tenants name dirs <id>-<slug> (Airvia)', () => {
+  const rd = (names: string[]) => async () => names;
+
+  it('resolves bare id and slugged id', async () => {
+    const slugged = await findSpecDir('/r', 'specs', '006', rd(['006-aircraft-subscription-autopause', '007-x']));
+    expect(slugged?.replace(/\\/g, '/')).toBe('specs/006-aircraft-subscription-autopause');
+    expect(await findSpecDir('/r', 'specs', '001', rd(['001']))).toContain('001');
+  });
+
+  it('no match is null (a fact); a missing specs dir is null too', async () => {
+    expect(await findSpecDir('/r', 'specs', '099', rd(['006-x']))).toBeNull();
+    expect(await findSpecDir('/r', 'specs', '099', async () => { throw new Error('ENOENT'); })).toBeNull();
+  });
+
+  it('ambiguity throws — never guess between two dirs claiming one id', async () => {
+    await expect(findSpecDir('/r', 'specs', '006', rd(['006-a', '006-b']))).rejects.toThrow(/ambiguous/);
+  });
+
+  it('id 006 does not match 0060-other', async () => {
+    expect(await findSpecDir('/r', 'specs', '006', rd(['0060-other']))).toBeNull();
+  });
+});

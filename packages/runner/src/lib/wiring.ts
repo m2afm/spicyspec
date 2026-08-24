@@ -27,6 +27,7 @@ import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
 import type { RunnerConfig } from './config.js';
 import { snapshot, type FullSnapshot } from './git-snapshot.js';
+import { findSpecDir } from './spec-dir.js';
 
 export interface RunnerDeps {
   config: RunnerConfig;
@@ -95,14 +96,17 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
 
   const snapshotFn =
     deps.snapshotFn ??
-    ((input: WorkerRunInput) =>
-      snapshot({
+    (async (input: WorkerRunInput) => {
+      // Real tenants name spec dirs `<id>-<slug>` (Airvia); resolve, never assume.
+      const specDir = await findSpecDir(cfg.repoCwd, cfg.specsDir, input.specId);
+      return snapshot({
         cwd: cfg.repoCwd,
-        tasksFile: `${cfg.repoCwd}/specs/${input.specId}/tasks.md`,
-        handoffFile: `${cfg.repoCwd}/HANDOFF.md`,
+        tasksFile: specDir ? `${cfg.repoCwd}/${specDir}/tasks.md` : null,
+        handoffFile: `${cfg.repoCwd}/${cfg.handoffPath}`,
         // B2: the runner's own state (the store, parked file) must never dirty the tree
         selfOwnedPaths: cfg.worker.protectedPaths,
-      }));
+      });
+    });
 
   let lastInput: WorkerRunInput = { specId: 'unknown', run: 0 };
 
@@ -151,8 +155,11 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
           nextTaskIds: snap.tasks.nextTaskIds,
         },
         readFirst: [
-          { what: '`HANDOFF.md`', why: 'the baton — position, gate state, traps. Verify against the tree.' },
-          { what: `\`specs/${input.specId}/tasks.md\``, why: 'your work list. The open items are the job.' },
+          { what: `\`${cfg.handoffPath}\``, why: 'the baton — position, gate state, traps. Verify against the tree.' },
+          {
+            what: `\`${(await findSpecDir(cfg.repoCwd, cfg.specsDir, input.specId)) ?? `${cfg.specsDir}/${input.specId}`}/\``,
+            why: 'the spec directory — tasks.md is the work list; the open items are the job.',
+          },
         ],
         protectedPaths: cfg.worker.protectedPaths,
         gateRecordPath: cfg.gateExportPath,

@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { findSpecDir } from './spec-dir.js';
 import type { RunnerDeps } from './wiring.js';
 
 const execFileAsync = promisify(execFile);
@@ -32,7 +33,7 @@ export interface QueueEvidenceFns {
 }
 
 /** Default evidence against the real repo. Cheap, and every rule stays injectable. */
-export async function defaultEvidence(repoCwd: string): Promise<QueueEvidenceFns> {
+export async function defaultEvidence(repoCwd: string, specsDir = 'specs'): Promise<QueueEvidenceFns> {
   const git = async (args: string[]): Promise<string> => {
     try {
       const { stdout } = await execFileAsync('git', ['--no-optional-locks', ...args], {
@@ -58,8 +59,18 @@ export async function defaultEvidence(repoCwd: string): Promise<QueueEvidenceFns
     }
   }
 
+  // Pre-resolved (sync interface): `<id>` or `<id>-<slug>` both count as the spec existing.
+  const specDirs = new Set<string>();
+  try {
+    const { readdir } = await import('node:fs/promises');
+    for (const name of await readdir(join(repoCwd, specsDir))) specDirs.add(name);
+  } catch {
+    /* no specs dir yet */
+  }
+  void findSpecDir; // resolution rule documented there; the set below applies the same match
   return {
-    specDirExists: (id) => existsSync(join(repoCwd, 'specs', id)),
+    specDirExists: (id) =>
+      existsSync(join(repoCwd, specsDir, id)) || [...specDirs].some((n) => n === id || n.startsWith(`${id}-`)),
     commitsFor: (id) => commitCounts.get(id) ?? 0,
     signedOff: (id) => signedOffIds.has(id),
   };
@@ -103,7 +114,7 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
 
   let awaitingCount = 0;
   const evidence = async (): Promise<QueueEvidence> => {
-    const fns = await (deps.evidenceFn ?? (() => defaultEvidence(deps.runner.config.repoCwd)))();
+    const fns = await (deps.evidenceFn ?? (() => defaultEvidence(deps.runner.config.repoCwd, deps.runner.config.specsDir)))();
     return {
       ...fns,
       reviewCapBlocks: () => {
