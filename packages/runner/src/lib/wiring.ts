@@ -18,6 +18,7 @@ import {
   type Classification,
   type Pool,
 } from '@spicyspec/core';
+import { readReviewDecision } from '@spicyspec/control-plane';
 import { buildJudgePrompt, cliJudgeProvider, judgeChain, type JudgeProvider, type JudgeResult } from '@spicyspec/judge';
 import { createActivities, type ActivityDeps, type SpecRunActivities, type WorkerRunInput } from '@spicyspec/orchestrator';
 import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefinition, type PredecessorVerdict } from '@spicyspec/pipeline';
@@ -177,6 +178,19 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
     },
 
     snapshot: () => snapshotFn(lastInput),
+
+    // The review bridge: a manager's dashboard decision (store-KV intent) reaches the
+    // parked workflow through this poll. Delivered AT MOST ONCE — the delivery marker
+    // pins the decision's own timestamp, so a NEW decision (different `at`) delivers
+    // again while a retried poll of the same one does not.
+    async checkReviewDecision(specId) {
+      const decision = readReviewDecision(deps.store, specId);
+      if (!decision) return null;
+      const deliveredKey = `review:delivered:${specId}`;
+      if (deps.store.getKv(deliveredKey) === decision.at) return null;
+      deps.store.setKv(deliveredKey, decision.at);
+      return { approved: decision.approved, note: decision.note, by: decision.by };
+    },
 
     async onClassified(cls, accountId, evidence) {
       settlePool(deps, cls, accountId);

@@ -393,3 +393,30 @@ describe('gate packs ride the packet at gated stages', () => {
     expect(prompt).not.toContain('Gate checklist');
   });
 });
+
+/* ----------------------------------------------------------------- review bridge ---- */
+
+import { recordReviewDecision } from '@spicyspec/control-plane';
+
+describe('review bridge — dashboard intent to at-most-once delivery', () => {
+  it('control-plane decision round-trips through the SAME store and delivers exactly once', async () => {
+    const deps = makeDeps();
+    deps.store.saveQueue({ entries: [{ id: '006', status: 'awaiting-review', stage: 'handoff' }] });
+    const activities = createRunnerActivities(deps);
+
+    // nothing recorded yet
+    expect(await activities.checkReviewDecision({ specId: '006' })).toBeNull();
+
+    // the manager clicks Approve on the dashboard
+    recordReviewDecision(deps.store, { specId: '006', approved: true, note: 'walked', by: 'founder', at: '2026-08-24T01:00:00Z' });
+
+    const first = await activities.checkReviewDecision({ specId: '006' });
+    expect(first).toMatchObject({ approved: true, note: 'walked', by: 'founder' });
+    // the same intent never delivers twice (workflow retries must not double-apply)
+    expect(await activities.checkReviewDecision({ specId: '006' })).toBeNull();
+
+    // a NEW decision (different timestamp) delivers again
+    recordReviewDecision(deps.store, { specId: '006', approved: false, note: 'regression found', by: 'founder', at: '2026-08-24T02:00:00Z' });
+    expect(await activities.checkReviewDecision({ specId: '006' })).toMatchObject({ approved: false });
+  });
+});

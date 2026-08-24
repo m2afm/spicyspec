@@ -38,6 +38,9 @@ async function runScripted(
       call += 1;
       return { exit, costUsd: 1, costKnown: true, commits: exit === 'clean', tasksClosed: exit === 'clean' ? 1 : 0 };
     },
+    async checkReviewDecision() {
+      return null; // these cases exercise the SIGNAL path; the bridge has its own suite
+    },
   };
   const worker = await Worker.create({
     connection: env.nativeConnection,
@@ -112,5 +115,53 @@ describe('specRunWorkflow on a real Temporal test server', () => {
     const state = await runScripted(['clean'], { specId: '008', maxRuns: 3, maxConsecutiveStalls: 2 });
     expect(state.status).toBe('exhausted');
     expect(state.runs).toBe(3);
+  }, 120_000);
+});
+
+describe('the review BRIDGE — a dashboard decision reaches a parked workflow with no signal', () => {
+  it('polls checkReviewDecision while parked; an approval resumes and completes', async () => {
+    let polls = 0;
+    const activities: SpecRunActivities = {
+      async runWorkerSession() {
+        return polls >= 1
+          ? { exit: 'spec-complete', costUsd: 1, costKnown: true, commits: true, tasksClosed: 1 }
+          : { exit: 'awaiting-review', costUsd: 1, costKnown: true, commits: false, tasksClosed: 0 };
+      },
+      async checkReviewDecision() {
+        polls += 1;
+        // first two polls: the manager has not decided yet
+        return polls < 3 ? null : { approved: true, note: 'journey walked on the dashboard', by: 'founder' };
+      },
+    };
+    const worker = await Worker.create({ connection: env.nativeConnection, taskQueue: TASK_QUEUE, workflowsPath, activities });
+    const state = await worker.runUntil(
+      env.client.workflow.execute(specRunWorkflow, {
+        taskQueue: TASK_QUEUE,
+        workflowId: `bridge-${Date.now()}`,
+        args: [{ specId: '002', maxRuns: 5, maxConsecutiveStalls: 2 }],
+      }),
+    );
+    expect(state.status).toBe('complete');
+    expect(polls).toBeGreaterThanOrEqual(3);
+  }, 120_000);
+
+  it('a bridged rejection parks the spec', async () => {
+    const activities: SpecRunActivities = {
+      async runWorkerSession() {
+        return { exit: 'awaiting-review', costUsd: 1, costKnown: true, commits: false, tasksClosed: 0 };
+      },
+      async checkReviewDecision() {
+        return { approved: false, note: 'not yet' };
+      },
+    };
+    const worker = await Worker.create({ connection: env.nativeConnection, taskQueue: TASK_QUEUE, workflowsPath, activities });
+    const state = await worker.runUntil(
+      env.client.workflow.execute(specRunWorkflow, {
+        taskQueue: TASK_QUEUE,
+        workflowId: `bridge-rej-${Date.now()}`,
+        args: [{ specId: '002', maxRuns: 5, maxConsecutiveStalls: 2 }],
+      }),
+    );
+    expect(state.status).toBe('parked');
   }, 120_000);
 });

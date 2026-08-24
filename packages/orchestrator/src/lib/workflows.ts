@@ -89,10 +89,19 @@ export async function specRunWorkflow(input: SpecRunInput): Promise<SpecRunState
     if (outcome.exit === 'awaiting-review') {
       // Park on the human, durably: the workflow survives restarts, reboots, and weeks of
       // silence while it waits — the mechanism whose absence caused 91% of the
-      // prototype's idle time.
+      // prototype's idle time. Two ways a decision arrives: the review SIGNAL (anything
+      // holding a workflow handle), or the BRIDGE — a manager records approve/reject on
+      // the dashboard, the store carries the intent, and this poll collects it. The
+      // dashboard needs no workflow id and no Temporal client.
       state.status = 'awaiting-review';
       pendingDecision = null;
-      await condition(() => pendingDecision !== null);
+      while (pendingDecision === null) {
+        const signaled = await condition(() => pendingDecision !== null, '30 seconds');
+        if (!signaled) {
+          const polled = await activities.checkReviewDecision({ specId: input.specId });
+          if (polled) pendingDecision = { approved: polled.approved, note: polled.note };
+        }
+      }
       const decision = pendingDecision as unknown as ReviewDecision;
       if (!decision.approved) {
         state.status = 'parked';

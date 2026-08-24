@@ -29,8 +29,25 @@ export interface WorkerRunOutcome {
   tasksClosed: number;
 }
 
+export interface ReviewDecisionInput {
+  specId: string;
+}
+
+export interface ReviewDecisionFound {
+  approved: boolean;
+  note?: string;
+  by?: string;
+}
+
 export interface SpecRunActivities {
   runWorkerSession(input: WorkerRunInput): Promise<WorkerRunOutcome>;
+  /**
+   * The review bridge: a manager records an approve/reject intent in the store (via the
+   * control plane); the workflow polls this while parked on a review, so a decision made
+   * on the dashboard reaches the run without anyone knowing a workflow id. Must return a
+   * decision AT MOST ONCE per recorded intent (delivery is marked in the store).
+   */
+  checkReviewDecision(input: ReviewDecisionInput): Promise<ReviewDecisionFound | null>;
 }
 
 export interface ActivityDeps {
@@ -50,6 +67,8 @@ export interface ActivityDeps {
     accountId: string,
     evidence: { harvest: HarvestSummary; workerText: string },
   ): Promise<void>;
+  /** the review bridge — read (and mark delivered) a manager's recorded decision */
+  checkReviewDecision?(specId: string): Promise<ReviewDecisionFound | null>;
   /** heartbeat cadence while draining the session stream */
   heartbeatEveryNEvents?: number;
 }
@@ -63,6 +82,10 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
   const every = deps.heartbeatEveryNEvents ?? 25;
 
   return {
+    async checkReviewDecision(input) {
+      return deps.checkReviewDecision ? deps.checkReviewDecision(input.specId) : null;
+    },
+
     async runWorkerSession(input: WorkerRunInput): Promise<WorkerRunOutcome> {
       const packet = await deps.buildPacket(input);
       const before = await deps.snapshot();

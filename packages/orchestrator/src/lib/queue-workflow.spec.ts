@@ -45,6 +45,9 @@ async function runRotation(script: Script) {
     async runWorkerSession() {
       return { exit: (script.runExit ?? 'spec-complete') as never, costUsd: 1, costKnown: true, commits: true, tasksClosed: 1 };
     },
+    async checkReviewDecision() {
+      return null;
+    },
   };
   const worker = await Worker.create({
     connection: env.nativeConnection,
