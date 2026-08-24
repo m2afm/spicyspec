@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export interface CliArgs {
-  command: 'init' | 'start' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
+  command: 'init' | 'start' | 'run' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
   configPath: string;
   catalogPath: string;
   outPath: string | null;
@@ -31,7 +31,7 @@ const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | '
 export function parseCliArgs(argv: readonly string[]): CliArgs {
   const problems: string[] = [];
   const [raw, ...rest] = argv;
-  const known = new Set(['init', 'start', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
+  const known = new Set(['init', 'start', 'run', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
   const command = (known.has(raw ?? '') ? raw : 'help') as CliArgs['command'];
   if (raw !== undefined && !known.has(raw)) problems.push(`unknown command "${raw}"`);
 
@@ -128,6 +128,39 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { startRunner } = await import('./main.js');
       await startRunner(resolve(args.configPath));
       return 0;
+    }
+
+    case 'run': {
+      // Ignition: start (or join) the durable rotation. `start` only hosts the WORKER —
+      // found by the first real ignition attempt: everything was up and nothing moved,
+      // because no client had ever started queueRunWorkflow.
+      const { readFile } = await import('node:fs/promises');
+      const { Client, Connection } = await import('@temporalio/client');
+      const { parseRunnerConfig } = await import('./config.js');
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const connection = await Connection.connect({ address: config.temporal.address });
+      try {
+        const client = new Client({ connection, namespace: config.temporal.namespace });
+        const workflowId = `queue-${config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        try {
+          const handle = await client.workflow.start('queueRunWorkflow', {
+            taskQueue: config.temporal.taskQueue,
+            workflowId,
+            args: [{ maxRunsPerSpec: 40, maxConsecutiveStalls: 2, maxSpecRuns: 200 }],
+          });
+          console.log(`rotation started — workflowId ${handle.workflowId}`);
+          console.log('watch it: the dashboard, or the Temporal UI at http://localhost:8233');
+        } catch (err) {
+          if (String((err as Error).name).includes('WorkflowExecutionAlreadyStarted')) {
+            console.log(`rotation already running — workflowId ${workflowId}`);
+          } else {
+            throw err;
+          }
+        }
+        return 0;
+      } finally {
+        await connection.close();
+      }
     }
 
     case 'seed': {

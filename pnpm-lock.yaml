@@ -226,6 +226,9 @@ importers:
       '@spicyspec/store':
         specifier: workspace:*
         version: link:../store
+      '@temporalio/client':
+        specifier: ^1.22.0
+        version: 1.22.0
       '@temporalio/worker':
         specifier: ^1.22.0
         version: 1.22.0(@swc/helpers@0.5.18)
@@ -239,9 +242,6 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@temporalio/client':
-        specifier: ^1.22.0
-        version: 1.22.0
       '@temporalio/testing':
         specifier: ^1.22.0
         version: 1.22.0(@swc/helpers@0.5.18)
