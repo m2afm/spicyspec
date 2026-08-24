@@ -1,0 +1,1819 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loop Control Room</title>
+<script>
+/* Resolve the theme BEFORE first paint. Without this the page renders cream and then snaps
+   to the night panel, which on a dashboard you leave open all day is the single most
+   irritating thing a theme can do. Inline and synchronous in <head> is what makes it
+   invisible; a module or a deferred script is already too late. */
+(function () {
+  var KEY = 'loop-theme';
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) { /* private mode: auto it is */ }
+  var mode = (saved === 'light' || saved === 'dark' || saved === 'auto') ? saved : 'auto';
+  var dark = mode === 'dark' ||
+    (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  window.__loopTheme = { key: KEY, mode: mode };
+})();
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23EDE4CC'/%3E%3Crect x='3' y='3' width='26' height='26' fill='none' stroke='%231A1A1A' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23D62828'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Fonts are stylesheets: they cannot execute, so a remote load here is not a
+     process-control risk. If the machine is offline the stack falls back to system-ui. -->
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=JetBrains+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ==================================================================
+   Built to the she3bo V2 constitution, which is LOCKED:
+     1. The paper is sacred — cream #EDE4CC, never white, never black.
+     2. Three colours only — paper, ink, shatta red. Plus tonal siblings.
+     3. Manga sketch, not corporate flat — ink linework, hard offsets.
+     4. Locked typography — Bangers display, Zen Kaku Gothic New body, JetBrains Mono
+        data. Inter is only the body FALLBACK, never the primary face.
+     5. Function survives style — works at 320px, readable without JS.
+   Flame is used ONLY for warning states, so heat means something.
+
+   On directive 1 and the night theme: "the paper is sacred" governs the PAPER
+   STOCK, and dark mode does not repaint it — it reverses the drawing out, which
+   the system already sanctions per block (DESIGN.md: "Reverse-out text on dark
+   blocks"). No thirteenth colour is introduced; see THE ROLE LAYER below.
+   ================================================================== */
+:root {
+  --paper:        #EDE4CC;
+  --paper-shadow: #D4C9A8;
+  --paper-grain:  #E5DBC0;
+  --paper-deep:   #C9BD9A;
+  --ink:          #1A1A1A;
+  --ink-soft:     #4A4A4A;
+  --ink-muted:    #2D2620;
+  --ink-faded:    #6B5F50;
+  --shatta:       #D62828;
+  --shatta-deep:  #B71D1D;
+  --flame:        #F77F00;
+  --flame-soft:   #FCBF49;
+
+  --font-display: 'Bangers', 'Anton', system-ui, sans-serif;
+  --font-body: 'Zen Kaku Gothic New', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --ink-thin: 1px; --ink-medium: 2px; --ink-thick: 3px; --ink-bold: 5px;
+  --ease-hover: cubic-bezier(0.33, 1, 0.68, 1);
+  --gutter: clamp(0.75rem, 3vw, 1.75rem);
+}
+
+/* ── THE ROLE LAYER ───────────────────────────────────────────────────
+   The twelve colours above are constants and are never redefined. A theme
+   changes only which colour plays which ROLE. That distinction is what
+   keeps directive 2 intact: dark mode adds no thirteenth colour.
+
+   Dark mode is not a second palette, it is the same drawing reversed out —
+   white ink on a night panel. The locked system already sanctions the move
+   for individual blocks (DESIGN.md: "Reverse-out text on dark blocks");
+   this is that rule at page scale.
+
+   Every rule below this line uses roles, never raw brand tokens, with two
+   deliberate exceptions: a saturated shatta or flame FILL keeps its brand
+   value in both themes (heat should not go pastel at night), and the text
+   sitting on such a fill is always cream.
+   ------------------------------------------------------------------ */
+:root {
+  color-scheme: light;
+  --page:         var(--paper);
+  --grain-a:      var(--paper-deep);
+  --grain-b:      var(--paper-shadow);
+  --surface:      var(--paper-grain);   /* panel fill */
+  --surface-alt:  var(--paper);         /* controls and insets inside a panel */
+  --surface-sunk: var(--paper-shadow);  /* a recessed or sidelined thing */
+  --line:         var(--ink);           /* linework: every border */
+  --line-soft:    var(--ink-soft);
+  --hairline:     var(--paper-deep);    /* 1px separators, dashed rules */
+  --text:         var(--ink);
+  --text-soft:    var(--ink-soft);
+  --text-dim:     var(--ink-faded);     /* mono labels, column heads */
+  --offset:       var(--ink);           /* the hard manga drop, directive 3 */
+  --fill-solid:   var(--ink);           /* filled bars, primary button, toast */
+  --inert:        var(--paper-deep);    /* a dot that means "nothing happening" */
+  --on-fill:      var(--paper);         /* text on a saturated shatta fill */
+  --on-warm:      var(--ink);           /* text on a flame-soft fill. Constant in BOTH themes:
+                                           the fill is bright either way, so cream on it is
+                                           1.31:1 — the one thing reverse-out must not do. */
+  --hot:          var(--shatta);        /* accent as TEXT, not as fill */
+  --hot-deep:     var(--shatta-deep);
+  --warn-text:    var(--flame);
+  --hatch:        rgba(26, 26, 26, 0.28);
+  --row-bad:      rgba(214, 40, 40, 0.09);
+  --row-warn:     rgba(247, 127, 0, 0.10);
+
+  --shadow:    4px 4px 0 0 var(--offset);
+  --shadow-sm: 3px 3px 0 0 var(--offset);
+  --shadow-red:4px 4px 0 0 var(--shatta);
+}
+
+/* Night panel. There is deliberately no `prefers-color-scheme` block: the inline script in
+   <head> resolves the system preference and always writes an explicit data-theme before
+   first paint, so one source of truth beats two that can disagree. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:         var(--ink);
+  --grain-a:      var(--ink-faded);     /* screentone. Warmer and bolder than the light
+                                           grain on purpose: the same 0.5px dot reads much
+                                           fainter against ink than against paper. */
+  --grain-b:      var(--ink-soft);
+  --surface:      var(--ink-muted);     /* warm brown-black, so panels stay warm paper-stock
+                                           in feel rather than going cold grey */
+  --surface-alt:  var(--ink);
+  --surface-sunk: var(--ink-muted);
+  --surface-sunk: color-mix(in oklab, var(--shatta) 16%, var(--ink));
+  --line:         var(--paper);         /* white ink */
+  --line-soft:    var(--ink-faded);
+  --hairline:     var(--ink-soft);
+  --text:         var(--paper);
+  --text-soft:    var(--paper-shadow);
+  --text-dim:     var(--paper-deep);
+  --offset:       var(--paper-deep);    /* Directive 3 is hard offsets, and this is the token
+                                           that carries it. Light mode drops ink on paper at
+                                           13.7:1, so a faithful reverse-out has to drop paper
+                                           on ink at comparable strength — anything subtle
+                                           flattens every panel into a plain outlined box.
+                                           Screenshot-compared against a dim warm drop at
+                                           2.8:1: that version lost the sticker pop entirely.
+                                           paper-deep rather than full paper keeps the border
+                                           dominant, so the shape still reads before the
+                                           shadow does. */
+  --fill-solid:   var(--paper);
+  --inert:        var(--ink-soft);
+
+  /* Accent-as-text has to be lifted or it is unreadable: raw shatta on the panel fill is
+     2.7:1 and shatta-deep is 1.9:1. These are tints of the same red, which is exactly what
+     the locked palette means by a tonal sibling — shatta-deep is its shade. Each is declared
+     twice so a browser without color-mix() still gets a legible value. */
+  --hot:          #E8836F;
+  --hot:          color-mix(in oklab, var(--shatta) 58%, var(--paper));
+  --hot-deep:     #E4735F;
+  --hot-deep:     color-mix(in oklab, var(--shatta) 64%, var(--paper));
+  --warn-text:    #F9A64A;
+  --warn-text:    color-mix(in oklab, var(--flame) 74%, var(--paper));
+
+  --hatch:        rgba(26, 26, 26, 0.42);
+  --row-bad:      rgba(214, 40, 40, 0.20);
+  --row-warn:     rgba(247, 127, 0, 0.18);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background-color: var(--page);
+  /* paper grain — halftone dots, not a gradient. Directive 1 & 3. */
+  background-image:
+    radial-gradient(var(--grain-a) 0.5px, transparent 0.5px),
+    radial-gradient(var(--grain-b) 0.5px, transparent 0.5px);
+  background-size: 14px 14px, 22px 22px;
+  background-position: 0 0, 7px 11px;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  padding: var(--gutter);
+  min-height: 100vh;
+}
+
+h1, h2, h3, .display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  margin: 0;
+  line-height: 1;
+}
+.mono { font-family: var(--font-mono); }
+
+/* ── the ink panel: the only container shape in the system ────────── */
+.panel {
+  min-width: 0;   /* a panel may never widen the page; children truncate instead */
+  background: var(--surface);
+  border: var(--ink-thick) solid var(--line);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+}
+.panel.alert { box-shadow: var(--shadow-red); border-color: var(--shatta); }
+.panel-title {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: 0.05em;
+  border-bottom: var(--ink-medium) solid var(--line);
+  padding-bottom: 0.35rem;
+  margin-bottom: 0.8rem;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
+}
+.panel-title .sub {
+  font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0;
+  color: var(--text-dim); text-transform: uppercase;
+}
+
+header.hero {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem;
+  border-bottom: var(--ink-bold) solid var(--line);
+  padding-bottom: 0.75rem; margin-bottom: 1.25rem;
+}
+header.hero h1 { font-size: clamp(1.9rem, 5vw, 3rem); }
+.pulse {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  border: var(--ink-medium) solid var(--line); padding: 0.25rem 0.6rem;
+  background: var(--surface-alt);
+}
+.pulse .dot { width: 9px; height: 9px; border: 1px solid var(--line); }
+.pulse.on  .dot { background: var(--shatta); animation: beat 1.4s var(--ease-hover) infinite; }
+.pulse.off .dot { background: var(--inert); }
+.pulse.warn .dot { background: var(--flame); }
+@keyframes beat { 0%,100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+
+/* ── layout ───────────────────────────────────────────────────────── */
+.grid { display: grid; gap: 1.1rem; min-width: 0; }
+.cols-2 { grid-template-columns: 1fr; }
+.cols-3 { grid-template-columns: 1fr; }
+@media (min-width: 760px)  { .cols-2 { grid-template-columns: 1.4fr 1fr; align-items: start; } }
+@media (min-width: 1080px) { .cols-3 { grid-template-columns: repeat(3, 1fr); } }
+
+/* ── progress: halftone fill, hard edge, never a gradient ─────────── */
+.bar { height: 20px; border: var(--ink-medium) solid var(--line); background: var(--surface-alt); display: flex; overflow: hidden; }
+.bar .seg { height: 100%; border-right: var(--ink-thin) solid var(--line); }
+.bar .seg:last-child { border-right: 0; }
+.seg.done  { background: var(--fill-solid); }
+.seg.built { background: var(--flame-soft); background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px); }
+.seg.open  { background: var(--surface-alt); }
+.bar-legend { display: flex; flex-wrap: wrap; gap: 0.85rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-soft); margin-top: 0.4rem; }
+.bar-legend b { color: var(--text); }
+
+.stat { display: flex; flex-direction: column; gap: 0.1rem; }
+.stat .n { font-family: var(--font-display); font-size: 2rem; line-height: 1; }
+.stat .l { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); }
+.statrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 0.9rem; }
+
+/* ── accounts ─────────────────────────────────────────────────────── */
+.acct { border: var(--ink-medium) solid var(--line); background: var(--surface-alt); padding: 0.6rem 0.7rem; margin-bottom: 0.6rem; }
+.acct:last-child { margin-bottom: 0; }
+.acct.cold { border-color: var(--shatta); background: var(--surface-sunk); }
+.acct-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.acct-name { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.04em; }
+.tag { font-family: var(--font-mono); font-size: 0.63rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border: 1px solid var(--line); padding: 0.1rem 0.35rem; background: var(--surface); }
+.tag.hot { background: var(--shatta); color: var(--on-fill); border-color: var(--shatta-deep); }
+.tag.warm { background: var(--flame-soft); color: var(--on-warm); }
+.gauge { height: 9px; border: 1px solid var(--line); background: var(--surface); margin-top: 0.45rem; }
+.gauge > i { display: block; height: 100%; background: var(--fill-solid); }
+.gauge > i.warn { background: var(--flame); }
+.gauge > i.crit { background: var(--shatta); }
+.acct-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-soft); margin-top: 0.4rem; }
+
+/* ── buttons: ink blocks that press into the paper ────────────────── */
+.controls { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+button {
+  font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.06em;
+  background: var(--surface-alt); color: var(--text); cursor: pointer;
+  border: var(--ink-thick) solid var(--line); box-shadow: var(--shadow-sm);
+  padding: 0.45rem 1rem; transition: transform 180ms var(--ease-hover), box-shadow 180ms var(--ease-hover);
+}
+button:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--offset); }
+button:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--offset); }
+button:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+button.go   { background: var(--fill-solid); color: var(--page); }
+button.warn { background: var(--flame-soft); color: var(--on-warm); }
+button.danger { background: var(--shatta); color: var(--on-fill); border-color: var(--shatta-deep); }
+button:focus-visible { outline: var(--ink-thick) solid var(--flame); outline-offset: 2px; }
+
+/* ── live feed ────────────────────────────────────────────────────── */
+.feed { font-family: var(--font-mono); font-size: 0.76rem; }
+/* min-width:0 on both the flex row and the truncating child. Without it a nowrap flex
+   item refuses to shrink below its content, the ellipsis never engages, and a long Bash
+   command drags the panel to 1050px inside a 360px viewport — measured, not theoretical. */
+.feed li { list-style: none; display: flex; gap: 0.5rem; padding: 0.22rem 0; border-bottom: 1px dashed var(--hairline); min-width: 0; }
+.feed li:last-child { border-bottom: 0; }
+.feed .tool { font-weight: 700; min-width: 5.4rem; flex: 0 0 auto; }
+.feed .hint { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.quote {
+  border-left: var(--ink-bold) solid var(--shatta); background: var(--surface-alt);
+  padding: 0.5rem 0.7rem; margin-top: 0.7rem; font-size: 0.85rem; font-style: italic;
+}
+
+/* ── table ────────────────────────────────────────────────────────── */
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.74rem; }
+th, td { text-align: left; padding: 0.32rem 0.5rem; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+th { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); border-bottom: var(--ink-medium) solid var(--line); }
+td.note { white-space: normal; min-width: 16rem; color: var(--text-soft); }
+tr.bad td { background: var(--row-bad); }
+tr.warnrow td { background: var(--row-warn); }
+.pill { border: 1px solid var(--line); padding: 0 0.3rem; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; }
+.pill.clean { background: var(--surface); }
+.pill.bad { background: var(--shatta); color: var(--on-fill); }
+.pill.warn { background: var(--flame-soft); color: var(--on-warm); }
+
+.owed li { list-style: none; border-left: var(--ink-bold) solid var(--flame); background: var(--surface-alt); padding: 0.4rem 0.6rem; margin-bottom: 0.45rem; font-size: 0.84rem; }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 1.1rem; z-index: 20;
+  background: var(--fill-solid); color: var(--page); border: var(--ink-thick) solid var(--line);
+  box-shadow: var(--shadow-red); padding: 0.6rem 1rem; font-family: var(--font-mono); font-size: 0.8rem; max-width: min(92vw, 46rem);
+}
+footer { margin-top: 1.4rem; padding-top: 0.7rem; border-top: var(--ink-medium) dashed var(--line-soft); font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); }
+.nojs { border: var(--ink-thick) solid var(--shatta); background: var(--surface); padding: 1rem; box-shadow: var(--shadow-red); }
+
+/* ── tabs ──────────────────────────────────────────────────────────
+   Same segmented shape as the theme switch, one size up. Consistency here is
+   cheap and it means the two controls teach each other. */
+.tabs { display: inline-flex; border: var(--ink-thick) solid var(--line); box-shadow: var(--shadow-sm); background: var(--surface-alt); margin-bottom: 1.1rem; }
+.tabs button {
+  font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.06em;
+  background: transparent; color: var(--text-dim);
+  border: 0; box-shadow: none; padding: 0.4rem 1.1rem;
+}
+.tabs button + button { border-left: var(--ink-medium) solid var(--line); }
+.tabs button:hover:not(:disabled), .tabs button:active:not(:disabled) { transform: none; box-shadow: none; }
+.tabs button[aria-pressed="false"]:hover { background: var(--surface); color: var(--text); }
+.tabs button[aria-pressed="true"] { background: var(--fill-solid); color: var(--page); }
+.tabs .badge {
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 700;
+  border: 1px solid currentColor; padding: 0 0.25rem; margin-left: 0.45rem; vertical-align: 0.15em;
+}
+
+/* ── the agent grid: one card per agent lifetime ───────────────────── */
+.agentgrid { display: grid; gap: 0.8rem; grid-template-columns: 1fr; }
+@media (min-width: 700px)  { .agentgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1120px) { .agentgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.agent {
+  min-width: 0; text-align: left; width: 100%; cursor: pointer;
+  background: var(--surface-alt); border: var(--ink-medium) solid var(--line);
+  box-shadow: var(--shadow-sm); padding: 0.6rem 0.7rem;
+  font-family: var(--font-body); font-size: 0.85rem; color: var(--text);
+  display: flex; flex-direction: column; gap: 0.3rem;
+  transition: transform 160ms var(--ease-hover), box-shadow 160ms var(--ease-hover);
+}
+.agent:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--offset); }
+.agent:active { transform: translate(2px, 2px); box-shadow: 0 0 0 0 var(--offset); }
+.agent[aria-current="true"] { box-shadow: var(--shadow-red); border-color: var(--shatta); }
+/* a running agent is the only thing on the page that draws a heavy edge */
+.agent.running { border-left: var(--ink-bold) solid var(--shatta); }
+.agent.failed  { border-left: var(--ink-bold) solid var(--shatta); background: var(--surface-sunk); }
+.agent.stopped { opacity: 0.72; }
+.agent.cmd { border-style: dashed; }
+
+.agent-top { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+.agent-name { font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.agent-ix { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-dim); flex: 0 0 auto; }
+.agent-desc { font-size: 0.8rem; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.agent-meta { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-soft); display: flex; flex-wrap: wrap; gap: 0.55rem; }
+.agent-under { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); }
+.agent-last { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* Indeterminate, because the runtime reports no percentage and inventing one would be a lie. */
+.runbar { height: 6px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
+.runbar > i { display: block; height: 100%; width: 100%; }
+.runbar.live > i {
+  background: repeating-linear-gradient(45deg, var(--flame-soft) 0 5px, transparent 5px 10px);
+  background-size: 200% 100%; animation: crawl 900ms linear infinite;
+}
+.runbar.done > i { background: var(--fill-solid); }
+.runbar.cold > i { background: var(--inert); }
+.runbar.bad  > i { background: var(--shatta); }
+@keyframes crawl { from { background-position: 0 0; } to { background-position: -20px 0; } }
+
+.sdot { width: 8px; height: 8px; border: 1px solid var(--line); flex: 0 0 auto; }
+.sdot.running { background: var(--shatta); animation: beat 1.4s var(--ease-hover) infinite; }
+.sdot.completed { background: var(--fill-solid); }
+.sdot.stopped { background: var(--inert); }
+.sdot.failed { background: var(--shatta); }
+
+/* ── agent detail: a sheet, not a modal — the grid stays readable behind it ── */
+.sheet { position: fixed; inset: auto 0 0 0; max-height: 76vh; z-index: 30; display: flex; flex-direction: column;
+  background: var(--surface); border-top: var(--ink-bold) solid var(--line); box-shadow: 0 -6px 0 0 var(--offset); }
+@media (min-width: 900px) { .sheet { inset: 0 0 0 auto; width: min(46rem, 52vw); max-height: none; border-top: 0; border-left: var(--ink-bold) solid var(--line); box-shadow: -6px 0 0 0 var(--offset); } }
+.sheet-head { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.8rem 1rem; border-bottom: var(--ink-medium) solid var(--line); }
+.sheet-body { overflow-y: auto; padding: 0.9rem 1rem 1.4rem; min-height: 0; }
+.sheet h4 { font-family: var(--font-mono); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-dim); margin: 1.1rem 0 0.4rem; }
+.sheet h4:first-child { margin-top: 0; }
+.sheet pre { font-family: var(--font-mono); font-size: 0.7rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+  background: var(--surface-alt); border: var(--ink-thin) solid var(--line); padding: 0.6rem; margin: 0; max-height: 22rem; overflow-y: auto; }
+.trace { list-style: none; margin: 0; padding: 0; font-family: var(--font-mono); font-size: 0.7rem; }
+.trace li { display: flex; gap: 0.5rem; padding: 0.2rem 0; border-bottom: 1px dashed var(--hairline); min-width: 0; }
+.trace li:last-child { border-bottom: 0; }
+.trace .k { flex: 0 0 4.6rem; font-weight: 700; }
+.trace .k.say { color: var(--hot); }
+.trace .d { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.trace li.saying .d { font-family: var(--font-body); font-size: 0.78rem; font-style: italic; }
+
+/* ── management: the three you can talk to ─────────────────────────
+   A card per role, and a chat on the right when you open one. The card has to
+   answer "is it working, and on what" without being clicked — a panel you must
+   open to learn whether anything is happening is a panel you stop opening. */
+.rolegrid { display: grid; gap: 0.9rem; grid-template-columns: 1fr; }
+@media (min-width: 820px) { .rolegrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.role {
+  min-width: 0; width: 100%; text-align: left; cursor: pointer;
+  background: var(--surface-alt); border: var(--ink-thick) solid var(--line);
+  box-shadow: var(--shadow); padding: 0.85rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  font-family: var(--font-body); color: var(--text);
+  transition: transform 160ms var(--ease-hover), box-shadow 160ms var(--ease-hover);
+}
+.role:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 0 var(--offset); }
+.role:active { transform: translate(2px, 2px); box-shadow: 0 0 0 0 var(--offset); }
+.role[aria-current="true"] { border-color: var(--shatta); box-shadow: var(--shadow-red); }
+.role.working { border-left: var(--ink-heavy, 8px) solid var(--shatta); }
+
+.role-name { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: 0.03em; line-height: 1; }
+.role-tag { font-size: 0.8rem; color: var(--text-soft); line-height: 1.35; }
+.role-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.chip {
+  font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; border: 1px solid var(--line); padding: 0.05rem 0.3rem;
+}
+.chip.live { background: var(--shatta); color: var(--on-fill); border-color: var(--shatta); }
+.chip.ro { background: var(--surface); color: var(--text-dim); }
+.chip.warn { background: var(--flame-soft); color: var(--on-warm); border-color: var(--flame); }
+.role-said {
+  font-size: 0.79rem; line-height: 1.4; color: var(--text-soft);
+  border-left: var(--ink-medium) solid var(--hairline); padding-left: 0.5rem;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.role-doing { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); }
+.role-doing div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-foot { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* ── the chat ───────────────────────────────────────────────────────── */
+.chatwrap { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.chatlog { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding-right: 0.2rem; }
+.turn { margin-bottom: 0.7rem; }
+.turn .who {
+  font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 0.2rem;
+}
+.turn .said {
+  font-size: 0.86rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: var(--ink-thin) solid var(--hairline); background: var(--surface-alt); padding: 0.5rem 0.6rem;
+}
+.turn.me .said { background: var(--surface); border-left: var(--ink-thick) solid var(--line); }
+.turn.them .said { border-left: var(--ink-thick) solid var(--shatta); }
+.turn.err .said { border-color: var(--shatta); color: var(--hot); }
+.turn .meta { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim); margin-top: 0.15rem; }
+.turn details { margin-top: 0.25rem; }
+.turn summary { font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim); cursor: pointer; }
+.turn details ul { list-style: none; margin: 0.25rem 0 0; padding: 0; font-family: var(--font-mono); font-size: 0.62rem; }
+.turn details li { padding: 0.1rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.thinking { border: var(--ink-medium) dashed var(--shatta); padding: 0.5rem 0.6rem; margin-bottom: 0.7rem; }
+.thinking .lab { font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--hot); }
+.thinking ul { list-style: none; margin: 0.3rem 0 0; padding: 0; font-family: var(--font-mono); font-size: 0.64rem; }
+.thinking li { padding: 0.08rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.composer { flex: 0 0 auto; border-top: var(--ink-medium) solid var(--line); padding-top: 0.6rem; margin-top: 0.6rem; }
+.composer textarea {
+  width: 100%; font-family: var(--font-body); font-size: 0.86rem; line-height: 1.45;
+  padding: 0.5rem 0.6rem; min-height: 4.2rem; resize: vertical;
+  background: var(--surface-alt); color: var(--text); border: var(--ink-medium) solid var(--line);
+}
+.composer textarea:focus-visible { outline: var(--ink-medium) solid var(--flame); outline-offset: 1px; }
+.composer .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.45rem; }
+.composer .hint { font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim); flex: 1 1 8rem; min-width: 0; }
+
+.tasklist { list-style: none; margin: 0.4rem 0 0; padding: 0; font-family: var(--font-mono); font-size: 0.68rem; }
+.tasklist li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.2rem 0; border-bottom: 1px dashed var(--hairline); }
+.tasklist li:last-child { border-bottom: 0; }
+.tasklist .t { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tasklist .st { flex: 0 0 auto; font-size: 0.56rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-dim); }
+
+/* ── the founder brief: a journey you can walk ──────────────────────
+   Density is the point. A founder opens this once per spec, works down it, and
+   must be able to tell at a glance which step is next — so the current step is
+   the only loud thing on the sheet. */
+.owed li button.owedrow {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: 0; box-shadow: none; padding: 0; font: inherit; color: inherit; cursor: pointer;
+}
+.owed li button.owedrow:hover:not(:disabled),
+.owed li button.owedrow:active:not(:disabled) { transform: none; box-shadow: none; }
+.owed li button.owedrow:hover .owedtitle { text-decoration: underline; }
+.owedmeta { font-family: var(--font-mono); font-size: 0.64rem; color: var(--text-dim); margin-top: 0.2rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.owedmeta .ready { color: var(--hot); font-weight: 700; }
+
+.minibar { height: 5px; border: 1px solid var(--line); background: var(--surface-alt); margin-top: 0.3rem; max-width: 14rem; }
+.minibar > i { display: block; height: 100%; background: var(--fill-solid); }
+.minibar > i.full { background: var(--shatta); }
+
+.bigbar { height: 14px; border: var(--ink-medium) solid var(--line); background: var(--surface-alt); }
+.bigbar > i { display: block; height: 100%; background: var(--flame-soft);
+  background-image: repeating-linear-gradient(45deg, transparent 0 4px, var(--hatch) 4px 5px); }
+.bigbar > i.full { background: var(--fill-solid); background-image: none; }
+
+.stepnav {
+  position: sticky; top: 0; z-index: 2; margin: -0.9rem -1rem 0.9rem; padding: 0.6rem 1rem;
+  background: var(--surface); border-bottom: var(--ink-medium) solid var(--line);
+}
+.stepnav .row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+.stepnav .count { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.03em; flex: 0 0 auto; }
+
+.sect { margin-top: 1.4rem; }
+.sect:first-of-type { margin-top: 0; }
+.sect > h5 {
+  font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.04em;
+  margin: 0 0 0.15rem; display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+}
+.sect > h5 .pri { font-family: var(--font-mono); font-size: 0.6rem; border: 1px solid var(--line); padding: 0 0.25rem; }
+.sect > h5 .opt { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim); border: 0; }
+.sect > .note { font-size: 0.82rem; color: var(--text-soft); margin: 0 0 0.6rem; line-height: 1.4; }
+
+.check { display: flex; gap: 0.6rem; padding: 0.5rem 0.6rem; border: var(--ink-thin) solid var(--hairline); margin-bottom: 0.45rem; background: var(--surface-alt); }
+.check.done { opacity: 0.62; }
+.check.next { border: var(--ink-thick) solid var(--shatta); box-shadow: var(--shadow-sm); opacity: 1; background: var(--surface); }
+.check input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; margin: 0.15rem 0 0; flex: 0 0 auto;
+  width: 17px; height: 17px; border: var(--ink-medium) solid var(--line);
+  background: var(--surface-alt); cursor: pointer; display: grid; place-content: center;
+}
+.check input[type="checkbox"]:checked { background: var(--fill-solid); }
+.check input[type="checkbox"]:checked::after { content: ''; width: 9px; height: 5px; border-left: 2px solid var(--page); border-bottom: 2px solid var(--page); transform: rotate(-45deg) translate(1px, -2px); }
+.check input[type="checkbox"]:focus-visible { outline: var(--ink-medium) solid var(--flame); outline-offset: 2px; }
+.check .body { flex: 1 1 auto; min-width: 0; }
+.check .ct { font-weight: 700; font-size: 0.86rem; display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.check .ct .tag { font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.08em; background: var(--shatta); color: var(--on-fill); padding: 0 0.3rem; }
+.check .cd { font-size: 0.82rem; line-height: 1.45; margin-top: 0.2rem; color: var(--text-soft); }
+.gwt { margin-top: 0.35rem; font-size: 0.82rem; line-height: 1.45; }
+.gwt div { display: flex; gap: 0.5rem; padding: 0.1rem 0; }
+.gwt b { font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.08em; flex: 0 0 3.4rem; padding-top: 0.2rem; color: var(--text-dim); }
+.gwt span { flex: 1 1 auto; min-width: 0; }
+.cmds { margin-top: 0.35rem; }
+.cmds code { display: block; font-family: var(--font-mono); font-size: 0.7rem; background: var(--surface); border: var(--ink-thin) solid var(--hairline); padding: 0.22rem 0.4rem; margin-bottom: 0.2rem; overflow-wrap: anywhere; }
+.prov { font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim); margin-top: 0.3rem; }
+.notebox { margin-top: 0.4rem; }
+.notebox textarea {
+  width: 100%; font-family: var(--font-body); font-size: 0.8rem; padding: 0.35rem 0.45rem;
+  background: var(--surface-alt); color: var(--text); border: var(--ink-thin) solid var(--line); resize: vertical; min-height: 2.4rem;
+}
+.notebox textarea:focus-visible { outline: var(--ink-medium) solid var(--flame); outline-offset: 1px; }
+
+.signoff { margin-top: 1.6rem; border: var(--ink-thick) solid var(--line); padding: 0.9rem; background: var(--surface-alt); }
+.signoff.ready { border-color: var(--shatta); box-shadow: var(--shadow-red); }
+.signoff h5 { font-family: var(--font-display); font-size: 1.2rem; letter-spacing: 0.04em; margin: 0 0 0.35rem; }
+.signoff p { font-size: 0.82rem; line-height: 1.45; margin: 0 0 0.7rem; color: var(--text-soft); }
+.problems { margin-top: 1.4rem; border-left: var(--ink-bold) solid var(--flame); padding: 0.5rem 0.7rem; background: var(--surface-alt); }
+.problems li { font-family: var(--font-mono); font-size: 0.68rem; margin-bottom: 0.2rem; overflow-wrap: anywhere; }
+
+/* ── history: what has already returned ────────────────────────────
+   A row, not a card. 24 finished commands as cards is 24 pieces of furniture
+   for information nobody is acting on; the same 24 as rows is a scannable
+   record that stays out of the way of the two things actually running. */
+.hist { list-style: none; margin: 0; padding: 0; }
+.histrow {
+  display: flex; align-items: baseline; gap: 0.55rem; width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none;
+  border-bottom: 1px dashed var(--hairline);
+  padding: 0.28rem 0.2rem; font-family: var(--font-mono); font-size: 0.72rem;
+  color: var(--text); cursor: pointer; min-width: 0;
+}
+.histrow:hover:not(:disabled) { background: var(--surface-alt); transform: none; box-shadow: none; }
+.histrow:active:not(:disabled) { transform: none; box-shadow: none; }
+.histrow[aria-current="true"] { background: var(--surface-alt); border-left: var(--ink-thick) solid var(--shatta); padding-left: 0.4rem; }
+/* Wraps rather than clips. `flex: 0 0 auto` on the stat made it refuse to shrink below its
+   content, so at 360px "17 tools · 30k tok · 1m" pushed the page 12px wider than the viewport
+   — the same trap that once dragged a panel to 1050px inside a 360px screen. Wrapping keeps
+   every figure readable instead of trading overflow for truncation. */
+.histrow { flex-wrap: wrap; }
+.histrow .hname { font-family: var(--font-display); font-size: 0.92rem; letter-spacing: 0.03em; flex: 0 0 auto; }
+.histrow .hdesc { flex: 1 1 6rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+.histrow .hstat { flex: 0 1 auto; margin-left: auto; color: var(--text-dim); font-size: 0.64rem; }
+.histrow.failed .hname { color: var(--hot); }
+
+/* ── where we are ──────────────────────────────────────────────────── */
+.where-head { font-family: var(--font-display); font-size: clamp(1.15rem, 2.6vw, 1.6rem); line-height: 1.15; }
+.where-phase { font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-top: 0.3rem; }
+.where-list { list-style: none; margin: 0.8rem 0 0; padding: 0; }
+.where-list li { border-left: var(--ink-thick) solid var(--line); padding: 0.25rem 0 0.25rem 0.6rem; margin-bottom: 0.4rem; font-size: 0.85rem; }
+.where-list li.block { border-left-color: var(--shatta); }
+.where-src { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); margin-top: 0.7rem; }
+.linkish { background: none; border: 0; box-shadow: none; padding: 0; font: inherit; color: var(--hot); text-decoration: underline; cursor: pointer; }
+.linkish:hover:not(:disabled), .linkish:active:not(:disabled) { transform: none; box-shadow: none; }
+
+/* ── theme switch: one ink block cut into three ────────────────────
+   Three states, not two. AUTO has to exist as its own position, because a
+   two-way toggle cannot express "follow the machine" — the moment you touch
+   it you have silently opted out of the system setting forever. */
+.theme-seg {
+  display: inline-flex; align-items: stretch;
+  border: var(--ink-thick) solid var(--line);
+  box-shadow: var(--shadow-sm);
+  background: var(--surface-alt);
+}
+.theme-seg button {
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.11em; text-transform: uppercase;
+  background: transparent; color: var(--text-dim);
+  border: 0; border-radius: 0; box-shadow: none;
+  padding: 0.34rem 0.55rem; line-height: 1;
+  transition: background 140ms var(--ease-hover), color 140ms var(--ease-hover);
+}
+.theme-seg button + button { border-left: var(--ink-medium) solid var(--line); }
+/* the generic button rules lift and drop on press; a segment of a switch must not move */
+.theme-seg button:hover:not(:disabled),
+.theme-seg button:active:not(:disabled) { transform: none; box-shadow: none; }
+.theme-seg button:hover[aria-pressed="false"] { background: var(--surface); color: var(--text); }
+.theme-seg button[aria-pressed="true"] { background: var(--fill-solid); color: var(--page); }
+
+/* Directive 3 is linework and hard offsets — neither needs motion to read. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+<div id="root"><div class="nojs"><strong>Loading the control room…</strong><br>If this persists, React could not be fetched. The terminal dashboard always works: <code>pnpm my-spec</code></div></div>
+
+<!-- React is VENDORED, not fetched from a CDN. This page can start and kill processes
+     through an unauthenticated local API, so a third-party script tag would be a
+     supply-chain path straight into process control. Pinning an SRI hash would help; not
+     loading remote code at all is better, and it works offline. -->
+<meta name="loop-token" content="__LOOP_TOKEN__">
+<script src="/react.production.min.js"></script>
+<script src="/react-dom.production.min.js"></script>
+<script>
+const { useState, useEffect, useCallback, useRef, useMemo, createElement: h } = React;
+
+// Per-server-start control token, injected into this HTML as it was served. A cross-origin
+// page cannot read this document, so it cannot replay it — that is what makes the POST
+// routes CSRF-resistant rather than merely loopback-bound.
+const TOKEN = document.querySelector('meta[name="loop-token"]').content;
+
+/* ── theme ─────────────────────────────────────────────────────────────
+   Three modes: auto, light, dark. The resolved answer is written to
+   data-theme on <html>, always explicitly, by the pre-paint script in
+   <head> and then by this hook. The CSS carries no prefers-color-scheme
+   block on purpose — one source of truth cannot disagree with itself.
+   -------------------------------------------------------------------- */
+/* ── management ────────────────────────────────────────────────────────
+   Three roles, each a Claude Code session held open across turns. The loop had
+   one overseer and nothing audited it, which is how 006 came to be marked built
+   when it had never been started — so the manager exists to disagree with the
+   supervisor, and the special agent exists for whatever you need that is neither.
+
+   Replies stream. Each tool call a role makes arrives as it happens, so you watch
+   it read the ledger rather than watching a spinner.
+   -------------------------------------------------------------------- */
+
+const roleAgo = (iso) => {
+  if (!iso) return 'never';
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return Math.round(s) + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+};
+
+const money = (n) => '$' + (Number(n) || 0).toFixed(2);
+
+const RoleCard = ({ role, live, selected, onOpen }) =>
+  h('button', {
+    className: 'role' + (role.busy || live ? ' working' : ''),
+    'aria-current': selected ? 'true' : 'false',
+    onClick: () => onOpen(role.id),
+  },
+    h('div', { className: 'role-name' }, role.name),
+    h('div', { className: 'role-tag' }, role.tagline),
+    h('div', { className: 'role-chips' },
+      (role.busy || live)
+        ? h('span', { className: 'chip live' }, 'working now')
+        : h('span', { className: 'chip ro' }, role.started ? 'idle' : 'not started yet'),
+      // The permission mode is shown, not assumed. An auditor that could edit what it audits
+      // would not be an auditor, and you should be able to see that rather than trust it.
+      h('span', { className: 'chip ro' }, role.permissionMode === 'plan' ? 'read-only' : role.permissionMode),
+      role.openTasks > 0 && h('span', { className: 'chip warn' }, role.openTasks + ' task' + (role.openTasks > 1 ? 's' : '')),
+      role.id === 'special' && !role.hasMandate && h('span', { className: 'chip ro' }, 'no mandate yet')),
+    role.lastSaid
+      ? h('div', { className: 'role-said' }, role.lastSaid)
+      : h('div', { className: 'role-said', style: { fontStyle: 'italic' } },
+          'Nothing said yet. Open it and ask something — it reads the loop’s own state files to answer.'),
+    live?.length > 0 && h('div', { className: 'role-doing' },
+      live.slice(-2).map((st, i) => h('div', { key: i }, st.tool + '  ' + st.detail))),
+    h('div', { className: 'role-foot' },
+      h('span', null, role.turns + ' turn' + (role.turns === 1 ? '' : 's')),
+      h('span', null, money(role.costUsd)),
+      h('span', null, roleAgo(role.lastAt))));
+
+const ChatSheet = ({ role, detail, liveSteps, partial, draft, onDraft, onSend, onClose, onTask, onMandate, busy }) => {
+  if (!role) return null;
+  const msgs = detail?.messages ?? [];
+  const tasks = detail?.tasks ?? [];
+  const working = role.busy || liveSteps.length > 0;
+
+  return h('div', { className: 'sheet', role: 'dialog', 'aria-label': 'Chat with ' + role.name },
+    h('div', { className: 'sheet-head' },
+      h('i', { className: 'sdot ' + (working ? 'running' : 'completed') }),
+      h('span', { className: 'display', style: { fontSize: '1.3rem', flex: 1, minWidth: 0 } }, role.name),
+      h('button', { onClick: onClose }, 'Close')),
+
+    h('div', { className: 'sheet-body chatwrap' },
+      h('div', { className: 'prov', style: { marginBottom: '0.5rem' } },
+        role.tagline + ' · ' + (role.permissionMode === 'plan' ? 'read-only: it can read this repo, not change it' : 'mode ' + role.permissionMode) +
+        ' · ' + (detail?.session?.turns ?? 0) + ' turns, ' + money(detail?.session?.costUsd)),
+
+      h('div', { className: 'chatlog' },
+        msgs.length === 0 && !working && h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+          'No conversation yet. It reads QUEUE.json, LEDGER.jsonl, driver.log and the live tick to answer, and is told to say when it has not checked something rather than guess.'),
+
+        msgs.map((m, i) => h('div', { key: i, className: 'turn ' + (m.from === 'founder' ? 'me' : 'them') + (m.error ? ' err' : '') },
+          h('div', { className: 'who' }, m.from === 'founder' ? 'you' : role.name),
+          h('div', { className: 'said' }, m.text),
+          h('div', { className: 'meta' },
+            roleAgo(m.at) + (m.costUsd ? ' · ' + money(m.costUsd) : '') + (m.error ? ' · ' + m.error : '')),
+          m.activity?.length > 0 && h('details', null,
+            h('summary', null, 'what it read (' + m.activity.length + ')'),
+            h('ul', null, m.activity.map((a, j) => h('li', { key: j }, a.tool + '  ' + a.detail)))))),
+
+        // While it works, the tool calls appear here as they happen. This is the difference
+        // between "it is thinking" and knowing it just opened the wrong file.
+        working && h('div', { className: 'thinking' },
+          h('div', { className: 'lab' }, 'working'),
+          partial && h('div', { className: 'said', style: { border: 0, background: 'transparent', padding: '0.2rem 0' } }, partial),
+          h('ul', null, liveSteps.slice(-6).map((st, i) => h('li', { key: i }, st.tool + '  ' + st.detail))))),
+
+      tasks.length > 0 && h('div', null,
+        h('h5', { style: { fontFamily: 'var(--font-mono)', fontSize: '0.62rem', letterSpacing: '0.09em', textTransform: 'uppercase', color: 'var(--text-dim)', margin: '0.8rem 0 0' } }, 'tasks you gave it'),
+        h('ul', { className: 'tasklist' }, tasks.slice(-8).reverse().map((t) => h('li', { key: t.id },
+          h('span', { className: 't' }, t.text),
+          h('span', { className: 'st' }, t.scheduledFor ? 'for ' + t.scheduledFor : t.status))))),
+
+      role.id === 'special' && h('details', { style: { marginTop: '0.8rem' } },
+        h('summary', { className: 'mono', style: { fontSize: '0.64rem', color: 'var(--text-dim)', cursor: 'pointer' } },
+          detail?.mandate ? 'edit this agent’s mandate' : 'give this agent a mandate'),
+        h('div', { className: 'notebox' },
+          h('textarea', {
+            defaultValue: detail?.mandate ?? '',
+            placeholder: 'What is this agent for? Written to roles/special/mandate.md and read at the start of every session.',
+            onBlur: (e) => onMandate(e.target.value),
+            style: { minHeight: '6rem' },
+          }))),
+
+      h('div', { className: 'composer' },
+        h('textarea', {
+          value: draft, disabled: busy,
+          placeholder: working
+            ? 'It is still answering — a session cannot be resumed twice at once, so wait for the reply.'
+            : 'Ask what it is doing, give it a task, or tell it to look at something. Enter sends; Shift+Enter for a new line.',
+          onChange: (e) => onDraft(e.target.value),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
+          },
+        }),
+        h('div', { className: 'row' },
+          h('button', { className: 'go', disabled: busy || working || !draft.trim(), onClick: onSend }, working ? 'Answering…' : 'Send'),
+          h('button', { disabled: busy || !draft.trim(), onClick: () => onTask(draft) }, 'Queue as a task'),
+          // Every message reloads the full toolset before it reads the question, so the first
+          // turn of a session measured $0.42. Saying so is cheaper than a surprise.
+          h('span', { className: 'hint' }, 'each message is a real session turn — roughly $0.20–$0.50 of quota')))));
+};
+
+/* ── the founder brief ─────────────────────────────────────────────────
+   Everything on this sheet is read out of the repo by lib/founder-brief.mjs:
+   the checks are the spec's own Given/When/Then acceptance scenarios, the
+   setup steps are docs/dev-setup.md, the decisions are PARKED.md. Each one
+   prints the file and line it came from, because a checklist a founder cannot
+   audit is worth no more than the claim that the work is already done.
+   -------------------------------------------------------------------- */
+
+/** file:line, or a file plus a note when the source is a document without one. */
+const provenance = (src) => {
+  if (!src) return null;
+  const base = String(src.file).replace(/\\/g, '/');
+  return base + (src.line ? ':' + src.line : '') + (src.note ? ' (' + src.note + ')' : '');
+};
+
+const CheckRow = ({ check, sectionKey, isDone, isNext, note, onToggle, onNote, busy }) => {
+  const [draft, setDraft] = useState(note ?? '');
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setDraft(note ?? ''); }, [note]);
+  const gwt = check.given;
+  const showNote = editing || Boolean(note) || isNext;
+
+  return h('div', {
+    className: 'check' + (isDone ? ' done' : '') + (isNext ? ' next' : ''),
+    'data-next': isNext ? 'true' : undefined,
+  },
+    h('input', {
+      type: 'checkbox', checked: isDone, disabled: busy,
+      'aria-label': check.title + (isDone ? ' (done)' : ''),
+      onChange: (e) => onToggle(check.key, e.target.checked),
+    }),
+    h('div', { className: 'body' },
+      h('div', { className: 'ct' },
+        h('span', null, check.title),
+        isNext && h('span', { className: 'tag' }, 'do this next')),
+      // A Given/When/Then reads as a test when it is laid out as one, and as a wall of
+      // italics when it is not.
+      gwt && (gwt.given || gwt.when || gwt.then)
+        ? h('div', { className: 'gwt' },
+            gwt.given && h('div', null, h('b', null, 'GIVEN'), h('span', null, gwt.given)),
+            gwt.when && h('div', null, h('b', null, 'WHEN'), h('span', null, gwt.when)),
+            gwt.then && h('div', null, h('b', null, 'THEN'), h('span', null, gwt.then)))
+        : check.detail && h('div', { className: 'cd' }, check.detail),
+      check.commands?.length > 0 && h('div', { className: 'cmds' },
+        check.commands.map((cmd, i) => h('code', { key: i }, cmd))),
+      provenance(check.source) && h('div', { className: 'prov' }, 'from ' + provenance(check.source)),
+      showNote && h('div', { className: 'notebox' },
+        h('textarea', {
+          value: draft, placeholder: 'What did you actually see? (optional, saved with the sign-off)',
+          onChange: (e) => { setDraft(e.target.value); setEditing(true); },
+          onBlur: () => { if (draft !== (note ?? '')) onNote(check.key, draft); setEditing(false); },
+        })),
+      !showNote && h('button', { className: 'linkish', onClick: () => setEditing(true) }, 'add a note')));
+};
+
+const BriefSheet = ({ brief, busy, onToggle, onNote, onSignoff, onClose }) => {
+  if (!brief) return null;
+  if (brief.error) {
+    return h('div', { className: 'sheet', role: 'dialog' },
+      h('div', { className: 'sheet-head' },
+        h('span', { className: 'display', style: { fontSize: '1.2rem', flex: 1 } }, 'Could not build the brief'),
+        h('button', { onClick: onClose }, 'Close')),
+      h('div', { className: 'sheet-body' }, h('pre', null, brief.error)));
+  }
+
+  const pg = brief.progress || { blockingDone: 0, blockingTotal: 0, checked: {}, notes: {} };
+  const checked = pg.checked || {};
+  const notes = pg.notes || {};
+
+  // "One by one" is this line: the first unticked BLOCKING check is the only step marked, so
+  // there is never a question about where to resume.
+  let nextKey = null;
+  for (const section of brief.sections) {
+    if (NON_BLOCKING.has(section.key)) continue;
+    for (const c of section.checks) { if (!checked[c.key] && !nextKey) nextKey = c.key; }
+  }
+
+  const frac = pg.blockingTotal ? pg.blockingDone / pg.blockingTotal : 0;
+  const ready = pg.blockingTotal > 0 && pg.blockingDone === pg.blockingTotal;
+  const signedOff = brief.signedOffInGit || Boolean(pg.signedOffAt);
+
+  const jumpToNext = () => {
+    const el = document.querySelector('.check[data-next="true"]');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  return h('div', { className: 'sheet', role: 'dialog', 'aria-label': 'Founder brief: ' + brief.title },
+    h('div', { className: 'sheet-head' },
+      h('span', { className: 'display', style: { fontSize: '1.25rem', flex: 1, minWidth: 0 } }, brief.title),
+      h('button', { onClick: onClose }, 'Close')),
+
+    h('div', { className: 'sheet-body' },
+      h('div', { className: 'stepnav' },
+        h('div', { className: 'row' },
+          h('span', { className: 'count' }, pg.blockingDone + ' / ' + pg.blockingTotal),
+          h('span', { style: { flex: 1, minWidth: '6rem' } },
+            h('div', { className: 'bigbar' }, h('i', { className: ready ? 'full' : '', style: { width: Math.round(frac * 100) + '%' } }))),
+          nextKey
+            ? h('button', { onClick: jumpToNext }, 'Next step')
+            : h('span', { className: 'mono', style: { fontSize: '0.68rem', color: 'var(--hot)', fontWeight: 700 } }, 'all checks walked'))),
+
+      h('p', { style: { fontSize: '0.9rem', lineHeight: 1.5, marginTop: 0 } }, brief.headline),
+      brief.why && h('p', { style: { fontSize: '0.84rem', lineHeight: 1.5, color: 'var(--text-soft)' } }, brief.why),
+      brief.specDir && h('div', { className: 'prov' }, 'spec: ' + String(brief.specDir).replace(/\\/g, '/')),
+      brief.affectsSpec && h('div', { className: 'prov' }, 'affects spec ' + brief.affectsSpec),
+
+      brief.sections.map((section) => h('div', { className: 'sect', key: section.key },
+        h('h5', null,
+          section.title,
+          section.priority && h('span', { className: 'pri' }, section.priority),
+          NON_BLOCKING.has(section.key) &&
+            h('span', { className: 'opt' }, 'does not gate sign-off')),
+        section.note && h('p', { className: 'note' }, section.note),
+        section.independentTest && h('p', { className: 'note' },
+          h('b', null, 'How it is proved automatically: '), section.independentTest),
+        section.checks.map((check) => h(CheckRow, {
+          key: check.key, check, sectionKey: section.key,
+          isDone: Boolean(checked[check.key]), isNext: check.key === nextKey,
+          note: notes[check.key], onToggle, onNote, busy,
+        })))),
+
+      // Honest about its own gaps. A brief that quietly emits fewer checks because a document
+      // did not parse is indistinguishable from a feature with less to test.
+      brief.problems?.length > 0 && h('div', { className: 'problems' },
+        h('div', { className: 'mono', style: { fontSize: '0.66rem', fontWeight: 700, marginBottom: '0.3rem' } },
+          brief.problems.length + ' thing(s) this brief could not read — checks may be missing:'),
+        h('ul', { style: { margin: 0, paddingLeft: '1rem' } },
+          brief.problems.map((pr, i) => h('li', { key: i }, pr)))),
+
+      brief.kind === 'spec' && h('div', { className: 'signoff' + (ready && !signedOff ? ' ready' : '') },
+        h('h5', null, signedOff ? 'Signed off' : 'Sign off spec ' + brief.id),
+        h('p', null,
+          signedOff
+            ? 'A signed-off/' + brief.id + ' tag exists in git. The driver frees the review slot at its next tick boundary, and the loop opens the next spec.'
+            : ready
+              ? 'Every blocking check is ticked. Signing off creates an annotated git tag, which is what the driver reads — it is not a dashboard flag, and it survives this machine.'
+              : (pg.blockingTotal - pg.blockingDone) + ' check(s) still unticked. Sign-off is refused until then: a button that works regardless of the checklist is just a faster way to make the same unverified claim the loop is already forbidden from making.'),
+        h('button', {
+          className: ready && !signedOff ? 'danger' : '',
+          disabled: busy || signedOff || !ready,
+          onClick: () => onSignoff(brief.id),
+        }, signedOff ? 'Already signed off' : 'Sign off ' + brief.id))));
+};
+
+/** Sections that inform but do not gate — mirrors NON_BLOCKING_SECTIONS in founder-checks.mjs. */
+const NON_BLOCKING = new Set(['setup', 'routes']);
+
+
+const THEME_KEY = (window.__loopTheme && window.__loopTheme.key) || 'loop-theme';
+const prefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+const resolveTheme = (mode) => mode === 'dark' || (mode === 'auto' && prefersDark());
+
+/** The tab icon is part of the drawing: a cream stamp beside dark tabs reads as a mistake. */
+function paintFavicon(dark) {
+  const page = dark ? '%231A1A1A' : '%23EDE4CC';
+  const line = dark ? '%23EDE4CC' : '%231A1A1A';
+  const svg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E" +
+    "%3Crect width='32' height='32' fill='" + page + "'/%3E" +
+    "%3Crect x='3' y='3' width='26' height='26' fill='none' stroke='" + line + "' stroke-width='3'/%3E" +
+    "%3Ccircle cx='16' cy='16' r='6' fill='%23D62828'/%3E%3C/svg%3E";
+  let el = document.querySelector('link[rel="icon"]');
+  if (!el) { el = document.createElement('link'); el.rel = 'icon'; document.head.appendChild(el); }
+  el.href = svg;
+}
+
+function useTheme() {
+  const [mode, setMode] = useState(() => (window.__loopTheme && window.__loopTheme.mode) || 'auto');
+  useEffect(() => {
+    const apply = (dark) => {
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      paintFavicon(dark);
+    };
+    apply(resolveTheme(mode));
+    try { localStorage.setItem(THEME_KEY, mode); } catch { /* private mode — the choice just will not survive a reload */ }
+    if (mode !== 'auto') return undefined;
+    // Only AUTO tracks the machine, and it tracks it LIVE — a system flip at dusk should
+    // land on an open dashboard, which is the whole reason auto is a distinct position.
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => apply(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [mode]);
+  return [mode, setMode];
+}
+
+const THEME_MODES = [
+  ['auto', 'Auto', 'Follow the system setting'],
+  ['light', 'Paper', 'Cream paper, black ink'],
+  ['dark', 'Night', 'The same drawing reversed out — white ink on a night panel'],
+];
+
+const ThemeSwitch = ({ mode, onPick }) =>
+  h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Colour theme' },
+    THEME_MODES.map(([id, label, hint]) =>
+      h('button', {
+        key: id, type: 'button', title: hint,
+        'aria-pressed': mode === id ? 'true' : 'false',
+        onClick: () => onPick(id),
+      }, label)));
+
+/* ── the live feed ─────────────────────────────────────────────────────
+   One EventSource for the whole page. It carries four kinds of message:
+
+     hello   the full agent tree as it stands, so arriving mid-tick shows the
+             whole tick rather than only what happens after you looked
+     agents  changed agents plus the activity lines appended since the last frame
+     where   the derived narrative
+     state   the same payload /api/state returns, pushed instead of polled
+
+   EventSource reconnects by itself, which is most of why the transport is SSE.
+   A slow poll stays as a backstop: if the stream dies in a way the browser does
+   not notice, the page must go stale-and-visibly-so, never silently frozen.
+   -------------------------------------------------------------------- */
+function useLive() {
+  const [agents, setAgents] = useState([]);
+  const [counts, setCounts] = useState({});
+  const [meta, setMeta] = useState(null);
+  const [where, setWhere] = useState(null);
+  const [state, setState] = useState(null);
+  const [link, setLink] = useState('connecting');
+  const [lastAt, setLastAt] = useState(null);
+  const [roleEvent, setRoleEvent] = useState(null);
+  // Activity is kept outside React state and mirrored through a counter: appending to a
+  // per-agent log 150 lines at a time would otherwise re-render the whole grid each frame.
+  const trace = useRef(new Map());
+  const [traceTick, setTraceTick] = useState(0);
+
+  useEffect(() => {
+    const es = new EventSource('/api/live');
+    const stamp = () => setLastAt(Date.now());
+
+    es.onopen = () => { setLink('live'); stamp(); };
+    es.onerror = () => setLink('reconnecting');
+
+    es.addEventListener('hello', (e) => {
+      const d = JSON.parse(e.data);
+      setAgents(d.agents); setCounts(d.counts || {}); setMeta(d.meta); setWhere(d.where);
+      setLink('live'); stamp();
+    });
+
+    es.addEventListener('tick', (e) => {
+      // A new tick means a new worker and a new tree. Dropping the old one is the point.
+      const d = JSON.parse(e.data);
+      trace.current = new Map();
+      setAgents([]); setCounts({}); setMeta(d.meta); setTraceTick((n) => n + 1); stamp();
+    });
+
+    es.addEventListener('agents', (e) => {
+      const d = JSON.parse(e.data);
+      setCounts(d.counts || {});
+      if (d.meta) setMeta(d.meta);
+      setAgents((prev) => {
+        const byId = new Map(prev.map((a) => [a.id, a]));
+        for (const a of d.agents) byId.set(a.id, { ...(byId.get(a.id) || {}), ...a });
+        // Spawn order, which is also the order the founder saw them appear.
+        return [...byId.values()];
+      });
+      if (d.activity?.length) {
+        for (const { id, entry } of d.activity) {
+          const log = trace.current.get(id) || [];
+          log.push(entry);
+          if (log.length > 400) log.splice(0, log.length - 400);
+          trace.current.set(id, log);
+        }
+        setTraceTick((n) => n + 1);
+      }
+      stamp();
+    });
+
+    // Sent when the tick's identity is resolved after the fact: the directory appears about
+    // half a second before the driver logs which tick it is, so the first read can be missing
+    // the spec, the stage and the start time.
+    es.addEventListener('meta', (e) => { setMeta(JSON.parse(e.data).meta); stamp(); });
+    // Role turns stream: every tool call as it happens, then the finished reply. The point is
+    // being able to see it open the wrong file WHILE it happens, not afterwards.
+    es.addEventListener('role', (e) => { setRoleEvent(JSON.parse(e.data)); stamp(); });
+    es.addEventListener('where', (e) => { setWhere(JSON.parse(e.data)); stamp(); });
+    es.addEventListener('state', (e) => { setState(JSON.parse(e.data)); stamp(); });
+
+    return () => es.close();
+  }, []);
+
+  return { agents, counts, meta, where, state, link, lastAt, trace: trace.current, traceTick, roleEvent };
+}
+
+/** A command is not an agent and the worker is not a subagent; say so in the label. */
+const agentLabel = (a) =>
+  a.kind === 'session' ? a.name + ' (the worker)' : a.kind === 'local_bash' ? 'command' : a.name;
+
+/**
+ * A parked heading, as a founder-readable line.
+ *
+ * PARKED.md headings are not written to one format. Most are "2026-08-22 · reason", one is
+ * "2026-08-22T03:58:14.061Z · reason", and one uses a hyphen — which the old single-separator
+ * strip did not match, so that entry rendered with its date still attached while the others
+ * did not. And one entry's whole reason is the placeholder "blocked item", which as a bullet
+ * in a red panel tells the founder there is a blocker and nothing about it; keeping the date
+ * at least lets them find it in PARKED.md.
+ */
+const parkedLabel = (raw) => {
+  const m = String(raw).match(/^(\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z)?)\s*[·\-—]\s*([\s\S]*)$/);
+  const when = m ? m[1].slice(0, 10) : null;
+  const text = (m ? m[2] : String(raw)).trim();
+  if (when && /^(blocked item|blocked|parked)$/i.test(text)) {
+    return text + ' — no reason was recorded (' + when + ', see PARKED.md)';
+  }
+  return text;
+};
+
+const AGENT_STAT = (a) => {
+  const bits = [];
+  if (a.toolUses) bits.push(a.toolUses + ' tools');
+  // A subagent gets an authoritative total from the runtime. The worker gets none, so its
+  // context size stands in — the quantity that actually ends its tick — labelled differently
+  // so the two are never read as the same measurement.
+  if (a.tokens) bits.push(Math.round(a.tokens / 1000) + 'k tok');
+  else if (a.contextTokens) bits.push('ctx ' + Math.round(a.contextTokens / 1000) + 'k');
+  if (a.durationMs) bits.push(a.durationMs < 60000 ? Math.round(a.durationMs / 1000) + 's' : Math.round(a.durationMs / 60000) + 'm');
+  return bits;
+};
+
+/**
+ * What the Agents tab badge says.
+ *
+ * Three states, because one count cannot express them. Agents out right now is the number
+ * worth a glance. With none out but the worker running, "solo" reports a fact rather than an
+ * absence. Only a genuinely idle loop gets a plain number.
+ */
+const agentBadge = (liveCount, total, workerBusy) => {
+  if (liveCount > 0) return liveCount + ' live';
+  if (workerBusy) return 'solo';
+  return String(total);
+};
+
+const barClass = (status) =>
+  status === 'running' ? 'runbar live' : status === 'failed' ? 'runbar bad' : status === 'stopped' ? 'runbar cold' : 'runbar done';
+
+const AgentCard = ({ a, parent, index, selected, onOpen }) =>
+  h('button', {
+    className: 'agent ' + a.status + (a.kind === 'local_bash' ? ' cmd' : ''),
+    'aria-current': selected ? 'true' : 'false',
+    onClick: () => onOpen(a.id),
+  },
+    h('div', { className: 'agent-top' },
+      h('i', { className: 'sdot ' + a.status }),
+      h('span', { className: 'agent-name' }, agentLabel(a)),
+      h('span', { className: 'agent-ix' }, String(index).padStart(2, '0'))),
+    a.depth > 1 && parent && h('div', { className: 'agent-under' }, 'under ' + agentLabel(parent)),
+    h('div', { className: 'agent-desc' }, a.description),
+    h('div', { className: barClass(a.status) }, h('i', null)),
+    h('div', { className: 'agent-meta' }, AGENT_STAT(a).map((b, i) => h('span', { key: i }, b)),
+      a.status === 'running' && h('span', { style: { color: 'var(--hot)' } }, 'working')),
+    // The runtime's first progress line often just echoes the description; printing it twice
+    // makes a card look like it has news when it does not.
+    a.lastActivity && a.lastActivity !== a.description &&
+      h('div', { className: 'agent-last' }, a.lastActivity));
+
+const AgentSheet = ({ a, parent, children, log, onClose }) => {
+  if (!a) return null;
+  return h('div', { className: 'sheet', role: 'dialog', 'aria-label': 'Agent ' + a.name },
+    h('div', { className: 'sheet-head' },
+      h('i', { className: 'sdot ' + a.status }),
+      h('span', { className: 'display', style: { fontSize: '1.3rem', flex: 1, minWidth: 0 } }, agentLabel(a)),
+      h('button', { onClick: onClose }, 'Close')),
+    h('div', { className: 'sheet-body' },
+      h('h4', null, 'What it was asked to do'),
+      h('div', { style: { fontSize: '0.9rem' } }, a.description),
+      h('div', { className: 'agent-meta', style: { marginTop: '0.5rem' } },
+        h('span', null, a.status),
+        ...AGENT_STAT(a).map((b, i) => h('span', { key: i }, b)),
+        parent && h('span', null, 'dispatched by ' + agentLabel(parent)),
+        h('span', null, 'depth ' + a.depth)),
+
+      children.length > 0 && h('div', null,
+        h('h4', null, 'It dispatched ' + children.length + ' of its own'),
+        h('div', { className: 'agent-meta' }, children.map((c) => h('span', { key: c.id },
+          agentLabel(c) + ' · ' + c.status)))),
+
+      h('h4', null, 'Live trace' + (log.length ? ' — ' + log.length + ' entries' : '')),
+      log.length === 0
+        ? h('div', { className: 'mono', style: { fontSize: '0.7rem', color: 'var(--text-dim)' } },
+            a.status === 'running'
+              ? 'Nothing yet since this page connected. Earlier activity is in the transcript, not held in the browser.'
+              : 'This agent finished before the page connected, so its step-by-step is not in memory. Its result is below.')
+        : h('ul', { className: 'trace' }, log.slice().reverse().map((e, i) =>
+            h('li', { key: i, className: e.kind === 'say' ? 'saying' : '' },
+              h('span', { className: 'k' + (e.kind === 'say' ? ' say' : '') }, e.kind === 'say' ? 'says' : (e.tool || e.kind)),
+              h('span', { className: 'd' }, e.detail)))),
+
+      a.summary && h('div', null, h('h4', null, 'What it returned'), h('pre', null, a.summary)),
+      a.prompt && h('div', null, h('h4', null, 'The prompt it was given'), h('pre', null, a.prompt)),
+      a.outputFile && h('div', null, h('h4', null, 'Full output on disk'), h('pre', null, a.outputFile))));
+};
+
+const WherePanel = ({ where }) => {
+  if (!where) return h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } }, 'waiting for the first frame…');
+  return h('div', null,
+    h('div', { className: 'where-head' }, where.headline),
+    where.phase && h('div', { className: 'where-phase' }, where.phase),
+    h('ul', { className: 'where-list' },
+      where.blockers.map((b, i) => h('li', { key: 'b' + i, className: 'block' },
+        h('strong', null, b.what), h('br'), h('span', { style: { fontSize: '0.8rem' } }, b.why))),
+      where.sentences.map((t, i) => h('li', { key: 's' + i }, t))),
+    // Stated outright, because a summary that looks model-written invites more trust than
+    // this one has earned — every line above is assembled from a recorded event.
+    h('div', { className: 'where-src' }, 'Derived from ' + where.derivedFrom + '.'));
+};
+
+const pct = (n) => Math.round(n * 100);
+const fmtMin = (m) => (m == null ? '—' : m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'));
+const ago = (iso) => {
+  if (!iso) return '—';
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  return s < 90 ? Math.round(s) + 's ago' : s < 5400 ? Math.round(s / 60) + 'm ago' : (s / 3600).toFixed(1) + 'h ago';
+};
+const clock = (ms) => (ms ? new Date(ms).toTimeString().slice(0, 5) : '—');
+
+const BAD = ['stalled', 'hung', 'timed-out', 'errored', 'no-progress', 'no-attempt', 'account-refused'];
+const WARN = ['rate-limited', 'aborted', 'awaiting-founder'];
+
+function Panel({ title, sub, alert, children }) {
+  return h('section', { className: 'panel' + (alert ? ' alert' : '') },
+    title && h('div', { className: 'panel-title' }, h('span', null, title), sub && h('span', { className: 'sub' }, sub)),
+    children);
+}
+
+function Stat({ n, l }) {
+  return h('div', { className: 'stat' }, h('span', { className: 'n' }, n), h('span', { className: 'l' }, l));
+}
+
+function Progress({ done, built, total }) {
+  const t = total || 1;
+  return h('div', null,
+    h('div', { className: 'bar', role: 'img', 'aria-label': done + ' done, ' + built + ' built, of ' + total },
+      done > 0 && h('span', { className: 'seg done', style: { width: 'max(2.5%, ' + pct(done / t) + '%)' } }),
+      built > 0.05 && h('span', { className: 'seg built', style: { width: 'max(2.5%, ' + pct(built / t) + '%)' } }),
+      h('span', { className: 'seg open', style: { flex: 1 } })),
+    h('div', { className: 'bar-legend' },
+      h('span', null, h('b', null, done), ' signed off'),
+      built > 0.05 && h('span', null, h('b', null, built.toFixed ? built.toFixed(1) : built), ' built, unsigned'),
+      h('span', null, 'of ', h('b', null, total))));
+}
+
+function Accounts({ accounts }) {
+  return h(Panel, { title: 'Accounts', sub: 'the API reports a % only past ~90%' },
+    accounts.map((a) => {
+      const u = a.utilization;
+      const cls = u == null ? '' : u >= 0.9 ? 'crit' : u >= 0.7 ? 'warn' : '';
+      return h('div', { key: a.id, className: 'acct' + (a.cold ? ' cold' : '') },
+        h('div', { className: 'acct-top' },
+          h('span', { className: 'acct-name' }, a.id),
+          a.refused ? h('span', { className: 'tag hot' }, 'refused ' + a.coldMinutes + 'm')
+            : a.cold ? h('span', { className: 'tag hot' }, 'cold ' + a.coldMinutes + 'm')
+            : h('span', { className: 'tag' + (u != null && u >= 0.9 ? ' warm' : '') }, a.rateStatus || 'warm')),
+        h('div', { className: 'gauge', title: u == null ? 'under the reporting threshold' : pct(u) + '% used' },
+          h('i', { className: cls, style: { width: (u == null ? 8 : Math.max(4, pct(u))) + '%' } })),
+        h('div', { className: 'acct-meta' },
+          h('span', null, u == null ? '<90%' : pct(u) + '% used'),
+          h('span', null, a.ticks + ' ticks'),
+          h('span', null, '~$' + a.cost.toFixed(2)),
+          a.windowEndsAt && h('span', null, 'window ' + clock(a.windowEndsAt)),
+          a.overageStatus === 'allowed' && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'OVERAGE ON')),
+        a.refusedReason && a.cold && h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, a.refusedReason.slice(0, 110)));
+    }));
+}
+
+function Live({ live, running }) {
+  if (!running) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'The loop is not running. Press START — it spawns detached and outlives this page.'));
+  if (!live) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'starting up…'));
+  const mins = live.startedAt ? Math.round((Date.now() - live.startedAt) / 60000) : null;
+  return h(Panel, { title: 'Current tick', sub: 'tick ' + live.id },
+    h('div', { className: 'statrow', style: { marginBottom: '0.8rem' } },
+      h(Stat, { n: fmtMin(mins), l: 'elapsed' }),
+      h(Stat, { n: live.tools ?? 0, l: 'tool calls' }),
+      h(Stat, { n: live.verification ?? 0, l: 'verify cmds' }),
+      h(Stat, { n: live.subagents ?? 0, l: 'subagents' })),
+    h('ul', { className: 'feed' }, (live.actions || []).map((a, i) =>
+      h('li', { key: i }, h('span', { className: 'tool' }, a.tool), h('span', { className: 'hint' }, a.hint)))),
+    live.say && h('div', { className: 'quote' }, '“' + live.say + '”'));
+}
+
+function Ticks({ ticks }) {
+  return h(Panel, { title: 'Tick history', sub: ticks.length + ' most recent' },
+    h('div', { className: 'tablewrap' },
+      h('table', null,
+        h('thead', null, h('tr', null,
+          ['#', 'exit', 'acct', 'dur', 'closed', '$', 'spec', 'tracker', 'note'].map((c) => h('th', { key: c }, c)))),
+        h('tbody', null, ticks.map((t, i) => {
+          const bad = BAD.includes(t.exit), warn = WARN.includes(t.exit);
+          return h('tr', { key: i, className: bad ? 'bad' : warn ? 'warnrow' : '' },
+            h('td', null, t.tick, t.attempt ? h('span', { className: 'tag', style: { marginLeft: 4 } }, 'retry') : null),
+            h('td', null, h('span', { className: 'pill ' + (bad ? 'bad' : warn ? 'warn' : 'clean') }, t.exit)),
+            h('td', null, t.account || '—'),
+            h('td', null, fmtMin(t.minutes)),
+            h('td', null, t.closed || '—'),
+            h('td', null, t.cost == null ? h('span', { title: 'no result envelope — unknown, not zero' }, '?') : '$' + t.cost.toFixed(2)),
+            h('td', null, t.spec || '—'),
+            h('td', null, t.tracker || '—'),
+            h('td', { className: 'note' }, (t.note || '').slice(0, 150)));
+        })))));
+}
+
+function App() {
+  const [themeMode, setThemeMode] = useTheme();
+  const [s, setS] = useState(null);
+  const [err, setErr] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState('overview');
+  const [openId, setOpenId] = useState(null);
+  const [openDetail, setOpenDetail] = useState(null);
+  const [histFilter, setHistFilter] = useState('all');
+  const [histLimit, setHistLimit] = useState(25);
+  const [owed, setOwed] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [roleOpen, setRoleOpen] = useState(null);      // role id | null
+  const [roleDetail, setRoleDetail] = useState(null);
+  const [draft, setDraft] = useState('');
+  // Live tool calls per role, keyed by id. Kept outside the transcript because they are
+  // in-flight rather than recorded — once the reply lands they arrive again as part of it.
+  const [roleSteps, setRoleSteps] = useState({});
+  const [rolePartial, setRolePartial] = useState({});
+  const [briefOpen, setBriefOpen] = useState(null);   // { kind, id } | null
+  const [brief, setBrief] = useState(null);
+
+  const live = useLive();
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/state');
+      if (!r.ok) throw new Error('state ' + r.status);
+      setS(await r.json());
+      setErr(null);
+    } catch (e) { setErr(String(e.message)); }
+  }, []);
+
+  // The stream pushes state, so this poll is only a backstop for a stream that dies without
+  // the browser noticing. 15s rather than 3s: pushed data is the normal path now.
+  useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id); }, [load]);
+  useEffect(() => { if (live.state) { setS(live.state); setErr(null); } }, [live.state]);
+
+  // The owed index carries per-item progress, so it re-reads whenever a check changes rather
+  // than on a timer: nothing else moves it, and a founder ticking a box expects the count
+  // beside the item to move with them.
+  // Defined FIRST, because several handlers below list it in their dependency arrays — and a
+  // useCallback dependency array is evaluated the moment the hook is called, not when the
+  // callback runs. Declared after them, it threw "Cannot access 'post' before initialization"
+  // and the whole page rendered blank: the const was hoisted into scope but not yet
+  // initialized, so merely NAMING it as a dependency was enough to hit the temporal dead zone.
+  const post = useCallback(async (path, body) => {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'X-Loop-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { ok: r.ok, body: await r.json() };
+  }, []);
+
+  const loadOwed = useCallback(async () => {
+    try {
+      const r = await fetch('/api/owed');
+      if (r.ok) setOwed((await r.json()).owed || []);
+    } catch { /* the panel falls back to the plain list from /api/state */ }
+  }, []);
+  useEffect(() => { loadOwed(); }, [loadOwed]);
+
+  const loadRoles = useCallback(async () => {
+    try {
+      const r = await fetch('/api/roles');
+      if (r.ok) setRoles((await r.json()).roles || []);
+    } catch { /* the tab shows what it last had */ }
+  }, []);
+  useEffect(() => { loadRoles(); const id = setInterval(loadRoles, 20000); return () => clearInterval(id); }, [loadRoles]);
+
+  const loadRoleDetail = useCallback(async (id) => {
+    if (!id) { setRoleDetail(null); return; }
+    try {
+      const r = await fetch('/api/role?id=' + encodeURIComponent(id));
+      setRoleDetail(r.ok ? await r.json() : null);
+    } catch { setRoleDetail(null); }
+  }, []);
+  useEffect(() => { loadRoleDetail(roleOpen); }, [roleOpen, loadRoleDetail]);
+
+  // React to what a role is doing. `done` reloads the transcript and clears the in-flight
+  // steps, because the finished message carries its own copy of them.
+  useEffect(() => {
+    const e = live.roleEvent;
+    if (!e) return;
+    if (e.kind === 'doing') {
+      setRoleSteps((prev) => ({ ...prev, [e.role]: [...(prev[e.role] || []), e.step].slice(-40) }));
+    } else if (e.kind === 'partial') {
+      setRolePartial((prev) => ({ ...prev, [e.role]: e.text }));
+    } else if (e.kind === 'started') {
+      setRoleSteps((prev) => ({ ...prev, [e.role]: [] }));
+      setRolePartial((prev) => ({ ...prev, [e.role]: '' }));
+      loadRoles();
+    } else if (e.kind === 'done' || e.kind === 'failed' || e.kind === 'task') {
+      setRoleSteps((prev) => ({ ...prev, [e.role]: [] }));
+      setRolePartial((prev) => ({ ...prev, [e.role]: '' }));
+      loadRoles();
+      if (e.role === roleOpen) loadRoleDetail(e.role);
+      if (e.kind === 'failed') setToast(e.role + ': ' + e.error);
+    }
+  }, [live.roleEvent, roleOpen, loadRoles, loadRoleDetail]);
+
+  const sendToRole = useCallback(async () => {
+    const text = draft.trim();
+    if (!roleOpen || !text) return;
+    setDraft('');
+    const res = await post('/api/role/say', { id: roleOpen, text });
+    if (!res.ok || res.body.ok === false) {
+      setToast(res.body.message || 'could not send');
+      setDraft(text);   // give it back rather than losing what was typed
+      return;
+    }
+    loadRoleDetail(roleOpen);
+  }, [draft, roleOpen, post, loadRoleDetail]);
+
+  const queueRoleTask = useCallback(async (text) => {
+    if (!roleOpen || !text.trim()) return;
+    const res = await post('/api/role/task', { id: roleOpen, text: text.trim() });
+    setToast(res.body.ok ? 'queued as a task — it will not run until you send it' : (res.body.message || 'could not queue'));
+    if (res.body.ok) { setDraft(''); loadRoleDetail(roleOpen); loadRoles(); }
+  }, [roleOpen, post, loadRoleDetail, loadRoles]);
+
+  const saveMandate = useCallback(async (text) => {
+    if (!roleOpen) return;
+    const res = await post('/api/role/mandate', { id: roleOpen, text });
+    setToast(res.body.ok ? 'mandate saved — it is read at the start of every session' : (res.body.message || 'could not save'));
+    loadRoleDetail(roleOpen);
+    loadRoles();
+  }, [roleOpen, post, loadRoleDetail, loadRoles]);
+
+  const loadBrief = useCallback(async (target) => {
+    if (!target) { setBrief(null); return; }
+    try {
+      const r = await fetch('/api/brief?kind=' + encodeURIComponent(target.kind) + '&id=' + encodeURIComponent(target.id));
+      const body = await r.json();
+      setBrief(r.ok ? body : { error: body.error || ('brief ' + r.status) });
+    } catch (e) { setBrief({ error: String(e.message) }); }
+  }, []);
+  useEffect(() => { loadBrief(briefOpen); }, [briefOpen, loadBrief]);
+
+  useEffect(() => {
+    if (!briefOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setBriefOpen(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [briefOpen]);
+
+  // Optimistic, then reconciled. A checkbox that waits for a round trip feels broken, and a
+  // checkbox that never reconciles lies when the write failed.
+  const toggleCheck = useCallback(async (checkKey, value) => {
+    if (!brief?.itemKey) return;
+    setBrief((b) => (b ? { ...b, progress: { ...b.progress, checked: { ...b.progress.checked, [checkKey]: value ? new Date().toISOString() : undefined }, blockingDone: b.progress.blockingDone + (value ? 1 : -1) } } : b));
+    const res = await post('/api/check', { itemKey: brief.itemKey, checkKey, value });
+    if (!res.ok || res.body.ok === false) setToast(res.body.message || 'could not save that tick');
+    await loadBrief(briefOpen);
+    await loadOwed();
+  }, [brief, briefOpen, post, loadBrief, loadOwed]);
+
+  const saveNote = useCallback(async (checkKey, text) => {
+    if (!brief?.itemKey) return;
+    const res = await post('/api/note', { itemKey: brief.itemKey, checkKey, text });
+    if (!res.ok || res.body.ok === false) setToast(res.body.message || 'could not save that note');
+    await loadBrief(briefOpen);
+  }, [brief, briefOpen, post, loadBrief]);
+
+  const signOff = useCallback(async (id) => {
+    if (!window.confirm('Sign off spec ' + id + '?\n\nThis creates an annotated git tag signed-off/' + id + '. The driver reads that tag and frees its founder-review slot, so the loop will open the next spec.')) return;
+    setBusy(true);
+    const res = await post('/api/signoff', { id });
+    setToast(res.body.message || (res.ok ? 'signed off' : 'sign-off refused'));
+    setBusy(false);
+    await loadBrief(briefOpen);
+    await loadOwed();
+    load();
+  }, [briefOpen, post, loadBrief, loadOwed, load]);
+
+  // Prompt and summary are too big to push on every frame, so they are fetched once when an
+  // agent is opened; the trace then streams into it from the feed.
+  useEffect(() => {
+    if (!openId) { setOpenDetail(null); return undefined; }
+    let alive = true;
+    fetch('/api/agent?id=' + encodeURIComponent(openId))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setOpenDetail(d); })
+      .catch(() => { /* the sheet still shows what the feed already gave us */ });
+    return () => { alive = false; };
+  }, [openId]);
+
+  useEffect(() => {
+    if (!openId) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setOpenId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openId]);
+  useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 7000); return () => clearTimeout(id); }, [toast]);
+
+  const act = async (name, confirmMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setBusy(true);
+    try {
+      const r = await fetch('/api/action/' + name, { method: 'POST', headers: { 'X-Loop-Token': TOKEN } });
+      const j = await r.json();
+      setToast(j.message);
+    } catch (e) { setToast('failed: ' + e.message); }
+    setBusy(false);
+    load();
+  };
+
+  if (err && !s) return h('div', { className: 'nojs' }, h('strong', null, 'Cannot reach the server. '), err,
+    h('p', { className: 'mono' }, 'Start it with: node .specify/loop/ui/server.mjs'));
+  if (!s) return h('div', { className: 'nojs' }, 'reading loop state…');
+
+  const c = s.catalog;
+  const active = s.active;
+  const p = active && active.progress;
+  const status = s.killArmed ? ['warn', 'killing'] : s.stopArmed ? ['warn', 'stopping after tick'] : s.running ? ['on', 'running'] : ['off', 'stopped'];
+
+  const byId = new Map(live.agents.map((a) => [a.id, a]));
+  // Dispatched work only, for every count and statistic: the worker is not its own subagent,
+  // and including it would inflate "agents" by one forever.
+  const realAgents = live.agents.filter((a) => a.kind !== 'session');
+  const liveCount = realAgents.filter((a) => a.status === 'running').length;
+  // The grid does show it, first and always. It is agent zero — the thing that dispatched
+  // everything else — and leaving it out made the one agent that is always working the only
+  // one you could not open.
+  const gridAgents = live.agents.filter((a) => a.kind === 'session').concat(realAgents);
+  const worker = live.agents.find((a) => a.kind === 'session') || null;
+  const workerBusy = Boolean(worker && worker.status === 'running');
+
+  // The split the whole tab hinges on. A tick dispatched 24 background commands and had 2
+  // things actually running; showing all 26 as equal cards buried the 2 that mattered and
+  // grew without bound for the length of the tick. Live is what is running RIGHT NOW and can
+  // still change the tree. Everything else is a record.
+  const liveNow = gridAgents.filter((a) => a.status === 'running');
+  const liveDispatched = liveNow.filter((a) => a.kind !== 'session').length;
+  const pastAll = gridAgents.filter((a) => a.status !== 'running').slice().reverse();
+  const pastFiltered = pastAll.filter((a) =>
+    histFilter === 'agents' ? a.kind === 'local_agent'
+      : histFilter === 'commands' ? a.kind === 'local_bash'
+        : true);
+  const pastShown = pastFiltered.slice(0, histLimit);
+  const openAgent = openDetail || byId.get(openId) || null;
+  const openLog = (live.trace.get(openId) || []);
+
+  const feedLink = live.link === 'live'
+    ? ['on', 'live feed']
+    : live.link === 'reconnecting' ? ['warn', 'feed reconnecting'] : ['off', 'feed connecting'];
+
+  return h('div', null,
+    h('header', { className: 'hero' },
+      h('h1', null, 'Loop Control Room'),
+      h('span', { className: 'pulse ' + status[0] }, h('i', { className: 'dot' }), status[1]),
+      // Feed health is stated separately from loop health on purpose: a dead feed and a
+      // stopped loop look identical on a page that shows only one of them.
+      h('span', { className: 'pulse ' + feedLink[0] }, h('i', { className: 'dot' }), feedLink[1]),
+      s.driver && h('span', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+        'pid ' + s.driver.pid + (s.driver.workerPid ? ' · worker ' + s.driver.workerPid : '') + ' · code ' + (s.driver.code || '?') + ' · beat ' + ago(s.driver.heartbeat)),
+      h('span', { style: { flex: 1 } }),
+      h(ThemeSwitch, { mode: themeMode, onPick: setThemeMode }),
+      h('div', { className: 'controls' },
+        h('button', { className: 'go', disabled: busy || s.running, onClick: () => act('start') }, 'Start'),
+        h('button', { className: 'warn', disabled: busy || !s.running, onClick: () => act('stop') }, 'Pause after tick'),
+        h('button', { className: 'danger', disabled: busy || !s.running, onClick: () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.') }, 'Kill now'),
+        (s.stopArmed || s.killArmed) && h('button', { disabled: busy, onClick: () => act('resume') }, 'Clear stop'),
+        h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))),
+
+    h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
+      h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
+      h('button', { type: 'button', 'aria-pressed': tab === 'agents' ? 'true' : 'false', onClick: () => setTab('agents') },
+        'Agents',
+        // Never a bare zero. "0" beside a worker that is plainly running reads as "this view
+        // is broken", and in effect it was: it counted only DISPATCHED agents, so a worker
+        // doing the job itself — which is most of a shape stage — showed nothing at all.
+        h('span', { className: 'badge' }, agentBadge(liveCount, realAgents.length, workerBusy))),
+      h('button', { type: 'button', 'aria-pressed': tab === 'history' ? 'true' : 'false', onClick: () => setTab('history') },
+        'History', h('span', { className: 'badge' }, String(pastAll.length))),
+      h('button', { type: 'button', 'aria-pressed': tab === 'management' ? 'true' : 'false', onClick: () => setTab('management') },
+        'Management',
+        h('span', { className: 'badge' },
+          roles.some((r) => r.busy) ? 'talking' : String(roles.length || 3)))),
+
+    // A fragment, not a wrapper div: the overview's grid layout must not gain a parent.
+    tab === 'agents' && h(React.Fragment, null,
+      h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem' } },
+        h(Panel, { title: 'Where we are', sub: live.meta ? 'tick ' + live.meta.number + ' · ' + live.meta.spec + '/' + live.meta.stage : 'no tick' },
+          h(WherePanel, { where: live.where })),
+        h(Panel, { title: 'Fan-out', sub: 'this tick' },
+          // The worker's own tool count leads, because it is the only figure here that is
+          // never zero while a tick is alive. All four columns read zero on a running loop
+          // during a shape stage, which is precisely when nothing gets dispatched.
+          h('div', { className: 'statrow' },
+            h(Stat, { n: worker ? worker.toolUses : 0, l: 'worker tools' }),
+            h(Stat, { n: realAgents.filter((a) => a.kind === 'local_agent').length, l: 'agents' }),
+            h(Stat, { n: liveCount, l: 'working now' }),
+            h(Stat, { n: realAgents.filter((a) => a.kind === 'local_bash').length, l: 'commands' })),
+          h('div', { className: 'agent-meta', style: { marginTop: '0.9rem' } },
+            worker && worker.contextTokens > 0 &&
+              h('span', null, 'worker context ' + Math.round(worker.contextTokens / 1000) + 'k'),
+            h('span', null, 'depth ' + live.agents.reduce((d, a) => Math.max(d, a.depth), 0)),
+            h('span', null, (live.counts.completed || 0) + ' returned'),
+            (live.counts.stopped || 0) > 0 && h('span', null, live.counts.stopped + ' cancelled'),
+            (live.counts.failed || 0) > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, live.counts.failed + ' failed'),
+            // SUBAGENT tokens by name: the runtime reports a total per subagent and none for
+            // the worker, so one combined number would be two different measurements added
+            // together and presented as one.
+            h('span', null, Math.round(realAgents.reduce((n, a) => n + (a.tokens || 0), 0) / 1000) + 'k subagent tokens')),
+          // A zero always gets a sentence. "0 agents" next to "5 commands" is accurate and
+          // still looks broken, so each shape of emptiness says why it is empty.
+          h('div', { className: 'where-src' },
+            realAgents.length === 0
+              ? 'Nothing dispatched yet this tick — the worker is doing the job itself, which is normal for a shape stage.'
+              : realAgents.filter((a) => a.kind === 'local_agent').length === 0
+                ? 'No subagent out: the worker is running background commands itself, not delegating.'
+                : 'A cancelled command is not a failure — the worker stopped waiting on it deliberately.'))),
+
+      h(Panel, {
+        title: 'Working now',
+        // Counts DISPATCHED agents, matching the tab badge exactly. The first version counted
+        // the cards on screen, which includes the worker, so the badge said "1 live" beside a
+        // panel saying "2 live" — two numbers for one fact, which is the bug I keep fixing.
+        sub: liveNow.length === 0
+          ? 'nothing running'
+          : (liveDispatched === 0 ? 'the worker alone' : liveDispatched + ' live') +
+            ' · ' + pastAll.length + ' returned, in History',
+      },
+        liveNow.length === 0
+          ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+              live.link === 'live'
+                ? 'Nothing is running. The tick has ended, or the loop is between ticks — everything it did is in History.'
+                : 'Waiting for the feed…')
+          : h('div', { className: 'agentgrid' },
+              // Index is the agent's position in the tick's spawn order, not its position in
+              // this list, so a card keeps the same number as things finish around it.
+              liveNow.map((a) => h(AgentCard, {
+                key: a.id, a, index: gridAgents.indexOf(a), parent: byId.get(a.parentId),
+                selected: a.id === openId, onOpen: setOpenId,
+              }))))),
+
+    tab === 'management' && h(React.Fragment, null,
+      h(Panel, {
+        title: 'Management',
+        sub: 'three sessions you can talk to · click one to open its chat',
+      },
+        h('p', { style: { fontSize: '0.86rem', lineHeight: 1.5, marginTop: 0 } },
+          'The loop had one overseer and nothing checked it, which is how 006 came to be marked ' +
+          'built when it had never been started. The manager exists to disagree with the supervisor ' +
+          'when the evidence says so; the special agent is yours.'),
+        h('div', { className: 'rolegrid' },
+          (roles.length ? roles : []).map((r) => h(RoleCard, {
+            key: r.id, role: r,
+            live: roleSteps[r.id] || [],
+            selected: r.id === roleOpen,
+            onOpen: setRoleOpen,
+          }))),
+        roles.length === 0 && h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+          'Could not read the roles. Is the server on the current code?'),
+        h('div', { className: 'where-src', style: { marginTop: '0.9rem' } },
+          'Each message is a real Claude Code session turn against this repo — same tooling as the ' +
+          'workers, and it costs quota. Supervisor and manager are read-only on purpose: an auditor ' +
+          'that can edit what it audits is not an auditor.'))),
+
+    tab === 'history' && h(Panel, {
+      title: 'History',
+      sub: pastAll.length + ' returned this tick' + (live.meta ? ' (tick ' + live.meta.number + ')' : ''),
+    },
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginBottom: '0.7rem' } },
+        h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history' },
+          [['all', 'All'], ['agents', 'Agents'], ['commands', 'Commands']].map(([id, label]) =>
+            h('button', {
+              key: id, type: 'button',
+              'aria-pressed': histFilter === id ? 'true' : 'false',
+              onClick: () => { setHistFilter(id); setHistLimit(25); },
+            }, label))),
+        // Three numbers because there are three: rendered, matching the filter, and total.
+        // "28 shown of 28" was printed while 25 rows were on screen — a silent cap is the one
+        // thing a history view must never do, since it reads as "this is everything".
+        h('span', { className: 'mono', style: { fontSize: '0.66rem', color: 'var(--text-dim)' } },
+          pastShown.length + ' shown' +
+          (pastFiltered.length !== pastShown.length ? ' of ' + pastFiltered.length + ' matching' : '') +
+          (pastFiltered.length !== pastAll.length ? ' · ' + pastAll.length + ' total' : ''))),
+
+      pastFiltered.length === 0
+        ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+            pastAll.length === 0
+              ? 'Nothing has returned yet this tick.'
+              : 'Nothing of that kind this tick — ' + pastAll.length + ' other entries are under All.')
+        : h(React.Fragment, null,
+            h('ul', { className: 'hist' }, pastShown.map((a) => h('li', { key: a.id },
+              h('button', {
+                className: 'histrow ' + a.status,
+                'aria-current': a.id === openId ? 'true' : 'false',
+                onClick: () => setOpenId(a.id),
+              },
+                h('i', { className: 'sdot ' + a.status }),
+                h('span', { className: 'hname' }, agentLabel(a)),
+                h('span', { className: 'hdesc' }, a.description),
+                h('span', { className: 'hstat' }, AGENT_STAT(a).join(' · ') || a.status))))),
+            // Never silently truncate: say what is hidden and offer it.
+            pastFiltered.length > pastShown.length && h('button', {
+              className: 'linkish', style: { marginTop: '0.6rem' },
+              onClick: () => setHistLimit(pastFiltered.length),
+            }, 'show ' + (pastFiltered.length - pastShown.length) + ' older'))),
+
+    tab === 'overview' && h(React.Fragment, null,
+    // ONE two-column layout, not a stack of two-column rows.
+    //
+    // It was previously two separate `cols-2` rows — Catalog beside Accounts+Run totals, then
+    // Current tick beside Owed+Tree. A grid row is as tall as its tallest cell, so each row
+    // left a void under whichever side was shorter, and Accounts alone is taller than Catalog.
+    // Two independent column stacks have no cross-column rows to align, so panels pack
+    // tightly and the voids cannot exist by construction.
+    //
+    // Column assignment is also the mobile reading order, since `cols-2` collapses to one
+    // column below 760px: Catalog, Current tick, Owed by you, then the reference panels. What
+    // blocks progress stays above what merely reports it.
+    h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem' } },
+      h('div', { className: 'grid' },
+      h(Panel, { title: 'Catalog', sub: c.signedOff + ' of ' + c.total + ' signed off' },
+        h(Progress, { done: c.signedOff, built: c.builtFraction, total: c.total }),
+        h('div', { className: 'statrow', style: { marginTop: '1rem' } },
+          h(Stat, { n: c.signedOff, l: 'signed off' }),
+          h(Stat, { n: c.awaitingFounder.length, l: 'awaiting you' }),
+          h(Stat, { n: c.parked.length, l: 'parked' }),
+          h(Stat, { n: c.pending, l: 'not started' })),
+        active && !p && h('div', { style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
+          h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
+            h('span', null, 'Spec ' + active.id), h('span', { className: 'sub' }, active.slug)),
+          h('p', { className: 'mono', style: { fontSize: '0.78rem', margin: '0.2rem 0 0', color: 'var(--text-soft)' } },
+            'SHAPING — no tasks.md yet. This tick is writing spec.md, plan.md and tasks.md from the catalog entry, then the DESIGN gate rules on all three together.')),
+        active && p && h('div', { style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
+          h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
+            h('span', null, 'Spec ' + active.id), h('span', { className: 'sub' }, active.slug)),
+          h(Progress, { done: p.done, built: p.held, total: p.total }),
+          h('div', { className: 'bar-legend' },
+            h('span', null, h('b', null, p.done), ' done'),
+            h('span', null, h('b', null, p.open), ' open'),
+            p.held > 0 && h('span', null, h('b', null, p.held), ' held (reason stated)'),
+            p.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, p.unmarked + ' UNMARKED'),
+            p.currentWave && h('span', null, p.currentWave.slice(0, 46))))),
+
+      h(Live, { live: s.live, running: s.running }),
+
+      h(Panel, { title: 'Run totals' },
+          h('div', { className: 'statrow' },
+            h(Stat, { n: s.totals.ticks, l: 'ticks' }),
+            h(Stat, { n: fmtMin(s.totals.minutes), l: 'worker time' }),
+            h(Stat, { n: s.totals.closed, l: 'tasks closed' }),
+            h(Stat, { n: '$' + s.totals.notional, l: 'notional' })),
+          h('p', { className: 'mono', style: { fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: 0 } },
+            s.totals.billable === 0
+              ? 'No tick used overage. Notional is list-price token value, not money.'
+              : s.totals.billable + ' tick(s) ran as OVERAGE and may be billable.'))),
+
+      // Right column. Owed leads it, so on a wide screen the one panel describing work only
+      // the founder can do sits top-right, above the fold, in the only red frame on the page.
+      //
+      // The split itself was chosen by measuring: the columns came out 350px apart with Owed
+      // on the left and 68px apart this way. That balance is content-dependent and will drift
+      // — Owed shrinks as journeys get cleared, Current tick grows through a build — so it is
+      // a good default rather than a guarantee. What is guaranteed is the absence of INTERIOR
+      // voids, which is a property of the two-column-stack structure, not of this assignment.
+      h('div', { className: 'grid' },
+      // Every row opens a brief. The panel used to name a debt without saying what paying it
+      // involves, which is how three specs came to sit here for two days.
+      (owed.length > 0 || c.awaitingFounder.length > 0) &&
+        h(Panel, { title: 'Owed by you', alert: true, sub: 'click one — each opens a checklist' },
+          h('ul', { className: 'owed' },
+            (owed.length ? owed : c.awaitingFounder.map((id) => ({ kind: 'spec', id, key: 'spec-' + id, title: 'Spec ' + id + ' — clicked founder journey' })))
+              .map((item) => h('li', { key: item.key },
+                h('button', {
+                  className: 'owedrow', type: 'button',
+                  onClick: () => setBriefOpen({ kind: item.kind, id: item.id }),
+                },
+                  h('span', { className: 'owedtitle' },
+                    item.kind === 'spec'
+                      ? h(React.Fragment, null, h('b', null, 'Spec ' + item.id), ' — clicked founder journey')
+                      : item.title),
+                  h('div', { className: 'owedmeta' },
+                    item.signedOff && h('span', { className: 'ready' }, 'SIGNED OFF'),
+                    item.progress
+                      ? h('span', null, item.progress.done + ' of ' + item.progress.total + ' checks')
+                      : h('span', null, 'open to see what it needs'),
+                    item.progress?.complete && !item.signedOff && h('span', { className: 'ready' }, 'ready to sign off'),
+                    item.affectsSpec && h('span', null, 'affects ' + item.affectsSpec),
+                    item.recordedOn && h('span', null, item.recordedOn)),
+                  item.progress?.total > 0 && h('div', { className: 'minibar' },
+                    h('i', {
+                      className: item.progress.complete ? 'full' : '',
+                      style: { width: Math.round((item.progress.done / item.progress.total) * 100) + '%' },
+                    }))))))),
+
+        h(Accounts, { accounts: s.accounts }),
+        h(Panel, { title: 'Tree' },
+          h('p', { className: 'mono', style: { fontSize: '0.76rem', margin: 0 } },
+            h('b', null, s.git.head), ' ', s.git.subject),
+          h('div', { className: 'acct-meta' },
+            h('span', null, 'branch ', s.git.branch),
+            h('span', { style: s.git.dirty ? { color: 'var(--warn-text)', fontWeight: 700 } : null },
+              s.git.dirty ? s.git.dirty + ' dirty' : 'clean'))))),
+
+    h(Ticks, { ticks: s.ticks })),
+
+    roleOpen && h(ChatSheet, {
+      role: roles.find((r) => r.id === roleOpen) || null,
+      detail: roleDetail,
+      liveSteps: roleSteps[roleOpen] || [],
+      partial: rolePartial[roleOpen] || '',
+      draft, onDraft: setDraft,
+      onSend: sendToRole, onTask: queueRoleTask, onMandate: saveMandate,
+      onClose: () => setRoleOpen(null),
+      busy,
+    }),
+
+    briefOpen && h(BriefSheet, {
+      brief, busy,
+      onToggle: toggleCheck, onNote: saveNote, onSignoff: signOff,
+      onClose: () => setBriefOpen(null),
+    }),
+
+    openAgent && h(AgentSheet, {
+      a: openAgent,
+      parent: byId.get(openAgent.parentId),
+      children: (openAgent.children || []).map((id) => byId.get(id)).filter(Boolean),
+      log: openLog,
+      onClose: () => setOpenId(null),
+    }),
+
+    h('footer', null,
+      'Reads the driver\'s state files and signals it back through files — closing this page never stops a build. ',
+      'Loopback bind + host allowlist + cross-site rejection + a per-start control token. Terminal equivalent: ', h('code', null, 'pnpm my-spec'),
+      ' · updated ', ago(s.at)),
+
+    toast && h('div', { className: 'toast', role: 'status' }, toast));
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+</script>
+</body>
+</html>

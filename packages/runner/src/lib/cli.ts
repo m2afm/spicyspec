@@ -257,12 +257,22 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     case 'dashboard': {
       const { readFile } = await import('node:fs/promises');
       const { openConfiguredStore } = await import('./open-store.js');
-      const { startControlPlane } = await import('@spicyspec/control-plane');
+      const { startControlRoom } = await import('@spicyspec/control-plane');
       const { parseRunnerConfig } = await import('./config.js');
+      const { dirname, join: joinPath } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
       const store = await openConfiguredStore(config.storePath);
-      const cp = await startControlPlane({ store, projectName: config.projectName, port: args.port ?? 4477 });
-      console.log(`dashboard: http://127.0.0.1:${cp.port}  (Ctrl+C to stop)`);
+      const cp = await startControlRoom({
+        store,
+        projectName: config.projectName,
+        repoCwd: resolve(config.repoCwd),
+        stateDir: resolve(config.repoCwd, '.spicyspec'),
+        runnerBin: joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin.js'),
+        configPath: resolve(args.configPath),
+        port: args.port ?? 4477,
+      });
+      console.log(`control room: http://127.0.0.1:${cp.port}  (Ctrl+C to stop)`);
       // hold open until signalled; the store closes on shutdown
       await new Promise<void>((r) => {
         const stop = () => {
