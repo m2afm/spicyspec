@@ -10,7 +10,7 @@
  */
 import { writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 export interface CliArgs {
   command: 'init' | 'start' | 'run' | 'halt' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
@@ -125,7 +125,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { readFile } = await import('node:fs/promises');
       const { Client, Connection } = await import('@temporalio/client');
       const { parseRunnerConfig } = await import('./config.js');
-      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const connection = await Connection.connect({ address: config.temporal.address });
       try {
         const client = new Client({ connection, namespace: config.temporal.namespace });
@@ -161,7 +161,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { readFile } = await import('node:fs/promises');
       const { Client, Connection } = await import('@temporalio/client');
       const { parseRunnerConfig } = await import('./config.js');
-      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const connection = await Connection.connect({ address: config.temporal.address });
       try {
         const client = new Client({ connection, namespace: config.temporal.namespace });
@@ -193,7 +193,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { readFile } = await import('node:fs/promises');
       const { openConfiguredStore } = await import('./open-store.js');
       const { parseRunnerConfig } = await import('./config.js');
-      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const catalog = JSON.parse(await readFile(resolve(args.catalogPath), 'utf8')) as Array<{ id: string }>;
       if (!Array.isArray(catalog) || catalog.some((e) => !e?.id)) {
         console.error('spicyspec-runner: the catalog must be a JSON array of { id, ... } entries');
@@ -220,7 +220,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { renderHandoffPackage } = await import('@spicyspec/pipeline');
       const { snapshot } = await import('./git-snapshot.js');
       const { parseRunnerConfig } = await import('./config.js');
-      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const store = await openConfiguredStore(config.storePath);
       try {
         const snap = await snapshot({ cwd: config.repoCwd, tasksFile: null, selfOwnedPaths: config.worker.protectedPaths });
@@ -261,7 +261,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { parseRunnerConfig } = await import('./config.js');
       const { dirname, join: joinPath } = await import('node:path');
       const { fileURLToPath } = await import('node:url');
-      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')));
+      const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const store = await openConfiguredStore(config.storePath);
       const cp = await startControlRoom({
         store,

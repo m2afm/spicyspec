@@ -3,6 +3,7 @@
  * never a silent misbehavior. Secrets never live here; they are merged at load from the
  * runner's local secret file (gitignored), exactly like the prototype's account split.
  */
+import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 
 export const ACCOUNT_CONFIG = z.object({
@@ -95,11 +96,25 @@ export const RUNNER_CONFIG = z.object({
 export type RunnerConfig = z.infer<typeof RUNNER_CONFIG>;
 export type AccountConfigInput = z.infer<typeof ACCOUNT_CONFIG>;
 
-export function parseRunnerConfig(raw: unknown): RunnerConfig {
+/**
+ * @param baseDir when given, relative `repoCwd` and `storePath` resolve against it — the
+ * CONFIG FILE's directory, never the process cwd. A rotation launched from another
+ * directory once opened a fresh empty store and reported the queue "drained" in 0 runs;
+ * where a command is run from must never change which project it acts on. (`handoffPath`,
+ * `specsDir`, `compatLoopDir` stay relative to `repoCwd` by contract.)
+ */
+export function parseRunnerConfig(raw: unknown, baseDir?: string): RunnerConfig {
   const result = RUNNER_CONFIG.safeParse(raw);
   if (!result.success) {
     const detail = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`invalid runner config — ${detail}`);
   }
-  return result.data;
+  const config = result.data;
+  if (baseDir) {
+    if (!isAbsolute(config.repoCwd)) config.repoCwd = resolve(baseDir, config.repoCwd);
+    if (!config.storePath.startsWith('postgres://') && !isAbsolute(config.storePath)) {
+      config.storePath = resolve(baseDir, config.storePath);
+    }
+  }
+  return config;
 }

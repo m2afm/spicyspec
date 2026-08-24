@@ -10,6 +10,7 @@ import { createClaudeAdapter } from '@spicyspec/provider-claude';
 import { openConfiguredStore } from './open-store.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { parseRunnerConfig } from './config.js';
@@ -18,7 +19,7 @@ import { clearLockView, writeLockView } from './compat-view.js';
 import { createAllActivities, sweepOrphanedLeases } from './wiring.js';
 
 export async function startRunner(configPath: string): Promise<void> {
-  const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')));
+  const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')), dirname(resolve(configPath)));
 
   let secrets: Record<string, { env?: Record<string, string> }> = {};
   try {

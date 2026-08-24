@@ -67,3 +67,28 @@ describe('parseCliArgs — dashboard', () => {
     expect(parseCliArgs(['dashboard']).port).toBeNull();
   });
 });
+
+describe('config-relative path resolution', () => {
+  it('relative repoCwd and storePath resolve against the CONFIG dir, not process cwd', () => {
+    const c = parseRunnerConfig(
+      { projectName: 'x', repoCwd: '.', storePath: '.spicyspec/runner.db', accounts: [{ id: 'a' }] },
+      '/proj/home',
+    );
+    expect(c.repoCwd.split(String.fromCharCode(92)).join('/')).toMatch(/\/proj\/home$/);
+    expect(c.storePath.split(String.fromCharCode(92)).join('/')).toMatch(/\/proj\/home\/\.spicyspec\/runner\.db$/);
+  });
+
+  it('absolute paths and postgres:// URLs pass through untouched', () => {
+    const c = parseRunnerConfig(
+      { projectName: 'x', repoCwd: 'C:/repo', storePath: 'postgres://u@h/db', accounts: [{ id: 'a' }] },
+      '/elsewhere',
+    );
+    expect(c.repoCwd).toBe('C:/repo');
+    expect(c.storePath).toBe('postgres://u@h/db');
+  });
+
+  it('no baseDir keeps prior behavior', () => {
+    const c = parseRunnerConfig({ projectName: 'x', repoCwd: '.', accounts: [{ id: 'a' }] });
+    expect(c.repoCwd).toBe('.');
+  });
+});
