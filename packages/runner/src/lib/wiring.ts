@@ -259,9 +259,12 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         effort: cfg.worker.effort,
         disallowedTools: cfg.worker.disallowedTools,
         protectedPaths: cfg.worker.protectedPaths,
-        // The one file inside protected space the packet PROMISES append access to —
-        // the hook must honor the promise (B25 mirrored).
-        protectedPathExceptions: [cfg.parkedPath],
+        // Every path inside protected space the packet PROMISES access to must be
+        // excepted — a promise the hook denies is B25 mirrored. Live proof: 009's plan
+        // gate died on denied gates.jsonl appends and denied absolute-path writes inside
+        // its own worktree (worktrees live UNDER .spicyspec/), was misread as no-progress
+        // and wrongly parked.
+        protectedPathExceptions: [cfg.parkedPath, cfg.gateExportPath, '.spicyspec/worktrees/'],
       };
     },
 

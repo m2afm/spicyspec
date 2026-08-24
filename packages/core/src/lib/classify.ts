@@ -34,6 +34,14 @@ export const EXIT = {
    * toward the stall limit that parks a spec.
    */
   ACCOUNT_REFUSED: 'account-refused',
+  /**
+   * The worker explicitly declared it cannot proceed without a grant or a decision it is
+   * not allowed to make (`RUN_STATUS: blocked`). A retry cannot fix a permission wall, so
+   * the spec parks IMMEDIATELY with the worker's ask — but never via the stall counter:
+   * 009's plan gate died on denied tool calls, classified no-progress, and was parked as
+   * if it had idled. Blocked is the truth; no-progress was a misread.
+   */
+  BLOCKED: 'blocked',
 } as const;
 
 export type ExitClass = (typeof EXIT)[keyof typeof EXIT];
@@ -120,6 +128,7 @@ const REVIEW_MARKERS = [
  * work is exactly the fabrication class the judge exists to catch).
  */
 const COMPLETE_MARKERS = [/(?:RUN|TICK)_STATUS:\s*spec-complete/i];
+const BLOCKED_MARKERS = [/(?:RUN|TICK)_STATUS:\s*blocked/i];
 
 function movedForward(before: EvidenceSnapshot, after: EvidenceSnapshot): boolean {
   return (
@@ -205,6 +214,9 @@ export function classify(run: RunResult, before: EvidenceSnapshot, after: Eviden
     return { ...base, exit: EXIT.NO_ATTEMPT };
   }
 
+  if (BLOCKED_MARKERS.some((re) => re.test(text))) {
+    return { ...base, exit: EXIT.BLOCKED };
+  }
   if (REVIEW_MARKERS.some((re) => re.test(text))) {
     return { ...base, exit: EXIT.AWAITING_REVIEW };
   }

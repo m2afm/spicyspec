@@ -203,3 +203,15 @@ describe('worker-declared stage completion', () => {
     expect(c.exit).toBe(EXIT.SPEC_COMPLETE);
   });
 });
+
+describe('RUN_STATUS: blocked (the 009 wrongly-parked class)', () => {
+  it('an explicit blocked declaration classifies as blocked, never no-progress', () => {
+    const snap = snapshot();
+    const cls = classify(
+      { killedFor: null, resultEnvelope: envelope(), rateLimit: null, text: 'seats denied.\nRUN_STATUS: blocked', toolCalls: 5 },
+      snap,
+      snap,
+    );
+    expect(cls.exit).toBe('blocked');
+  });
+});

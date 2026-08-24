@@ -118,6 +118,14 @@ export async function specRunWorkflow(input: SpecRunInput): Promise<SpecRunState
       continue;
     }
 
+    if (outcome.exit === 'blocked') {
+      // The worker declared a wall a retry cannot climb (permission grant, human-only
+      // decision). Park NOW with the declaration intact — burning stall-limit runs on a
+      // known wall is pure quota loss.
+      state.status = 'parked';
+      return state;
+    }
+
     if (STALL_EXITS.has(outcome.exit)) {
       state.stalls += 1;
       if (state.stalls >= input.maxConsecutiveStalls) {
