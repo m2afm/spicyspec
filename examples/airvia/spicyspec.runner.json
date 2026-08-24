@@ -1,0 +1,45 @@
+{
+  "$comment": "Airvia dogfood config — fix repoCwd, then follow README.md in this folder. The prototype loop MUST be stopped first (single-writer).",
+  "projectName": "Airvia",
+  "repoCwd": "C:/XIII/share/Work/airvia",
+  "temporal": { "address": "localhost:7233", "namespace": "default", "taskQueue": "airvia" },
+  "storePath": ".spicyspec/runner.db",
+  "worker": {
+    "model": "opus",
+    "effort": "high",
+    "disallowedTools": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -fdx*)",
+      "Bash(git branch -D*)",
+      "Bash(gh pr merge*)",
+      "Bash(npm publish*)",
+      "Bash(pnpm publish*)",
+      "Bash(prisma migrate reset*)",
+      "Bash(rm -rf /*)"
+    ],
+    "protectedPaths": [".spicyspec/", ".env"]
+  },
+  "accounts": [
+    { "id": "primary", "label": "main Claude account (ambient login)", "env": {}, "configDir": null },
+    { "id": "secondary", "label": "backup account — token in spicyspec.runner.secrets.json", "env": {}, "configDir": null },
+    { "id": "tertiary", "label": "third account — token in spicyspec.runner.secrets.json", "env": {}, "configDir": null }
+  ],
+  "judges": [
+    {
+      "$comment": "B4: an npm shim is a shell script — spawn node with the package's REAL entry. Adjust the path to your install.",
+      "id": "kimi",
+      "bin": "C:/Program Files/nodejs/node.exe",
+      "args": ["C:/Users/ASUS/AppData/Roaming/npm/node_modules/@moonshot-ai/kimi-code/dist/main.mjs", "-p"],
+      "timeoutMs": 300000
+    }
+  ],
+  "maxAwaitingReview": 5,
+  "notify": {
+    "$comment": "Pick a private ntfy topic (it is the address — treat it as a secret) and install the ntfy app on your phone.",
+    "channels": []
+  },
+  "gateExportPath": ".spicyspec/gates.jsonl",
+  "parkedPath": ".spicyspec/PARKED.md"
+}

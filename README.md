@@ -25,11 +25,12 @@ plane · WinSW/systemd runner services · vitest · zod.
 
 ## Status
 
-**Phase 2 — live-proven end to end.** Domain logic ported from the Airvia build-loop prototype
+**Phase 3 — complete.** Domain logic ported from the Airvia build-loop prototype
 (48h unattended, 191 tasks closed, 47 machinery defects — each encoded as a named regression test).
-Three live proofs on real infrastructure: a single-run smoke (8/8), a three-stage rotation through
-real Claude sessions (10/10, $0.25), and the manager dashboard rendering a live store in a browser.
-269 tests across 11 packages.
+Four live proofs on real infrastructure: a single-run smoke (8/8), a three-stage rotation through
+real Claude sessions (10/10, $0.25), the manager dashboard rendering a live store in a browser,
+and the store contract at 9/9 against real Postgres 16 (rollback + two-runner federation).
+274 tests across 12 packages.
 
 | Package | What | Status |
 |---|---|---|
@@ -44,7 +45,10 @@ real Claude sessions (10/10, $0.25), and the manager dashboard rendering a live 
 | `packages/packs` | Gate packs: frontend/a11y/backend/security — 62 evidence-bearing checklist items | done |
 | `packages/control-plane` | Managers page: read API + CSRF-guarded review + self-contained live dashboard | done |
 | `packages/create-spicyspec` | `npx create-spicyspec my-project` — five commands to a running loop | done |
-| team runner federation, Postgres driver, Angular UI upgrade | Phase 3 | next |
+| `packages/notify` | ntfy.sh + webhook push — a run waiting on a human is never silent | done |
+| `packages/store` (pg) | Postgres driver behind the same contract; `postgres://` storePath = team mode | done |
+| runner federation | register/heartbeat/staleness in the shared store; `/api/runners` + dashboard | done |
+| Angular UI upgrade, npm publish (license undecided), airvia dogfood migration | parked — founder calls | next |
 
 ## Workspace
 
