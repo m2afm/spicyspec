@@ -676,14 +676,14 @@ const money = (n) => '$' + (Number(n) || 0).toFixed(2);
 
 const RoleCard = ({ role, live, selected, onOpen }) =>
   h('button', {
-    className: 'role' + (role.busy || live ? ' working' : ''),
+    className: 'role' + (role.busy || live?.length > 0 ? ' working' : ''),
     'aria-current': selected ? 'true' : 'false',
     onClick: () => onOpen(role.id),
   },
     h('div', { className: 'role-name' }, role.name),
     h('div', { className: 'role-tag' }, role.tagline),
     h('div', { className: 'role-chips' },
-      (role.busy || live)
+      (role.busy || live?.length > 0)
         ? h('span', { className: 'chip live' }, 'working now')
         : h('span', { className: 'chip ro' }, role.started ? 'idle' : 'not started yet'),
       // The permission mode is shown, not assumed. An auditor that could edit what it audits
