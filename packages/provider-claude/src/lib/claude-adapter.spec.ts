@@ -120,8 +120,12 @@ describe('B25 round 2 (live-smoke catch): the PreToolUse hook is the real enforc
     });
   });
 
-  it('stays silent for allowed writes and other events', async () => {
-    expect(await hook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } })).toEqual({});
+  it('EXPLICITLY allows permitted calls (a fall-through re-enters host permission prompts an unattended run cannot answer)', async () => {
+    const allowed = (await hook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'src/a.ts' } })) as {
+      hookSpecificOutput?: { permissionDecision?: string };
+    };
+    expect(allowed.hookSpecificOutput?.permissionDecision).toBe('allow');
+    // Non-PreToolUse events are not this hook's business — still silent.
     expect(await hook({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: {} })).toEqual({});
   });
 
@@ -175,7 +179,7 @@ describe('B25 mirrored: a promised exception inside a protected path is HONORED'
       tool_name: 'Write',
       tool_input: { file_path: '/repo/.spicyspec/PARKED.md' },
     });
-    expect(allowed).toEqual({});
+    expect((allowed as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision).toBe('allow');
     const denied = await hook({
       hook_event_name: 'PreToolUse',
       tool_name: 'Write',

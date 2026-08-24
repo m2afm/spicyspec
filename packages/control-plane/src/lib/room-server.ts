@@ -106,17 +106,22 @@ async function git(repoCwd: string, args: string[]): Promise<string> {
   }
 }
 
-function specProgress(repoCwd: string, dir: string | null): { done: number; open: number; held: number; total: number } | null {
+function specProgress(repoCwd: string, dir: string | null, specId?: string): { done: number; open: number; held: number; total: number } | null {
   if (!dir) return null;
-  const path = join(repoCwd, dir, 'tasks.md');
-  if (!existsSync(path)) return null;
+  // Parallel lanes work in worktrees under .spicyspec/worktrees/<id>/ — the main tree's
+  // copy of tasks.md is stale the moment a lane commits. The lane's copy is the truth.
+  const candidates = specId
+    ? [join(repoCwd, '.spicyspec', 'worktrees', specId, dir, 'tasks.md'), join(repoCwd, dir, 'tasks.md')]
+    : [join(repoCwd, dir, 'tasks.md')];
+  const path = candidates.find((c) => existsSync(c));
+  if (!path) return null;
   const text = readFileSync(path, 'utf8');
   const done = (text.match(/^\s*[-*] \[[xX]\] \*\*T\d+\*\*/gm) ?? []).length;
   const open = (text.match(/^\s*[-*] \[ \] \*\*T\d+\*\*/gm) ?? []).length;
   return { done, open, held: 0, total: done + open };
 }
 
-async function buildRoomState(options: RoomOptions, brief: BriefModule): Promise<Record<string, unknown>> {
+async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: LaneLive[] = []): Promise<Record<string, unknown>> {
   const { store, repoCwd } = options;
   const queue = await store.loadQueue();
   const runs = await store.listRuns();
@@ -127,18 +132,30 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule): Promise
   const runners = runnersRaw.map((r) => JSON.parse(r.value) as { pid: number; heartbeatAt: string });
   const liveRunner = runners.find((r) => now - Date.parse(r.heartbeatAt) < 90_000) ?? null;
 
+  const specDirInWorktree = (id: string): string | null => {
+    // A spec whose directory exists only on its lane branch is invisible in the main
+    // tree — resolve against the worktree so shaping-stage lanes still show identity.
+    try {
+      const specsRoot = join(repoCwd, '.spicyspec', 'worktrees', id, 'specs');
+      const hit = readdirSync(specsRoot).find((n) => n === id || n.startsWith(`${id}-`));
+      return hit ? `specs/${hit}` : null;
+    } catch {
+      return null;
+    }
+  };
   const entries = queue.entries.map((e) => {
-    const dir = brief.specDirFor(repoCwd, e.id);
+    const dir = brief.specDirFor(repoCwd, e.id) ?? specDirInWorktree(e.id);
     return {
       id: e.id,
       slug: dir ? dir.replace(/\\/g, '/').split('/').pop()?.replace(/^\d+-/, '') : null,
       dir,
       status: STATUS_TO_ROOM[String(e.status)] ?? String(e.status),
       stage: e.stage ?? null,
-      progress: specProgress(repoCwd, dir),
+      progress: specProgress(repoCwd, dir, e.id),
     };
   });
-  const active = entries.find((e) => e.status === 'active') ?? null;
+  const actives = entries.filter((e) => e.status === 'active');
+  const active = actives[0] ?? null;
 
   const sum = runs.reduce(
     (a, t) => ({
@@ -178,6 +195,7 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule): Promise
       entries,
     },
     active,
+    actives,
     accounts: [...new Set([...(options.accountIds ?? []), ...Object.keys(pool)])].map((id) => {
       const a = pool[id] ?? {};
       const rows = runs.filter((t) => t['account'] === id);
@@ -223,7 +241,9 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule): Promise
         note: (t['note'] as string) ?? (t['judgedBy'] ? `judge ${t['judgedBy']}: ${t['judgeHonest'] === false ? 'dishonest' : 'ok'}` : ''),
         redFirst: null,
       })),
-    live: null,
+    // The Current-tick panel's data — one entry per live lane, from the pump's tails.
+    live: lanes[0] ?? null,
+    lanes,
     parked: [],
   };
 }
@@ -246,36 +266,45 @@ async function isSignedOff(repoCwd: string, id: string): Promise<boolean> {
  * grows), never the retained window (which shrinks at its cap).
  * ------------------------------------------------------------------------------------ */
 
-interface LiveTail {
-  dir: string | null;
+interface LaneTail {
+  dir: string;
   offset: number;
   partial: string;
   reg: Record<string, unknown>;
   meta: Record<string, unknown> | null;
   seen: Map<string, number>;
+  ended: boolean;
+  // Current-tick panel counters — kept here so the panel costs nothing extra to serve.
+  tools: number;
+  bash: number;
+  subagents: number;
+  actions: Array<{ tool: string; hint: string }>;
+  say: string;
 }
 
-function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (event: string, data: unknown) => void) {
-  const tail: LiveTail = { dir: null, offset: 0, partial: '', reg: agentsMod.createRegistry(), meta: null, seen: new Map() };
+export interface LaneLive {
+  id: string;
+  spec: string;
+  stage: string;
+  account: string;
+  startedAt: number | null;
+  tools: number;
+  verification: number;
+  subagents: number;
+  actions: Array<{ tool: string; hint: string }>;
+  say: string;
+}
 
-  const newestRunDir = (): string | null => {
-    try {
-      const names = readdirSync(runsRoot);
-      let best: string | null = null;
-      let bestM = 0;
-      for (const n of names) {
-        const p = join(runsRoot, n);
-        const m = statSync(p).mtimeMs;
-        if (m > bestM) {
-          bestM = m;
-          best = p;
-        }
-      }
-      return best;
-    } catch {
-      return null;
-    }
-  };
+const LANE_FRESH_MS = 15 * 60_000;
+
+/**
+ * Multi-lane pump: one tail per live run directory. The single-tail version followed the
+ * NEWEST dir by mtime — under 3 concurrent lanes that flip-flopped every poll, resetting
+ * the registry each switch, and the Current-tick panel read "starting up…" forever while
+ * three sessions worked. Every lane is tailed; agents are namespaced by spec id.
+ */
+function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (event: string, data: unknown) => void) {
+  const tails = new Map<string, LaneTail>(); // keyed by lane (spec id)
 
   const readMeta = (dir: string): Record<string, unknown> | null => {
     try {
@@ -285,28 +314,88 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     }
   };
 
-  const reset = (dir: string) => {
-    tail.dir = dir;
-    tail.offset = 0;
-    tail.partial = '';
-    tail.meta = readMeta(dir);
-    tail.seen = new Map();
-    const m = tail.meta;
-    tail.reg = agentsMod.createRegistry({
-      name: m ? `run ${String(m['number'])}` : 'worker',
-      description: m ? `${String(m['spec'])}/${String(m['stage'])} via ${String(m['account'])}` : 'starting…',
-      startedAt: (m?.['startedAt'] as string) ?? null,
-    });
+  const freshDirs = (): Array<{ dir: string; meta: Record<string, unknown> }> => {
+    try {
+      const out: Array<{ dir: string; meta: Record<string, unknown> }> = [];
+      for (const n of readdirSync(runsRoot)) {
+        const dir = join(runsRoot, n);
+        let m = 0;
+        try {
+          m = statSync(join(dir, 'stream.jsonl')).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (Date.now() - m > LANE_FRESH_MS) continue;
+        const meta = readMeta(dir);
+        if (meta) out.push({ dir, meta });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   };
 
-  const pump = () => {
-    const dir = newestRunDir();
-    if (!dir) return;
-    if (dir !== tail.dir) {
-      reset(dir);
-      broadcast('tick', { id: dir.split(/[\\\/]/).pop(), meta: tail.meta, reset: true });
+  const newTail = (dir: string, meta: Record<string, unknown>): LaneTail => ({
+    dir,
+    offset: 0,
+    partial: '',
+    reg: agentsMod.createRegistry({
+      name: `run ${String(meta['number'])}`,
+      description: `${String(meta['spec'])}/${String(meta['stage'])} via ${String(meta['account'])}`,
+      startedAt: (meta['startedAt'] as string) ?? null,
+    }),
+    meta,
+    seen: new Map(),
+    ended: false,
+    tools: 0,
+    bash: 0,
+    subagents: 0,
+    actions: [],
+    say: '',
+  });
+
+  const laneId = (a: Record<string, unknown>, lane: string): string => `${lane}·${String(a['id'])}`;
+
+  const hintFor = (input: Record<string, unknown>): string => {
+    const raw = input['command'] ?? input['file_path'] ?? input['description'] ?? input['prompt'] ?? input['pattern'] ?? '';
+    return String(raw).slice(0, 90);
+  };
+
+  const track = (tail: LaneTail, line: Record<string, unknown>) => {
+    if (line['type'] === 'session_end') {
+      tail.ended = true;
+      return;
     }
-    const path = join(dir, 'stream.jsonl');
+    if (line['type'] === 'assistant') {
+      const content = ((line['message'] as Record<string, unknown>)?.['content'] as Array<Record<string, unknown>>) ?? [];
+      for (const b of content) {
+        if (b['type'] === 'tool_use') {
+          tail.tools += 1;
+          const name = String(b['name'] ?? '');
+          if (name === 'Task' || name === 'Agent') tail.subagents += 1;
+          if (name === 'Bash') tail.bash += 1;
+          tail.actions.push({ tool: name, hint: hintFor((b['input'] as Record<string, unknown>) ?? {}) });
+          if (tail.actions.length > 8) tail.actions.splice(0, tail.actions.length - 8);
+        }
+        if (b['type'] === 'text' && line['parent_tool_use_id'] == null) {
+          const s = String(b['text'] ?? '').trim();
+          if (s) tail.say = s.slice(0, 220);
+        }
+      }
+    }
+  };
+
+  const mergedCounts = (): Record<string, number> => {
+    const sum: Record<string, number> = {};
+    for (const tail of tails.values()) {
+      const snap = agentsMod.snapshot(tail.reg, { detail: false });
+      for (const [k, v] of Object.entries(snap.counts ?? {})) sum[k] = (sum[k] ?? 0) + Number(v ?? 0);
+    }
+    return sum;
+  };
+
+  const pumpLane = (lane: string, tail: LaneTail) => {
+    const path = join(tail.dir, 'stream.jsonl');
     if (!existsSync(path)) return;
     let size: number;
     try {
@@ -314,8 +403,7 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     } catch {
       return;
     }
-    if (size < tail.offset) reset(dir); // truncated under us
-    if (size === tail.offset) return;
+    if (size <= tail.offset) return;
     let chunk: string;
     try {
       chunk = readFileSync(path).subarray(tail.offset, size).toString('utf8');
@@ -331,7 +419,9 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        for (const id of agentsMod.ingest(tail.reg, JSON.parse(line))) changed.add(id);
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        track(tail, parsed);
+        for (const id of agentsMod.ingest(tail.reg, parsed)) changed.add(id);
       } catch {
         /* skip bad line */
       }
@@ -351,22 +441,67 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
       };
       void prompt;
       void summary;
-      agents.push(base);
+      agents.push({ ...base, id: laneId(base, lane), lane, name: `${lane} · ${String(base['name'] ?? '')}` });
       const count = Number(activityCount ?? 0);
       const window = (acts as unknown[]) ?? [];
       const sent = tail.seen.get(id) ?? Math.max(0, count - window.length);
       const fresh = Math.min(count - sent, window.length);
-      if (fresh > 0) for (const entry of window.slice(window.length - fresh)) activity.push({ id, entry });
+      if (fresh > 0) for (const entry of window.slice(window.length - fresh)) activity.push({ id: laneId(a, lane), entry });
       tail.seen.set(id, count);
     }
-    broadcast('agents', { agents, activity: activity.slice(-150), counts: full.counts, meta: tail.meta });
+    broadcast('agents', { agents, activity: activity.slice(-150), counts: mergedCounts(), meta: tail.meta });
+  };
+
+  const pump = () => {
+    for (const { dir, meta } of freshDirs()) {
+      const lane = String(meta['spec'] ?? dir.split(/[\\/]/).pop());
+      const existing = tails.get(lane);
+      if (!existing || existing.dir !== dir) {
+        // A newer run for this lane replaces the old tail — reset only THIS lane.
+        tails.set(lane, newTail(dir, meta));
+        broadcast('tick', { id: dir.split(/[\\/]/).pop(), lane, meta, reset: true });
+      }
+    }
+    for (const [lane, tail] of [...tails.entries()]) {
+      pumpLane(lane, tail);
+      let stale = true;
+      try {
+        stale = Date.now() - statSync(join(tail.dir, 'stream.jsonl')).mtimeMs > LANE_FRESH_MS;
+      } catch {
+        stale = true;
+      }
+      if (tail.ended && stale) tails.delete(lane);
+    }
   };
 
   return {
     pump,
     hello(): unknown {
-      const snap = agentsMod.snapshot(tail.reg, { detail: false });
-      return { agents: snap.agents, counts: snap.counts, meta: tail.meta, where: null };
+      const agents: unknown[] = [];
+      let meta: Record<string, unknown> | null = null;
+      for (const [lane, tail] of tails.entries()) {
+        const snap = agentsMod.snapshot(tail.reg, { detail: false });
+        for (const a of snap.agents) agents.push({ ...a, id: laneId(a, lane), lane, name: `${lane} · ${String(a['name'] ?? '')}` });
+        meta = meta ?? tail.meta;
+      }
+      return { agents, counts: mergedCounts(), meta, where: null };
+    },
+    lanes(): LaneLive[] {
+      return [...tails.entries()]
+        .filter(([, tail]) => !tail.ended)
+        .map(([lane, tail]) => ({
+          id: String(tail.dir.split(/[\\/]/).pop()),
+          spec: lane,
+          stage: String(tail.meta?.['stage'] ?? '?'),
+          account: String(tail.meta?.['account'] ?? '?'),
+          startedAt: tail.meta?.['startedAt'] ? Date.parse(String(tail.meta['startedAt'])) : null,
+          tools: tail.tools,
+          verification: tail.bash,
+          subagents: tail.subagents,
+          actions: [...tail.actions],
+          say: tail.say,
+        }))
+        .sort((a, b) => a.spec.localeCompare(b.spec));
     },
   };
 }
@@ -536,7 +671,7 @@ data: ${JSON.stringify(data)}
         });
 
       try {
-        if (url.pathname === '/api/state') return send(200, JSON.stringify(await buildRoomState(options, brief)));
+        if (url.pathname === '/api/state') return send(200, JSON.stringify(await buildRoomState(options, brief, live.lanes())));
         if (url.pathname === '/api/owed') return send(200, JSON.stringify({ owed: await owedIndex() }));
         if (url.pathname === '/api/brief') {
           return send(200, JSON.stringify(await briefFor(url.searchParams.get('kind') === 'parked' ? 'parked' : 'spec', url.searchParams.get('id') ?? '')));

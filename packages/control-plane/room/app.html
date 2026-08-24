@@ -1016,10 +1016,18 @@ function useLive() {
     });
 
     es.addEventListener('tick', (e) => {
-      // A new tick means a new worker and a new tree. Dropping the old one is the point.
+      // A new run STARTED IN ONE LANE. Only that lane's agents reset — clearing all three
+      // lanes because one rotated made two healthy sessions vanish from the grid.
       const d = JSON.parse(e.data);
-      trace.current = new Map();
-      setAgents([]); setCounts({}); setMeta(d.meta); setTraceTick((n) => n + 1); stamp();
+      const prefix = d.lane ? d.lane + '\u00b7' : null;
+      if (prefix) {
+        for (const k of [...trace.current.keys()]) if (String(k).startsWith(prefix)) trace.current.delete(k);
+        setAgents((prev) => prev.filter((a) => !String(a.id).startsWith(prefix)));
+      } else {
+        trace.current = new Map();
+        setAgents([]); setCounts({});
+      }
+      setMeta(d.meta); setTraceTick((n) => n + 1); stamp();
     });
 
     es.addEventListener('agents', (e) => {
@@ -1241,19 +1249,28 @@ function Accounts({ accounts }) {
     }));
 }
 
-function Live({ live, running }) {
-  if (!running) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'The loop is not running. Press START — it spawns detached and outlives this page.'));
-  if (!live) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'starting up…'));
-  const mins = live.startedAt ? Math.round((Date.now() - live.startedAt) / 60000) : null;
-  return h(Panel, { title: 'Current tick', sub: 'tick ' + live.id },
-    h('div', { className: 'statrow', style: { marginBottom: '0.8rem' } },
+function LaneBlock({ lane, divider }) {
+  const mins = lane.startedAt ? Math.round((Date.now() - lane.startedAt) / 60000) : null;
+  return h('div', { style: divider ? { borderTop: '2px solid var(--line)', marginTop: '0.9rem', paddingTop: '0.8rem' } : null },
+    h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.4rem' } },
+      h('span', null, 'Spec ' + lane.spec + ' · ' + lane.stage),
+      h('span', { className: 'sub' }, lane.account)),
+    h('div', { className: 'statrow', style: { marginBottom: '0.6rem' } },
       h(Stat, { n: fmtMin(mins), l: 'elapsed' }),
-      h(Stat, { n: live.tools ?? 0, l: 'tool calls' }),
-      h(Stat, { n: live.verification ?? 0, l: 'verify cmds' }),
-      h(Stat, { n: live.subagents ?? 0, l: 'subagents' })),
-    h('ul', { className: 'feed' }, (live.actions || []).map((a, i) =>
+      h(Stat, { n: lane.tools ?? 0, l: 'tool calls' }),
+      h(Stat, { n: lane.verification ?? 0, l: 'verify cmds' }),
+      h(Stat, { n: lane.subagents ?? 0, l: 'subagents' })),
+    h('ul', { className: 'feed' }, (lane.actions || []).map((a, i) =>
       h('li', { key: i }, h('span', { className: 'tool' }, a.tool), h('span', { className: 'hint' }, a.hint)))),
-    live.say && h('div', { className: 'quote' }, '“' + live.say + '”'));
+    lane.say && h('div', { className: 'quote' }, '“' + lane.say + '”'));
+}
+
+function Live({ live, lanes, running }) {
+  if (!running) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'The loop is not running. Press START — it spawns detached and outlives this page.'));
+  const all = (lanes && lanes.length) ? lanes : (live ? [live] : []);
+  if (!all.length) return h(Panel, { title: 'Current tick' }, h('p', { className: 'mono' }, 'starting up…'));
+  return h(Panel, { title: 'Current tick', sub: all.length + (all.length === 1 ? ' lane' : ' lanes') },
+    all.map((lane, i) => h(LaneBlock, { key: lane.spec || i, lane, divider: i > 0 })));
 }
 
 function Ticks({ ticks }) {
@@ -1702,23 +1719,23 @@ function App() {
           h(Stat, { n: c.awaitingFounder.length, l: 'awaiting you' }),
           h(Stat, { n: c.parked.length, l: 'parked' }),
           h(Stat, { n: c.pending, l: 'not started' })),
-        active && !p && h('div', { style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
-          h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
-            h('span', null, 'Spec ' + active.id), h('span', { className: 'sub' }, active.slug)),
-          h('p', { className: 'mono', style: { fontSize: '0.78rem', margin: '0.2rem 0 0', color: 'var(--text-soft)' } },
-            'SHAPING — no tasks.md yet. This tick is writing spec.md, plan.md and tasks.md from the catalog entry, then the DESIGN gate rules on all three together.')),
-        active && p && h('div', { style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
-          h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
-            h('span', null, 'Spec ' + active.id), h('span', { className: 'sub' }, active.slug)),
-          h(Progress, { done: p.done, built: p.held, total: p.total }),
-          h('div', { className: 'bar-legend' },
-            h('span', null, h('b', null, p.done), ' done'),
-            h('span', null, h('b', null, p.open), ' open'),
-            p.held > 0 && h('span', null, h('b', null, p.held), ' held (reason stated)'),
-            p.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, p.unmarked + ' UNMARKED'),
-            p.currentWave && h('span', null, p.currentWave.slice(0, 46))))),
+        (s.actives || (active ? [active] : [])).map((lane) => {
+          const lp = lane.progress;
+          return h('div', { key: lane.id, style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
+            h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
+              h('span', null, 'Spec ' + lane.id + (lane.stage ? ' · ' + lane.stage : '')), h('span', { className: 'sub' }, lane.slug)),
+            !lp && h('p', { className: 'mono', style: { fontSize: '0.78rem', margin: '0.2rem 0 0', color: 'var(--text-soft)' } },
+              'SHAPING — no tasks.md yet. This lane is writing spec.md, plan.md and tasks.md from the catalog entry, then the DESIGN gate rules on all three together.'),
+            lp && h(Progress, { done: lp.done, built: lp.held, total: lp.total }),
+            lp && h('div', { className: 'bar-legend' },
+              h('span', null, h('b', null, lp.done), ' done'),
+              h('span', null, h('b', null, lp.open), ' open'),
+              lp.held > 0 && h('span', null, h('b', null, lp.held), ' held (reason stated)'),
+              lp.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, lp.unmarked + ' UNMARKED'),
+              lp.currentWave && h('span', null, lp.currentWave.slice(0, 46))));
+        })),
 
-      h(Live, { live: s.live, running: s.running }),
+      h(Live, { live: s.live, lanes: s.lanes, running: s.running }),
 
       h(Panel, { title: 'Run totals' },
           h('div', { className: 'statrow' },
