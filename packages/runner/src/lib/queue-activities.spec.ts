@@ -30,14 +30,14 @@ describe('openNextSpec', () => {
   it('continues the ACTIVE entry at its recorded stage', async () => {
     const deps = makeRunnerDeps();
     await deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'plan' }] });
-    const r = await acts(deps).openNextSpec();
+    const r = await acts(deps).openNextSpec({ busy: [] });
     expect(r).toEqual({ kind: 'next', next: { specId: '001', stage: 'plan' } });
   });
 
   it('promotes the first pending to active at the first pipeline stage', async () => {
     const deps = makeRunnerDeps();
     await deps.store.saveQueue({ entries: [{ id: '001', status: 'done' }, { id: '002', status: 'pending' }] });
-    const r = await acts(deps).openNextSpec();
+    const r = await acts(deps).openNextSpec({ busy: [] });
     expect(r).toEqual({ kind: 'next', next: { specId: '002', stage: 'intake' } });
     expect((await deps.store.loadQueue()).entries[1]).toMatchObject({ status: 'active', stage: 'intake' });
   });
@@ -47,7 +47,7 @@ describe('openNextSpec', () => {
     await deps.store.saveQueue({
       entries: [{ id: '001', status: 'active', stage: 'a' }, { id: '002', status: 'active', stage: 'a' }],
     });
-    const r = await acts(deps).openNextSpec();
+    const r = await acts(deps).openNextSpec({ busy: [] });
     expect(r.kind).toBe('halt');
     expect((r as { violations: string[] }).violations[0]).toContain('Q3');
   });
@@ -55,7 +55,7 @@ describe('openNextSpec', () => {
   it('Q4 (B45): awaiting-review with no spec dir is REPAIRED to pending, then opened', async () => {
     const deps = makeRunnerDeps();
     await deps.store.saveQueue({ entries: [{ id: '006', status: 'awaiting-review' }] });
-    const r = await acts(deps, healthyEvidence({ specDirExists: () => false })).openNextSpec();
+    const r = await acts(deps, healthyEvidence({ specDirExists: () => false })).openNextSpec({ busy: [] });
     expect(r).toEqual({ kind: 'next', next: { specId: '006', stage: 'intake' } });
   });
 
@@ -68,7 +68,7 @@ describe('openNextSpec', () => {
         { id: '003', status: 'pending' },
       ],
     });
-    const r = await acts(deps, healthyEvidence(), 2).openNextSpec();
+    const r = await acts(deps, healthyEvidence(), 2).openNextSpec({ busy: [] });
     expect(r.kind).toBe('idle');
     expect((r as { reason: string }).reason).toContain('cap');
     expect((await deps.store.loadQueue()).entries[2].status).toBe('pending'); // untouched
@@ -77,7 +77,7 @@ describe('openNextSpec', () => {
   it('drained catalog reports idle', async () => {
     const deps = makeRunnerDeps();
     await deps.store.saveQueue({ entries: [{ id: '001', status: 'done' }] });
-    const r = await acts(deps).openNextSpec();
+    const r = await acts(deps).openNextSpec({ busy: [] });
     expect(r.kind).toBe('idle');
   });
 });
@@ -138,7 +138,7 @@ describe('transitions reach a human (the 91%-idle killer)', () => {
     const deps = makeRunnerDeps();
     await deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'a' }, { id: '002', status: 'active', stage: 'a' }] });
     const { seen, channel } = captureChannel();
-    await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [channel] }).openNextSpec();
+    await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [channel] }).openNextSpec({ busy: [] });
     expect(seen[0].event).toBe('halted');
     expect(seen[0].body).toContain('Q3');
   });
@@ -161,5 +161,61 @@ describe('transitions reach a human (the 91%-idle killer)', () => {
     expect(r.queueStatus).toBe('awaiting-review'); // the transition landed
     const failures = JSON.parse((await deps.store.getKv('notify:last-failures'))!);
     expect(failures.failures[0]).toMatchObject({ id: 'ntfy:x', error: 'ECONNREFUSED' });
+  });
+});
+
+/* -------------------------------------------------------------- parallel opening ---- */
+
+describe('openNextSpec in parallel mode', () => {
+  const parallelDeps = () => {
+    const deps = makeRunnerDeps();
+    deps.config = parseRunnerConfig({
+      projectName: 'Acme', repoCwd: '/repo', accounts: [{ id: 'a' }], maxParallelSpecs: 3,
+    });
+    return deps;
+  };
+
+  it('opens a second spec while the first is busy — up to the cap', async () => {
+    const deps = parallelDeps();
+    deps.store.saveQueue({ entries: [
+      { id: '009', status: 'pending' },
+      { id: '010', status: 'pending' },
+      { id: '011', status: 'pending' },
+      { id: '012', status: 'pending' },
+    ] });
+    const a = acts(deps);
+    const first = await a.openNextSpec({ busy: [] });
+    const second = await a.openNextSpec({ busy: ['009'] });
+    const third = await a.openNextSpec({ busy: ['009', '010'] });
+    const fourth = await a.openNextSpec({ busy: ['009', '010', '011'] });
+    expect([first, second, third].map((r) => r.kind)).toEqual(['next', 'next', 'next']);
+    expect(fourth.kind).toBe('idle'); // three writer slots, all busy
+    expect((fourth as { reason: string }).reason).toContain('busy');
+  });
+
+  it('never re-opens a spec on the busy list, even if it is the active entry', async () => {
+    const deps = parallelDeps();
+    deps.store.saveQueue({ entries: [{ id: '008', status: 'active', stage: 'execute' }, { id: '009', status: 'pending' }] });
+    const r = await acts(deps).openNextSpec({ busy: ['008'] });
+    expect(r.kind).toBe('next');
+    expect((r as { next: { specId: string } }).next.specId).toBe('009');
+  });
+
+  it('an orphaned active entry (restart survivor) is resumed before new work opens', async () => {
+    const deps = parallelDeps();
+    deps.store.saveQueue({ entries: [{ id: '008', status: 'active', stage: 'execute' }, { id: '009', status: 'pending' }] });
+    const r = await acts(deps).openNextSpec({ busy: [] });
+    expect((r as { next: { specId: string } }).next.specId).toBe('008');
+  });
+
+  it('three active within cap 3 passes the guard (Q3 parallel-aware end to end)', async () => {
+    const deps = parallelDeps();
+    deps.store.saveQueue({ entries: [
+      { id: '009', status: 'active', stage: 'execute' },
+      { id: '010', status: 'active', stage: 'execute' },
+      { id: '011', status: 'active', stage: 'execute' },
+    ] });
+    const r = await acts(deps).openNextSpec({ busy: ['009', '010', '011'] });
+    expect(r.kind).toBe('idle'); // no halt — three writers are legal at cap 3
   });
 });

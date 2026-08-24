@@ -58,7 +58,21 @@ export interface QueueCheck {
   halting: Violation[];
 }
 
-export function checkQueue(queue: Queue | null | undefined, evidence: QueueEvidence): QueueCheck {
+export interface CheckOptions {
+  /**
+   * How many entries may be active at once. 1 is the single-writer default; parallel mode
+   * (worktree-isolated sessions, one per account) raises it. Q3 fires past the cap — the
+   * cap IS the invariant now, not "exactly one".
+   */
+  maxActive?: number;
+}
+
+export function checkQueue(
+  queue: Queue | null | undefined,
+  evidence: QueueEvidence,
+  options: CheckOptions = {},
+): QueueCheck {
+  const maxActive = Math.max(1, options.maxActive ?? 1);
   const violations: Violation[] = [];
   const entries = queue?.entries ?? [];
   const add = (v: Violation) => violations.push(v);
@@ -83,15 +97,16 @@ export function checkQueue(queue: Queue | null | undefined, evidence: QueueEvide
     seen.add(e.id);
   }
 
-  // Q3 — more than one active entry. The active entry IS the pointer a run's outcome is
-  // applied to; two of them means the outcome lands somewhere arbitrary.
+  // Q3 — more active entries than the writer capacity. Outcomes are settled per spec id
+  // (not per "the active entry"), so N active is sound exactly when N isolated writers
+  // exist; past the cap the loop halts rather than guesses.
   const active = entries.filter((e) => e.status === 'active');
-  if (active.length > 1) {
+  if (active.length > maxActive) {
     add({
       code: 'Q3',
       severity: 'halt',
       id: active.map((e) => e.id).join(','),
-      message: `${active.length} entries are active at once`,
+      message: `${active.length} entries are active at once (cap ${maxActive})`,
     });
   }
 

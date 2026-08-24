@@ -27,8 +27,10 @@ import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
 import type { RunnerConfig } from './config.js';
 import { appendLedgerView, exportAccountsView } from './compat-view.js';
+import { createQueueActivities } from './queue-activities.js';
 import { snapshot, type FullSnapshot } from './git-snapshot.js';
 import { findSpecDir } from './spec-dir.js';
+import { ensureWorktree } from './worktree.js';
 
 export interface RunnerDeps {
   config: RunnerConfig;
@@ -41,6 +43,7 @@ export interface RunnerDeps {
   secrets?: Record<string, { env?: Record<string, string> }>;
   /** injected for tests */
   snapshotFn?: (input: WorkerRunInput) => Promise<FullSnapshot>;
+  worktreeFn?: typeof ensureWorktree;
   judgeProviders?: JudgeProvider[];
   judgeChainFn?: typeof judgeChain;
   nowMs?: () => number;
@@ -95,15 +98,20 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
   const pipeline = deps.pipeline ?? specDrivenPipeline;
   const cfg = deps.config;
 
+  const workCwdBySpec = new Map<string, string>();
+  const leasedAccountBySpec = new Map<string, string>();
+
   const snapshotFn =
     deps.snapshotFn ??
     (async (input: WorkerRunInput) => {
+      // Snapshots read the tree the session WORKS — the spec's worktree in parallel mode.
+      const base = workCwdBySpec.get(input.specId) ?? cfg.repoCwd;
       // Real tenants name spec dirs `<id>-<slug>` (Airvia); resolve, never assume.
-      const specDir = await findSpecDir(cfg.repoCwd, cfg.specsDir, input.specId);
+      const specDir = await findSpecDir(base, cfg.specsDir, input.specId);
       return snapshot({
-        cwd: cfg.repoCwd,
-        tasksFile: specDir ? `${cfg.repoCwd}/${specDir}/tasks.md` : null,
-        handoffFile: `${cfg.repoCwd}/${cfg.handoffPath}`,
+        cwd: base,
+        tasksFile: specDir ? `${base}/${specDir}/tasks.md` : null,
+        handoffFile: `${base}/${cfg.handoffPath}`,
         // B2: the runner's own state (the store, parked file) must never dirty the tree
         selfOwnedPaths: cfg.worker.protectedPaths,
       });
@@ -118,12 +126,50 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       lastInput = input;
       const pool = await loadPoolFromStore(deps);
       const nowMs = deps.nowMs ?? Date.now;
-      const account = pickAccount(pool, nowMs());
-      if (!account) {
-        // The activity fails; Temporal's retry policy re-runs it after backoff — the
-        // durable equivalent of the prototype's sleep-to-earliest-reset.
-        throw new NoWarmAccountError(earliestWarmMs(pool), describePool(pool, nowMs()));
+
+      // Lease an account: with N concurrent sessions, N packet builds race — pickAccount
+      // alone would triple-book the least-used one. tryReserve is the atomic claim; a
+      // lease older than 6h is stale (its holder died mid-run) and is broken.
+      let account = null as ReturnType<typeof pickAccount>;
+      const leased = new Set<string>();
+      for (const candidate of [...pool.accounts].sort((a, b) => a.uses - b.uses)) {
+        if (candidate.coldUntilMs > nowMs()) continue;
+        const leaseKey = `account:lease:${candidate.id}`;
+        const claim = JSON.stringify({ specId: input.specId, run: input.run, at: nowMs() });
+        if (await deps.store.tryReserve(leaseKey, claim)) {
+          account = candidate;
+          break;
+        }
+        const heldRaw = await deps.store.getKv(leaseKey);
+        const heldAt = heldRaw ? (JSON.parse(heldRaw) as { at?: number }).at ?? 0 : 0;
+        if (nowMs() - heldAt > 6 * 3600_000) {
+          await deps.store.release(leaseKey);
+          if (await deps.store.tryReserve(leaseKey, claim)) {
+            account = candidate;
+            break;
+          }
+        }
+        leased.add(candidate.id);
       }
+      if (!account) {
+        // Every warm account is leased to a concurrent session, or the pool is cold.
+        // The activity fails; Temporal's retry re-runs it after backoff — the durable
+        // equivalent of the prototype's sleep-to-earliest-reset.
+        throw new NoWarmAccountError(
+          earliestWarmMs(pool),
+          describePool(pool, nowMs()) + (leased.size ? ` · leased: ${[...leased].join(',')}` : ''),
+        );
+      }
+      leasedAccountBySpec.set(input.specId, account.id);
+
+      // Parallel mode: each concurrent spec works its OWN worktree on branch spec/<id> —
+      // one tree, one writer (B12), N trees, N writers.
+      let workCwd = cfg.repoCwd;
+      if (cfg.maxParallelSpecs > 1) {
+        const worktree = await (deps.worktreeFn ?? ensureWorktree)(cfg.repoCwd, input.specId);
+        workCwd = worktree.path;
+      }
+      workCwdBySpec.set(input.specId, workCwd);
 
       const snap = await snapshotFn(input);
       // Stage comes from the queue entry (the rotation workflow advances it); the
@@ -173,7 +219,7 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
 
       return {
         prompt: buildPacket(ctx),
-        cwd: cfg.repoCwd,
+        cwd: workCwd,
         account: { id: account.id, env: account.env, configDir: account.configDir },
         model: cfg.worker.model,
         effort: cfg.worker.effort,
@@ -201,6 +247,9 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
     },
 
     async onClassified(cls, accountId, evidence) {
+      // The session is over — free the account for the next concurrent packet build.
+      await deps.store.release(`account:lease:${accountId}`).catch(() => undefined);
+      leasedAccountBySpec.delete(lastInput.specId);
       await settlePool(deps, cls, accountId);
 
       // Second-vendor honesty check — evidence first, story second. A dead chain is
@@ -264,4 +313,20 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
   };
 
   return createActivities(activityDeps);
+}
+
+/**
+ * EVERY activity the Temporal worker must register — spec-run AND queue rotation.
+ *
+ * Found by the first real ignition: startRunner registered only the spec-run set, so the
+ * rotation failed in 16 seconds with "openNextSpec is not registered". The rotation smoke
+ * had masked it by composing the two sets by hand. One composition function now, used by
+ * the production entry and the smokes alike — a wiring that only tests exercise is not
+ * wired.
+ */
+export function createAllActivities(deps: RunnerDeps) {
+  return {
+    ...createRunnerActivities(deps),
+    ...createQueueActivities({ runner: deps, pipeline: deps.pipeline }),
+  };
 }

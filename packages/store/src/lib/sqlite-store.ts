@@ -48,6 +48,13 @@ export interface KvStore {
   setKv(key: string, value: string): Promise<void>;
   /** every key under a prefix — how the dashboard enumerates runners, decisions, etc. */
   listKv(prefix: string): Promise<Array<{ key: string; value: string }>>;
+  /**
+   * Atomic claim: true only for the FIRST caller; a second claim of the same key is false
+   * until released. How concurrent sessions each get their OWN account (three parallel
+   * packet builds racing to the same least-used account would triple-book it otherwise).
+   */
+  tryReserve(key: string, value: string): Promise<boolean>;
+  release(key: string): Promise<void>;
 }
 
 export type Store = RunStore & GateStore & PoolStore & QueueStore & KvStore & { close(): Promise<void> };
@@ -196,6 +203,15 @@ export function openStore(path: string): Store {
         .prepare("SELECT key, value FROM kv WHERE key LIKE ? || '%' ORDER BY key ASC")
         .all(prefix) as Array<{ key: string; value: string }>;
       return rows;
+    },
+
+    async tryReserve(key: string, value: string): Promise<boolean> {
+      const result = db.prepare('INSERT OR IGNORE INTO kv(key, value) VALUES (?, ?)').run(key, value);
+      return Number(result.changes) === 1;
+    },
+
+    async release(key: string): Promise<void> {
+      db.prepare('DELETE FROM kv WHERE key = ?').run(key);
     },
 
     async close(): Promise<void> {

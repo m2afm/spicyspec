@@ -185,6 +185,18 @@ export async function openPgStore(options: PgStoreOptions): Promise<Store> {
       return rows.map((r) => ({ key: String(r['key']), value: String(r['value']) }));
     },
 
+    async tryReserve(key: string, value: string): Promise<boolean> {
+      // Claim, then verify ownership by value. RETURNING-on-conflict would be the direct
+      // read, but pg-mem misreports it — and ownership-by-value is correct on both.
+      await pg.query('INSERT INTO kv(key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, value]);
+      const { rows } = await pg.query('SELECT value FROM kv WHERE key = $1', [key]);
+      return rows.length === 1 && String(rows[0]['value']) === value;
+    },
+
+    async release(key: string): Promise<void> {
+      await pg.query('DELETE FROM kv WHERE key = $1', [key]);
+    },
+
     async close(): Promise<void> {
       await options.end?.();
     },

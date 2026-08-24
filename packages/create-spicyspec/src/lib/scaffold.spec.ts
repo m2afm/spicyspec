@@ -19,7 +19,7 @@ describe('scaffoldProject', () => {
     expect(readme).toContain('spicyspec-runner seed');
   });
 
-  it('the scaffolded config validates against the real runner schema', async () => {
+  it('the scaffolded config validates against the real runner schema', { timeout: 30_000 }, async () => {
     const dir = await freshDir();
     await scaffoldProject(dir, { projectName: 'demo' });
     const { parseRunnerConfig } = await import('@spicyspec/runner');

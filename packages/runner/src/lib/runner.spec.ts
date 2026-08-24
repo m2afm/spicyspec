@@ -478,3 +478,92 @@ describe('findSpecDir — real tenants name dirs <id>-<slug> (Airvia)', () => {
     expect(await findSpecDir('/r', 'specs', '006', rd(['0060-other']))).toBeNull();
   });
 });
+
+/* -------------------------------------------------------------- full registration ---- */
+
+import { createAllActivities } from './wiring.js';
+
+describe('createAllActivities — the first-ignition regression', () => {
+  it('registers EVERY activity the workflows call — rotation and spec-run alike', () => {
+    const activities = createAllActivities(makeDeps());
+    for (const name of ['runWorkerSession', 'checkReviewDecision', 'openNextSpec', 'settleSpecOutcome']) {
+      expect(typeof (activities as Record<string, unknown>)[name], name).toBe('function');
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ account leases ---- */
+
+describe('account leasing — N concurrent sessions never share an account', () => {
+  it('three concurrent packet builds get three DIFFERENT accounts', async () => {
+    const deps = makeDeps();
+    deps.config = parseRunnerConfig({
+      projectName: 'Acme', repoCwd: '/repo', maxParallelSpecs: 3,
+      accounts: [{ id: 'primary' }, { id: 'secondary' }, { id: 'tertiary' }],
+    });
+    deps.worktreeFn = async (repo, id) => ({ path: `${repo}/.spicyspec/worktrees/${id}`, branch: `spec/${id}`, created: true });
+    const seen: string[] = [];
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        seen.push(opts.account.id);
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    const activities = createRunnerActivities(deps);
+    // three concurrent runs — the race the lease exists for
+    await Promise.all([
+      activities.runWorkerSession({ specId: '009', run: 1 }),
+      activities.runWorkerSession({ specId: '010', run: 1 }),
+      activities.runWorkerSession({ specId: '011', run: 1 }),
+    ]);
+    expect(seen.sort()).toEqual(['primary', 'secondary', 'tertiary']); // no double-booking
+  });
+
+  it('a fourth concurrent session finds every account leased and fails for retry', async () => {
+    const deps = makeDeps(); // two accounts
+    deps.config = parseRunnerConfig({
+      projectName: 'Acme', repoCwd: '/repo', maxParallelSpecs: 3,
+      accounts: [{ id: 'primary' }, { id: 'secondary' }],
+    });
+    deps.worktreeFn = async (repo, id) => ({ path: `${repo}/.spicyspec/worktrees/${id}`, branch: `spec/${id}`, created: true });
+    // hold both leases as if two sessions are mid-flight
+    await deps.store.tryReserve('account:lease:primary', JSON.stringify({ at: 1_000_000 }));
+    await deps.store.tryReserve('account:lease:secondary', JSON.stringify({ at: 1_000_000 }));
+    await expect(createRunnerActivities(deps).runWorkerSession({ specId: '011', run: 1 })).rejects.toThrow(NoWarmAccountError);
+  });
+
+  it('a stale lease (holder died >6h ago) is broken and re-claimed', async () => {
+    const deps = makeDeps();
+    await deps.store.tryReserve('account:lease:primary', JSON.stringify({ at: 1_000_000 - 7 * 3600_000 }));
+    await deps.store.tryReserve('account:lease:secondary', JSON.stringify({ at: 1_000_000 - 7 * 3600_000 }));
+    const outcome = await createRunnerActivities(deps).runWorkerSession({ specId: '009', run: 1 });
+    expect(outcome.exit).toBeDefined(); // claimed despite the dead leases
+  });
+
+  it('the lease is released after classification — the next run can claim it', async () => {
+    const deps = makeDeps();
+    const activities = createRunnerActivities(deps);
+    await activities.runWorkerSession({ specId: '009', run: 1 });
+    expect(await deps.store.getKv('account:lease:primary')).toBeNull();
+  });
+});
+
+/* ---------------------------------------------------------------------- worktrees ---- */
+
+import { ensureWorktree } from './worktree.js';
+
+describe('ensureWorktree — N trees, N writers (B12 made parallel-safe)', () => {
+  it('creates the worktree on branch spec/<id> once, reuses it after', async () => {
+    const calls: string[][] = [];
+    const gitFn = async (args: string[]) => {
+      calls.push(args);
+      return '';
+    };
+    const first = await ensureWorktree('/repo', '009', gitFn);
+    expect(first.created).toBe(true);
+    expect(first.branch).toBe('spec/009');
+    expect(first.path.replace(/\\/g, '/')).toBe('/repo/.spicyspec/worktrees/009');
+    expect(calls[0]).toEqual(['worktree', 'add', '-B', 'spec/009', first.path, 'HEAD']);
+  });
+});

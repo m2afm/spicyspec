@@ -170,7 +170,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
           const handle = await client.workflow.start('queueRunWorkflow', {
             taskQueue: config.temporal.taskQueue,
             workflowId,
-            args: [{ maxRunsPerSpec: 40, maxConsecutiveStalls: 2, maxSpecRuns: 200 }],
+            args: [{ maxRunsPerSpec: 40, maxConsecutiveStalls: 2, maxSpecRuns: 200, maxParallelSpecs: config.maxParallelSpecs }],
           });
           console.log(`rotation started — workflowId ${handle.workflowId}`);
           console.log('watch it: the dashboard, or the Temporal UI at http://localhost:8233');
@@ -267,6 +267,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
         store,
         projectName: config.projectName,
         repoCwd: resolve(config.repoCwd),
+        accountIds: config.accounts.map((a) => a.id),
         stateDir: resolve(config.repoCwd, '.spicyspec'),
         runnerBin: joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin.js'),
         configPath: resolve(args.configPath),

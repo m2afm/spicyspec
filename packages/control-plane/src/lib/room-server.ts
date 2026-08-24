@@ -58,6 +58,8 @@ export interface RoomOptions {
   store: Store;
   projectName: string;
   repoCwd: string;
+  /** configured account ids — the panel shows THESE from the start; state overlays them */
+  accountIds?: string[];
   /** where founder-checks.json lives (orchestrator state) */
   stateDir: string;
   /** the runner CLI entry, for the START/STOP actions */
@@ -168,7 +170,8 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule): Promise
       entries,
     },
     active,
-    accounts: Object.entries(pool).map(([id, a]) => {
+    accounts: [...new Set([...(options.accountIds ?? []), ...Object.keys(pool)])].map((id) => {
+      const a = pool[id] ?? {};
       const rows = runs.filter((t) => t['account'] === id);
       const last = rows[rows.length - 1] ?? null;
       const cold = (a.coldUntilMs ?? 0) > now;

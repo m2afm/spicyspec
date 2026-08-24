@@ -174,3 +174,17 @@ describe('attribution — the tick-34 incident guard', () => {
     expect(mayAdvance(attr).ok).toBe(true);
   });
 });
+
+describe('Q3 with a parallel cap', () => {
+  it('N active within the cap is legal; past it halts', () => {
+    const q = Q(
+      { id: '001', status: 'active', stage: 'execute' },
+      { id: '002', status: 'active', stage: 'execute' },
+      { id: '003', status: 'active', stage: 'execute' },
+    );
+    expect(checkQueue(q, ev(), { maxActive: 3 }).halting).toHaveLength(0);
+    expect(checkQueue(q, ev(), { maxActive: 2 }).halting.map((v) => v.code)).toEqual(['Q3']);
+    // the single-writer default is unchanged
+    expect(checkQueue(q, ev()).halting.map((v) => v.code)).toEqual(['Q3']);
+  });
+});

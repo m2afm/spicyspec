@@ -15,7 +15,7 @@ import {
   type NotifyChannel,
   type NotifyEvent,
 } from '@spicyspec/notify';
-import type { OpenNextResult, QueueActivities, SettleInput, SettleResult } from '@spicyspec/orchestrator';
+import type { OpenNextInput, OpenNextResult, QueueActivities, SettleInput, SettleResult } from '@spicyspec/orchestrator';
 import { specDrivenPipeline, stageAfter, type PipelineDefinition } from '@spicyspec/pipeline';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -132,12 +132,14 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
   };
 
   return {
-    async openNextSpec(): Promise<OpenNextResult> {
+    async openNextSpec(input: OpenNextInput): Promise<OpenNextResult> {
+      const busy = new Set(input?.busy ?? []);
+      const maxParallel = Math.max(1, deps.runner.config.maxParallelSpecs);
       const queue: Queue = await store.loadQueue();
       awaitingCount = queue.entries.filter((e) => e.status === 'awaiting-review').length;
       const ev = await evidence();
 
-      const check = checkQueue(queue, ev);
+      const check = checkQueue(queue, ev, { maxActive: maxParallel });
       if (check.halting.length) {
         // Never run against a state the loop cannot reason about — stop, do not guess.
         const violations = check.halting.map((v) => `${v.code} [${v.id ?? '-'}] ${v.message}`);
@@ -150,21 +152,27 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
         await mirrorQueue();
       }
 
-      const active = queue.entries.find((e) => e.status === 'active');
-      if (active) {
-        if (!active.stage) {
-          active.stage = firstStage;
+      // An active entry nobody is working (a restart left it, or capacity freed) resumes first.
+      const actives = queue.entries.filter((e) => e.status === 'active');
+      const orphanActive = actives.find((e) => !busy.has(e.id));
+      if (orphanActive) {
+        if (!orphanActive.stage) {
+          orphanActive.stage = firstStage;
           await store.saveQueue(queue);
           await mirrorQueue();
         }
-        return { kind: 'next', next: { specId: active.id, stage: active.stage ?? firstStage } };
+        return { kind: 'next', next: { specId: orphanActive.id, stage: orphanActive.stage ?? firstStage } };
+      }
+
+      if (actives.length >= maxParallel) {
+        return { kind: 'idle', reason: `all ${actives.length} writer slots are busy` };
       }
 
       if (ev.reviewCapBlocks()) {
         return { kind: 'idle', reason: 'the review backlog is at its cap — a human unblocks it' };
       }
 
-      const pending = queue.entries.find((e) => e.status === 'pending');
+      const pending = queue.entries.find((e) => e.status === 'pending' && !busy.has(e.id));
       if (!pending) return { kind: 'idle', reason: 'nothing pending — catalog drained or parked' };
 
       pending.status = 'active';

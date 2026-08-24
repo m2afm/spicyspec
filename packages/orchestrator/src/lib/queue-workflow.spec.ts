@@ -98,3 +98,41 @@ describe('queueRunWorkflow on a real Temporal test server', () => {
     expect(state.specRuns).toBe(5);
   }, 120_000);
 });
+
+describe('parallel rotation', () => {
+  it('runs up to maxParallelSpecs children concurrently and settles each', async () => {
+    const opened: string[][] = [];
+    const pendingIds = ['009', '010', '011', '012'];
+    let next = 0;
+    const activities: QueueActivities & SpecRunActivities = {
+      async openNextSpec(input) {
+        opened.push([...input.busy]);
+        if (next >= pendingIds.length) return { kind: 'idle', reason: 'drained' };
+        const specId = pendingIds[next];
+        next += 1;
+        return { kind: 'next', next: { specId, stage: 'execute' } };
+      },
+      async settleSpecOutcome(input) {
+        return { queueStatus: 'awaiting-review', nextStage: null };
+      },
+      async runWorkerSession() {
+        return { exit: 'awaiting-review' as never, costUsd: 1, costKnown: true, commits: true, tasksClosed: 1 };
+      },
+      async checkReviewDecision() {
+        return { approved: true, note: 'auto' };
+      },
+    };
+    const worker = await Worker.create({ connection: env.nativeConnection, taskQueue: TASK_QUEUE, workflowsPath, activities });
+    const state = await worker.runUntil(
+      env.client.workflow.execute(queueRunWorkflow, {
+        taskQueue: TASK_QUEUE,
+        workflowId: `qp-${Date.now()}`,
+        args: [{ maxRunsPerSpec: 3, maxConsecutiveStalls: 2, maxSpecRuns: 10, maxParallelSpecs: 3 }],
+      }),
+    );
+    expect(state.status).toBe('drained');
+    expect(state.settled.map((s) => s.specId).sort()).toEqual(['009', '010', '011', '012']);
+    // the fill loop reported growing busy lists — proof children overlapped
+    expect(opened.some((b) => b.length >= 2)).toBe(true);
+  }, 120_000);
+});

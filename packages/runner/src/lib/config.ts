@@ -56,6 +56,11 @@ export const RUNNER_CONFIG = z.object({
   /** review backlog cap — how many specs may wait on a human before the loop idles */
   maxAwaitingReview: z.number().int().positive().default(3),
   /**
+   * Concurrent specs — one isolated git worktree + one reserved account each. 1 = the
+   * single-writer default; raise toward your account count for parallel throughput.
+   */
+  maxParallelSpecs: z.number().int().positive().default(1),
+  /**
    * Where the loop reaches a human. The prototype's dominant waste — 91% of all idle —
    * was a run waiting on a person who did not know they were being waited on.
    */

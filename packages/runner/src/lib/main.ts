@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { parseRunnerConfig } from './config.js';
 import { registerRunner, startHeartbeat } from '@spicyspec/store';
 import { clearLockView, writeLockView } from './compat-view.js';
-import { createRunnerActivities } from './wiring.js';
+import { createAllActivities } from './wiring.js';
 
 export async function startRunner(configPath: string): Promise<void> {
   const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')));
@@ -31,7 +31,7 @@ export async function startRunner(configPath: string): Promise<void> {
 
   const store = await openConfiguredStore(config.storePath);
   const provider = createClaudeAdapter();
-  const activities = createRunnerActivities({ config, store, provider, secrets });
+  const activities = createAllActivities({ config, store, provider, secrets });
 
   // Register in the shared store so the dashboard lists this runner; liveness is the
   // heartbeat timestamp, never the record's existence (prototype B17).

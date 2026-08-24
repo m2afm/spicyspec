@@ -144,6 +144,14 @@ describe.each(DRIVERS)('store contract — $name', ({ makeStore, supportsRollbac
       expect(await store.getKv('k')).toBe('v2');
     });
 
+    it('tryReserve: first claim wins, second loses, release frees (the account-booking primitive)', async () => {
+      expect(await store.tryReserve('lock:primary', 'run-1')).toBe(true);
+      expect(await store.tryReserve('lock:primary', 'run-2')).toBe(false); // already booked
+      expect(await store.getKv('lock:primary')).toBe('run-1'); // the winner's claim stands
+      await store.release('lock:primary');
+      expect(await store.tryReserve('lock:primary', 'run-3')).toBe(true);
+    });
+
     it('listKv enumerates a prefix in key order and nothing else', async () => {
       await store.setKv('runner:beta', 'b');
       await store.setKv('runner:alpha', 'a');
