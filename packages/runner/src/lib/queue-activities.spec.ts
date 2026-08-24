@@ -112,3 +112,54 @@ describe('settleSpecOutcome — stage progression', () => {
     await expect(acts(deps).settleSpecOutcome({ specId: '999', status: 'complete' })).rejects.toThrow(/unknown spec/);
   });
 });
+
+/* ---------------------------------------------------------------- notifications ---- */
+
+import type { Notification, NotifyChannel } from '@spicyspec/notify';
+
+describe('transitions reach a human (the 91%-idle killer)', () => {
+  const captureChannel = (): { seen: Notification[]; channel: NotifyChannel } => {
+    const seen: Notification[] = [];
+    return { seen, channel: { id: 'test', send: async (n) => void seen.push(n) } };
+  };
+
+  it('awaiting-review fires a notification with the spec named', async () => {
+    const deps = makeRunnerDeps();
+    deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'handoff' }] });
+    const { seen, channel } = captureChannel();
+    await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [channel] })
+      .settleSpecOutcome({ specId: '001', status: 'complete' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].event).toBe('awaiting-review');
+    expect(seen[0].title).toContain('001');
+  });
+
+  it('a halt fires with the violations in the body', async () => {
+    const deps = makeRunnerDeps();
+    deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'a' }, { id: '002', status: 'active', stage: 'a' }] });
+    const { seen, channel } = captureChannel();
+    await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [channel] }).openNextSpec();
+    expect(seen[0].event).toBe('halted');
+    expect(seen[0].body).toContain('Q3');
+  });
+
+  it('a stage advance (not the last) stays quiet — no notification spam', async () => {
+    const deps = makeRunnerDeps();
+    deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'specify' }] });
+    const { seen, channel } = captureChannel();
+    await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [channel] })
+      .settleSpecOutcome({ specId: '001', status: 'complete' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('a dead channel is recorded in KV and never blocks the transition (C3)', async () => {
+    const deps = makeRunnerDeps();
+    deps.store.saveQueue({ entries: [{ id: '001', status: 'active', stage: 'handoff' }] });
+    const dead: NotifyChannel = { id: 'ntfy:x', send: async () => { throw new Error('ECONNREFUSED'); } };
+    const r = await createQueueActivities({ runner: deps, evidenceFn: async () => healthyEvidence(), notifyChannels: [dead] })
+      .settleSpecOutcome({ specId: '001', status: 'complete' });
+    expect(r.queueStatus).toBe('awaiting-review'); // the transition landed
+    const failures = JSON.parse(deps.store.getKv('notify:last-failures')!);
+    expect(failures.failures[0]).toMatchObject({ id: 'ntfy:x', error: 'ECONNREFUSED' });
+  });
+});

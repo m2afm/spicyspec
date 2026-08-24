@@ -35,6 +35,9 @@
     },
     {
       "path": "./packages/create-spicyspec"
+    },
+    {
+      "path": "./packages/notify"
     }
   ],
   "compilerOptions": {}

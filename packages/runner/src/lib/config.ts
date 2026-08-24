@@ -55,6 +55,22 @@ export const RUNNER_CONFIG = z.object({
     .default([]),
   /** review backlog cap — how many specs may wait on a human before the loop idles */
   maxAwaitingReview: z.number().int().positive().default(3),
+  /**
+   * Where the loop reaches a human. The prototype's dominant waste — 91% of all idle —
+   * was a run waiting on a person who did not know they were being waited on.
+   */
+  notify: z
+    .object({
+      channels: z
+        .array(
+          z.discriminatedUnion('type', [
+            z.object({ type: z.literal('ntfy'), topic: z.string().min(1), server: z.string().optional() }),
+            z.object({ type: z.literal('webhook'), url: z.string().url() }),
+          ]),
+        )
+        .default([]),
+    })
+    .default({ channels: [] }),
   /** where gate verdicts are exported for the git-auditable trail */
   gateExportPath: z.string().default('.spicyspec/gates.jsonl'),
   parkedPath: z.string().default('.spicyspec/PARKED.md'),

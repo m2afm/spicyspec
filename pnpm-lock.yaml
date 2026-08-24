@@ -94,6 +94,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/notify:
+    dependencies:
+      tslib:
+        specifier: ^2.3.0
+        version: 2.8.1
+
   packages/orchestrator:
     dependencies:
       '@spicyspec/core':
@@ -181,6 +187,9 @@ importers:
       '@spicyspec/judge':
         specifier: workspace:*
         version: link:../judge
+      '@spicyspec/notify':
+        specifier: workspace:*
+        version: link:../notify
       '@spicyspec/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator

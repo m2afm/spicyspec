@@ -7,6 +7,14 @@
  * cap that keeps every spec close to the human click that verifies it.
  */
 import { applyRepairs, checkQueue, type Queue, type QueueEvidence } from '@spicyspec/core';
+import {
+  createNtfyChannel,
+  createWebhookChannel,
+  notificationFor,
+  notifyAll,
+  type NotifyChannel,
+  type NotifyEvent,
+} from '@spicyspec/notify';
 import type { OpenNextResult, QueueActivities, SettleInput, SettleResult } from '@spicyspec/orchestrator';
 import { specDrivenPipeline, stageAfter, type PipelineDefinition } from '@spicyspec/pipeline';
 import { execFile } from 'node:child_process';
@@ -63,13 +71,35 @@ export interface QueueActivityDeps {
   /** injected for tests; defaults to git/fs evidence against the repo */
   evidenceFn?: () => Promise<QueueEvidenceFns>;
   maxAwaitingReview?: number;
+  /** injected for tests; defaults to the channels in runner config */
+  notifyChannels?: NotifyChannel[];
+}
+
+/** Build the notification channels a runner config declares. */
+export function channelsFromConfig(deps: QueueActivityDeps): NotifyChannel[] {
+  if (deps.notifyChannels) return deps.notifyChannels;
+  return deps.runner.config.notify.channels.map((c) =>
+    c.type === 'ntfy' ? createNtfyChannel({ topic: c.topic, server: c.server }) : createWebhookChannel({ url: c.url }),
+  );
 }
 
 export function createQueueActivities(deps: QueueActivityDeps): QueueActivities {
   const pipeline = deps.pipeline ?? specDrivenPipeline;
   const store = deps.runner.store;
-  const cap = deps.maxAwaitingReview ?? 3;
+  const cap = deps.maxAwaitingReview ?? deps.runner.config.maxAwaitingReview;
   const firstStage = pipeline.stages[0].id;
+  const channels = channelsFromConfig(deps);
+  const projectName = deps.runner.config.projectName;
+
+  // Failures are recorded in the store KV so the dashboard can show a broken channel;
+  // a dead channel never blocks the transition it announces (C3).
+  const announce = async (event: NotifyEvent, specId: string | null, detail = '') => {
+    if (!channels.length) return;
+    const result = await notifyAll(channels, notificationFor(event, projectName, specId, detail));
+    if (result.failures.length) {
+      store.setKv('notify:last-failures', JSON.stringify({ at: new Date().toISOString(), failures: result.failures }));
+    }
+  };
 
   const evidence = async (): Promise<QueueEvidence> => {
     const fns = await (deps.evidenceFn ?? (() => defaultEvidence(deps.runner.config.repoCwd)))();
@@ -90,10 +120,9 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
       const check = checkQueue(queue, ev);
       if (check.halting.length) {
         // Never run against a state the loop cannot reason about — stop, do not guess.
-        return {
-          kind: 'halt',
-          violations: check.halting.map((v) => `${v.code} [${v.id ?? '-'}] ${v.message}`),
-        };
+        const violations = check.halting.map((v) => `${v.code} [${v.id ?? '-'}] ${v.message}`);
+        await announce('halted', null, violations.join('; '));
+        return { kind: 'halt', violations };
       }
       const repaired = applyRepairs(queue, check.violations);
       if (repaired.changed) store.saveQueue(queue);
@@ -134,17 +163,20 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
             entry.stage = next.id;
           } else {
             entry.status = 'awaiting-review';
+            await announce('awaiting-review', entry.id);
           }
           break;
         }
         case 'awaiting-review':
           entry.status = 'awaiting-review';
+          await announce('awaiting-review', entry.id);
           break;
         case 'parked':
         case 'exhausted':
           // exhausted = the maxRuns backstop fired — that is a parked spec with a note,
           // never a retirement (a runaway loop must not consume the catalog).
           entry.status = 'parked';
+          await announce('parked', entry.id, input.status === 'exhausted' ? 'the maxRuns backstop fired' : '');
           break;
         default:
           break;

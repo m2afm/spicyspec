@@ -9,38 +9,7 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    {
-      "path": "../notify/tsconfig.lib.json"
-    },
-    {
-      "path": "../control-plane/tsconfig.lib.json"
-    },
-    {
-      "path": "../packs/tsconfig.lib.json"
-    },
-    {
-      "path": "../judge/tsconfig.lib.json"
-    },
-    {
-      "path": "../store/tsconfig.lib.json"
-    },
-    {
-      "path": "../provider-claude/tsconfig.lib.json"
-    },
-    {
-      "path": "../provider/tsconfig.lib.json"
-    },
-    {
-      "path": "../pipeline/tsconfig.lib.json"
-    },
-    {
-      "path": "../orchestrator/tsconfig.lib.json"
-    },
-    {
-      "path": "../core/tsconfig.lib.json"
-    }
-  ],
+  "references": [],
   "exclude": [
     "vite.config.ts",
     "vite.config.mts",
