@@ -69,6 +69,12 @@ export interface ActivityDeps {
   ): Promise<void>;
   /** the review bridge — read (and mark delivered) a manager's recorded decision */
   checkReviewDecision?(specId: string): Promise<ReviewDecisionFound | null>;
+  /**
+   * Live-feed tap: every normalized session event, as it happens. The control room's
+   * Current-tick panel replays this — without it the panel can only say "starting up",
+   * which reads as a dead system while a session is an hour deep in real work.
+   */
+  openSessionLog?(input: WorkerRunInput): Promise<{ write(event: unknown): void; close(): void }>;
   /** heartbeat cadence while draining the session stream */
   heartbeatEveryNEvents?: number;
 }
@@ -91,6 +97,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
       const before = await deps.snapshot();
 
       const session = deps.provider.createSession(packet as SessionOptions);
+      const sessionLog = deps.openSessionLog ? await deps.openSessionLog(input) : null;
 
       // Drain with heartbeats: a healthy session may be silent for many minutes inside a
       // test tier; the heartbeat proves THIS process is alive regardless.
@@ -105,6 +112,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
 
       for await (const event of session.events()) {
         events += 1;
+        sessionLog?.write(event);
         if (events % every === 0) heartbeat({ events });
         switch (event.type) {
           case 'tool_use':
@@ -128,6 +136,7 @@ export function createActivities(deps: ActivityDeps): SpecRunActivities {
         }
       }
 
+      sessionLog?.close();
       const after = await deps.snapshot();
       const cls = classify(
         { killedFor: null, resultEnvelope: envelope, rateLimit, text, toolCalls },

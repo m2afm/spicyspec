@@ -14,7 +14,7 @@
  */
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,10 +46,18 @@ interface ChecksModule {
   };
 }
 
-async function vendored(): Promise<{ brief: BriefModule; checks: ChecksModule }> {
+interface AgentsModule {
+  ROOT_ID: string;
+  createRegistry(meta?: Record<string, unknown>): Record<string, unknown>;
+  ingest(reg: Record<string, unknown>, event: unknown): Iterable<string>;
+  snapshot(reg: Record<string, unknown>, opts?: { detail?: boolean }): { agents: Array<Record<string, unknown>>; counts: Record<string, number> };
+}
+
+async function vendored(): Promise<{ brief: BriefModule; checks: ChecksModule; agents: AgentsModule }> {
   const brief = (await import(new URL('founder-brief.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as BriefModule;
   const checks = (await import(new URL('founder-checks.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as ChecksModule;
-  return { brief, checks };
+  const agents = (await import(new URL('agents.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as AgentsModule;
+  return { brief, checks, agents };
 }
 
 /* ---------------------------------------------------------------------- options ---- */
@@ -229,16 +237,175 @@ async function isSignedOff(repoCwd: string, id: string): Promise<boolean> {
 
 /* ----------------------------------------------------------------------- server ---- */
 
+/* --------------------------------------------------------------- live session feed ----
+ * The Current-tick panel's engine: tail the newest `.spicyspec/runs/<...>/stream.jsonl`
+ * (written live by the runner), ingest through the vendored agents registry, broadcast the
+ * prototype's SSE events. Polled, not watched — Windows fs.watch misses appends, and a
+ * frozen feed reads as a quiet worker, the worst failure a liveness view can have.
+ * Deltas follow the prototype's B38 rule: offsets count against activityCount (which only
+ * grows), never the retained window (which shrinks at its cap).
+ * ------------------------------------------------------------------------------------ */
+
+interface LiveTail {
+  dir: string | null;
+  offset: number;
+  partial: string;
+  reg: Record<string, unknown>;
+  meta: Record<string, unknown> | null;
+  seen: Map<string, number>;
+}
+
+function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (event: string, data: unknown) => void) {
+  const tail: LiveTail = { dir: null, offset: 0, partial: '', reg: agentsMod.createRegistry(), meta: null, seen: new Map() };
+
+  const newestRunDir = (): string | null => {
+    try {
+      const names = readdirSync(runsRoot);
+      let best: string | null = null;
+      let bestM = 0;
+      for (const n of names) {
+        const p = join(runsRoot, n);
+        const m = statSync(p).mtimeMs;
+        if (m > bestM) {
+          bestM = m;
+          best = p;
+        }
+      }
+      return best;
+    } catch {
+      return null;
+    }
+  };
+
+  const readMeta = (dir: string): Record<string, unknown> | null => {
+    try {
+      return JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+
+  const reset = (dir: string) => {
+    tail.dir = dir;
+    tail.offset = 0;
+    tail.partial = '';
+    tail.meta = readMeta(dir);
+    tail.seen = new Map();
+    const m = tail.meta;
+    tail.reg = agentsMod.createRegistry({
+      name: m ? `run ${String(m['number'])}` : 'worker',
+      description: m ? `${String(m['spec'])}/${String(m['stage'])} via ${String(m['account'])}` : 'starting…',
+      startedAt: (m?.['startedAt'] as string) ?? null,
+    });
+  };
+
+  const pump = () => {
+    const dir = newestRunDir();
+    if (!dir) return;
+    if (dir !== tail.dir) {
+      reset(dir);
+      broadcast('tick', { id: dir.split(/[\\\/]/).pop(), meta: tail.meta, reset: true });
+    }
+    const path = join(dir, 'stream.jsonl');
+    if (!existsSync(path)) return;
+    let size: number;
+    try {
+      size = statSync(path).size;
+    } catch {
+      return;
+    }
+    if (size < tail.offset) reset(dir); // truncated under us
+    if (size === tail.offset) return;
+    let chunk: string;
+    try {
+      chunk = readFileSync(path).subarray(tail.offset, size).toString('utf8');
+    } catch {
+      return;
+    }
+    tail.offset = size;
+    const text = tail.partial + chunk;
+    const lines = text.split('\n');
+    tail.partial = lines.pop() ?? '';
+
+    const changed = new Set<string>();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        for (const id of agentsMod.ingest(tail.reg, JSON.parse(line))) changed.add(id);
+      } catch {
+        /* skip bad line */
+      }
+    }
+    if (!changed.size) return;
+
+    const full = agentsMod.snapshot(tail.reg, { detail: true });
+    const byId = new Map(full.agents.map((a) => [String(a['id']), a]));
+    const agents: Array<Record<string, unknown>> = [];
+    const activity: Array<{ id: string; entry: unknown }> = [];
+    for (const id of changed) {
+      const a = byId.get(id);
+      if (!a) continue;
+      const { prompt, summary, activity: acts, activityCount, ...base } = a as Record<string, unknown> & {
+        activity?: unknown[];
+        activityCount?: number;
+      };
+      void prompt;
+      void summary;
+      agents.push(base);
+      const count = Number(activityCount ?? 0);
+      const window = (acts as unknown[]) ?? [];
+      const sent = tail.seen.get(id) ?? Math.max(0, count - window.length);
+      const fresh = Math.min(count - sent, window.length);
+      if (fresh > 0) for (const entry of window.slice(window.length - fresh)) activity.push({ id, entry });
+      tail.seen.set(id, count);
+    }
+    broadcast('agents', { agents, activity: activity.slice(-150), counts: full.counts, meta: tail.meta });
+  };
+
+  return {
+    pump,
+    hello(): unknown {
+      const snap = agentsMod.snapshot(tail.reg, { detail: false });
+      return { agents: snap.agents, counts: snap.counts, meta: tail.meta, where: null };
+    },
+  };
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
 };
 
 export async function startControlRoom(options: RoomOptions): Promise<RunningRoom> {
-  const { brief, checks } = await vendored();
+  const { brief, checks, agents: agentsMod } = await vendored();
   const host = options.host ?? '127.0.0.1';
   const token = randomUUID();
   const checksPath = join(options.stateDir, 'founder-checks.json');
+
+  // live feed: tail the runner's session logs, broadcast to every open EventSource
+  const sseClients = new Set<ServerResponse>();
+  const broadcast = (event: string, data: unknown) => {
+    const frame = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+    for (const client of sseClients) {
+      try {
+        client.write(frame);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  };
+  const live = createLivePump(join(options.repoCwd, '.spicyspec', 'runs'), agentsMod, broadcast);
+  const pumpTimer = setInterval(() => {
+    try {
+      live.pump();
+    } catch {
+      /* the feed must never take the room down */
+    }
+  }, 1000);
+  pumpTimer.unref?.();
 
   const briefFor = async (kind: string, id: string) => {
     const built = brief.buildBrief(options.repoCwd, { kind, id, parkedKey: kind === 'parked' ? id : null });
@@ -392,13 +559,21 @@ export async function startControlRoom(options: RoomOptions): Promise<RunningRoo
           return send(fn ? 200 : 404, JSON.stringify(fn ? fn() : { ok: false, message: 'no such action' }));
         }
         if (url.pathname === '/api/live') {
-          // SSE kept open with heartbeats; the live agent-feed source (per-run session
-          // streams) is a later addition — an open-but-quiet feed renders as a quiet
-          // worker, which is honest until streams exist.
           res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
           res.write('retry: 3000\n\n');
-          const beat = setInterval(() => res.write(': keepalive\n\n'), 15_000);
-          req.on('close', () => clearInterval(beat));
+          res.write(`event: hello\ndata: ${JSON.stringify(live.hello())}\n\n`);
+          sseClients.add(res);
+          const beat = setInterval(() => {
+            try {
+              res.write(': keepalive\n\n');
+            } catch {
+              /* closed */
+            }
+          }, 15_000);
+          req.on('close', () => {
+            clearInterval(beat);
+            sseClients.delete(res);
+          });
           return;
         }
         // Tabs whose machinery is not ported yet return valid empty shapes, never a crash.
@@ -426,7 +601,22 @@ export async function startControlRoom(options: RoomOptions): Promise<RunningRoo
     server.listen(options.port ?? 0, host, () => {
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : (options.port ?? 0);
-      resolvePromise({ server, port, close: () => new Promise<void>((r) => server.close(() => r())) });
+      resolvePromise({
+        server,
+        port,
+        close: () =>
+          new Promise<void>((r) => {
+            clearInterval(pumpTimer);
+            for (const c of sseClients) {
+              try {
+                c.end();
+              } catch {
+                /* closing */
+              }
+            }
+            server.close(() => r());
+          }),
+      });
     });
   });
 }

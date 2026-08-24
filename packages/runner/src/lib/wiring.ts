@@ -30,6 +30,7 @@ import { appendLedgerView, exportAccountsView } from './compat-view.js';
 import { createQueueActivities } from './queue-activities.js';
 import { snapshot, type FullSnapshot } from './git-snapshot.js';
 import { findSpecDir } from './spec-dir.js';
+import { openSessionLogDir } from './session-log.js';
 import { ensureWorktree } from './worktree.js';
 
 export interface RunnerDeps {
@@ -244,6 +245,18 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       if ((await deps.store.getKv(deliveredKey)) === decision.at) return null;
       await deps.store.setKv(deliveredKey, decision.at);
       return { approved: decision.approved, note: decision.note, by: decision.by };
+    },
+
+    async openSessionLog(input) {
+      const queueNow = await deps.store.loadQueue();
+      const entry = queueNow.entries.find((e) => e.id === input.specId);
+      return openSessionLogDir(`${cfg.repoCwd}/.spicyspec/runs`, {
+        number: input.run,
+        spec: input.specId,
+        stage: entry?.stage ?? 'execute',
+        account: leasedAccountBySpec.get(input.specId) ?? 'unknown',
+        startedAt: new Date().toISOString(),
+      });
     },
 
     async onClassified(cls, accountId, evidence) {
