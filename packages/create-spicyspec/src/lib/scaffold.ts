@@ -32,6 +32,17 @@ const runnerConfig = (projectName: string) =>
       accounts: [{ id: 'primary', label: 'ambient login', env: {}, configDir: null }],
       judges: [],
       maxAwaitingReview: 3,
+      // Present from the first minute so `spicyspec-runner install-autostart` works
+      // immediately after scaffolding — the overnight death that motivated the supervisor
+      // was a project with nothing in it that even described how to come back.
+      supervise: {
+        manageTemporal: true,
+        autostartWorker: true,
+        autostartRotation: true,
+        dashboardPort: 4477,
+        intervalSeconds: 60,
+        logDir: '.spicyspec/logs',
+      },
     },
     null,
     2,
@@ -69,6 +80,22 @@ spicyspec-runner dashboard --config spicyspec.runner.json --port 4477
 
 # 5. when a spec waits on you: walk the journey BY CLICKING, then Approve on the dashboard
 \`\`\`
+
+## Leave it running overnight
+
+\`\`\`bash
+spicyspec-runner install-autostart --config spicyspec.runner.json
+\`\`\`
+
+That registers your OS (Windows Scheduled Task / systemd user timer / launchd agent) to run
+one supervision sweep at boot-or-logon and every 3 minutes forever. The sweep restarts the
+Temporal dev server, the runner worker, the dashboard, and a rotation that was cancelled or
+never started — and clears a stop flag no human set. Nothing here is a background process
+that dies with your shell.
+
+- **Logs:** \`.spicyspec/logs/\` — \`supervisor.log\` is the sweep's own transcript.
+- **Did it heal?** the dashboard's health panel, and the \`health:events\` rows in the store.
+- **Undo:** \`spicyspec-runner install-autostart --config spicyspec.runner.json --uninstall\`
 
 ## The rules this project runs under
 

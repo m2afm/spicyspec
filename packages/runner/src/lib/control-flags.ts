@@ -7,11 +7,18 @@
  * CONTROL ROOM writes; these are its key strings, mirrored from room-server.ts:132-133,
  * and the room reads them straight back to render its armed state.
  *
- * Presence is armed: the room writes `{armedAt}` and clears by DELETING the row, so a
- * value is never interpreted. Clearing belongs to the room's START/RESUME actions, which
- * release both keys — the runner never clears a flag it did not arm, or a founder who
- * armed STOP while a run was mid-flight would find it silently disarmed by the very
- * rotation it was meant to stop.
+ * Presence is armed: the room writes `{armedAt, armedBy}` and clears by DELETING the row,
+ * so the ROTATION never interprets the value — any present flag stops it. Clearing belongs
+ * to the room's START/RESUME actions; the runner never clears a flag it did not arm, or a
+ * founder who armed STOP while a run was mid-flight would find it silently disarmed by the
+ * very rotation it was meant to stop.
+ *
+ * The one exception is `armedBy: 'agent'`, added after the overnight incident: an AGENT
+ * armed STOP mid-session, nobody cleared it, and the loop sat dead for eight hours behind a
+ * flag no human had asked for. A founder's stop is permanent by definition; an agent's must
+ * not outlive its session, so the supervisor sweeps agent flags past a TTL and never
+ * touches a founder's. A MISSING `armedBy` reads as 'founder' — the fail-safe direction is
+ * NOT auto-clearing something a person may have armed.
  */
 import type { Store } from '@spicyspec/store';
 
@@ -42,4 +49,81 @@ export async function rotationStopReason(store: Store): Promise<string | null> {
     return `stop armed from the control room (${STOP_FLAG_KEY}) — in-flight runs finish and settle, then the rotation ends`;
   }
   return null;
+}
+
+export type FlagArmer = 'founder' | 'agent';
+
+export interface ControlFlag {
+  key: string;
+  /** null when the value carried no readable timestamp */
+  armedAt: string | null;
+  armedBy: FlagArmer;
+}
+
+/** Default sweep age for an agent-armed flag. */
+export const AGENT_FLAG_TTL_MS = 30 * 60_000;
+
+/**
+ * Read a flag's provenance. Absent ⇒ null. Any value that is not `{armedBy: 'agent'}` —
+ * including a legacy `{armedAt}` row, a hand-written value, or unparseable text — reads as
+ * a FOUNDER flag, because guessing wrong in that direction only leaves the loop paused
+ * until a person looks, while guessing wrong the other way overrides a human decision.
+ */
+export async function readControlFlag(store: Store, key: string): Promise<ControlFlag | null> {
+  const raw = await store.getKv(key);
+  if (raw === null) return null;
+  let value: { armedAt?: unknown; armedBy?: unknown } = {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') value = parsed as typeof value;
+  } catch {
+    /* opaque value — presence is still armed, provenance falls back to founder */
+  }
+  return {
+    key,
+    armedAt: typeof value.armedAt === 'string' ? value.armedAt : null,
+    armedBy: value.armedBy === 'agent' ? 'agent' : 'founder',
+  };
+}
+
+/**
+ * Is this flag an agent's, and past its TTL?
+ *
+ * An agent flag with no readable `armedAt` counts as stale: its writer claimed the flag was
+ * session-scoped, and a stop whose age cannot be measured must not be the thing that
+ * outlives the night. A founder flag is never stale, at any age.
+ */
+export function isStaleAgentFlag(flag: ControlFlag, nowMs: number, ttlMs: number): boolean {
+  if (flag.armedBy !== 'agent') return false;
+  if (flag.armedAt === null) return true;
+  const armedAtMs = Date.parse(flag.armedAt);
+  if (!Number.isFinite(armedAtMs)) return true;
+  return nowMs - armedAtMs > ttlMs;
+}
+
+export interface FlagSweepResult {
+  /** agent flags released by this sweep */
+  cleared: ControlFlag[];
+  /** flags still armed afterwards — a founder's, or an agent's that is still young */
+  held: ControlFlag[];
+}
+
+/** Release every stale agent flag; report what stays armed so the room can say why. */
+export async function sweepStaleAgentFlags(
+  store: Store,
+  options: { nowMs: number; ttlMs?: number },
+): Promise<FlagSweepResult> {
+  const ttlMs = options.ttlMs ?? AGENT_FLAG_TTL_MS;
+  const result: FlagSweepResult = { cleared: [], held: [] };
+  for (const key of [STOP_FLAG_KEY, KILL_FLAG_KEY]) {
+    const flag = await readControlFlag(store, key);
+    if (!flag) continue;
+    if (isStaleAgentFlag(flag, options.nowMs, ttlMs)) {
+      await store.release(key);
+      result.cleared.push(flag);
+    } else {
+      result.held.push(flag);
+    }
+  }
+  return result;
 }

@@ -7,12 +7,33 @@
  * Kill button whose armed state never displayed.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openStore, type Store } from '@spicyspec/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { KILL_KEY, specProgress, startControlRoom, STOP_KEY, type RunningRoom } from './room-server.js';
+import {
+  HEALTH_KEY,
+  healthRows,
+  INSTALL_HINT,
+  KILL_KEY,
+  parseArmedFlag,
+  parseHealthEvents,
+  recentHealthEvents,
+  reviewCapOf,
+  specProgress,
+  startControlRoom,
+  STOP_KEY,
+  supervisorHealth,
+  topLine,
+  type HealthEvent,
+  type HealthRow,
+  type RunningRoom,
+} from './room-server.js';
+
+/** The vendored page, read as text: the panel under test is plain JS with no build step. */
+const ROOM_DIR = fileURLToPath(new URL('../../room/', import.meta.url));
 
 let store: Store;
 let room: RunningRoom;
@@ -366,9 +387,17 @@ describe('controls', () => {
   });
 
   it('the header chip says armed, not acting, while nothing is running — a flag is not an event', async () => {
+    // The distinction survives; only its author moved. The page no longer derives the chip at
+    // all — it renders the server's top line, which knows the difference between a flag armed
+    // over a live lane (STOPPING / KILLING) and one armed over an empty rotation (IDLE).
+    await store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString(), armedBy: 'founder' }));
+    await store.setKv('runner:main', JSON.stringify({ pid: 7, heartbeatAt: new Date().toISOString() }));
+    const armed = (await state()) as unknown as { activity: { state: string; reason: string } };
+    expect(armed.activity.state).toBe('IDLE');
+    expect(armed.activity.reason).toContain('stop armed by founder');
     const page = await (await fetch(base + '/')).text();
-    expect(page).toContain("s.running ? 'killing' : 'kill armed'");
-    expect(page).toContain("s.running ? 'stopping after tick' : 'stop armed'");
+    expect(page).toContain('const top = s.activity');
+    expect(page).not.toContain("s.running ? 'stopping after tick' : 'stop armed'");
   });
 });
 
@@ -438,4 +467,322 @@ describe('roles', () => {
     }
     throw new Error('the turn never resolved');
   }, 15_000);
+});
+
+/* ------------------------------------------------------------------ self-healing ---- */
+
+/**
+ * The overnight incident, in tests. The founder left the loop running and found it dead for
+ * ~8 hours: a STOP flag armed by an AGENT was never cleared, the rotation workflow was
+ * CANCELED, and nothing supervised the processes — while the room's header said RUNNING and
+ * LIVE FEED the whole time, because both chips described PROCESSES and neither described
+ * PROGRESS. Every test below is named after one half of that lie.
+ */
+describe('supervisor report', () => {
+  const EVENTS: HealthEvent[] = [
+    { at: '2026-08-25T01:00:00.000Z', check: 'temporal', status: 'ok' },
+    { at: '2026-08-25T01:00:01.000Z', check: 'rotation', status: 'failed', detail: 'workflow CANCELED' },
+    { at: '2026-08-25T01:00:02.000Z', check: 'worker', status: 'failed', detail: 'no heartbeat for 41m' },
+    { at: '2026-08-25T01:05:00.000Z', check: 'worker', status: 'repaired', detail: 'restarted spicyspec-runner start' },
+    { at: '2026-08-25T01:06:00.000Z', check: 'worker', status: 'ok' },
+    { at: '2026-08-25T01:06:01.000Z', check: 'stop-flags', status: 'blocked', detail: 'stop armed by founder — left alone' },
+  ];
+  const byCheck = (rows: HealthRow[], check: string) => rows.find((r) => r.check === check) as HealthRow;
+
+  it('renders a row for every supervised check even when the supervisor has said nothing', () => {
+    // A missing row says nothing at all; "not reported" is the single most useful thing this
+    // panel can say, which is why the empty case still produces the full roster.
+    const rows = healthRows([]);
+    expect(rows.map((r) => r.label)).toEqual(['Temporal', 'Worker heartbeat', 'Rotation', 'Dashboard', 'Stop flags', 'Account leases']);
+    expect(rows.every((r) => r.status === 'unknown' && r.checkedAt === null && r.lastRepairAt === null)).toBe(true);
+  });
+
+  it('takes the newest report per check and keeps the last repair with its timestamp', () => {
+    const rows = healthRows(EVENTS);
+    // The worker failed, was repaired, and is now ok. All three facts survive: the CURRENT
+    // state is ok, and the repair that produced it is still on the row with its time.
+    expect(byCheck(rows, 'worker')).toMatchObject({
+      status: 'ok',
+      checkedAt: '2026-08-25T01:06:00.000Z',
+      lastRepairAt: '2026-08-25T01:05:00.000Z',
+      lastRepairDetail: 'restarted spicyspec-runner start',
+    });
+    expect(byCheck(rows, 'rotation')).toMatchObject({ status: 'failed', detail: 'workflow CANCELED' });
+    expect(byCheck(rows, 'stop-flags')).toMatchObject({ status: 'blocked' });
+    expect(byCheck(rows, 'dashboard')).toMatchObject({ status: 'unknown', reported: null });
+  });
+
+  it('keeps the word the supervisor actually used, and appends checks nobody thought to name', () => {
+    const rows = healthRows([{ at: '2026-08-25T01:00:00.000Z', check: 'disk', status: 'wedged', detail: 'C: 99% full' }]);
+    const disk = byCheck(rows, 'disk');
+    // 'wedged' is not one of the five states this panel can colour — it is still shown
+    // verbatim, because a status the room refuses to render is a status nobody watches.
+    expect(disk).toMatchObject({ label: 'Disk', status: 'unknown', reported: 'wedged', detail: 'C: 99% full' });
+    expect(rows.slice(0, 6).map((r) => r.check)).toEqual(['temporal', 'worker', 'rotation', 'dashboard', 'stop-flags', 'accounts']);
+  });
+
+  it('accepts every shape the supervisor might have written, and no shape it did not', () => {
+    const one = { at: '2026-08-25T01:00:00.000Z', check: 'temporal', status: 'ok' };
+    expect(parseHealthEvents(JSON.stringify([one]))).toHaveLength(1);
+    expect(parseHealthEvents(JSON.stringify({ events: [one, one] }))).toHaveLength(2);
+    expect(parseHealthEvents(JSON.stringify(one))).toHaveLength(1);
+    expect(parseHealthEvents([JSON.stringify(one), 'not json', JSON.stringify(one)].join('\n'))).toHaveLength(2);
+    expect(parseHealthEvents('{oh no')).toEqual([]);
+    expect(parseHealthEvents(null)).toEqual([]);
+    expect(parseHealthEvents('')).toEqual([]);
+  });
+
+  it('calls the supervisor silent after its own interval and names the command that installs it', () => {
+    const now = Date.parse('2026-08-25T02:00:00.000Z');
+    const fresh = supervisorHealth([], JSON.stringify({ at: '2026-08-25T01:59:00.000Z', intervalMs: 60_000 }), now);
+    expect(fresh).toMatchObject({ reporting: true, advice: null });
+
+    // Three missed beats is a dead supervisor, not a slow disk.
+    const stale = supervisorHealth([], JSON.stringify({ at: '2026-08-25T01:50:00.000Z', intervalMs: 60_000 }), now);
+    expect(stale.reporting).toBe(false);
+    expect(stale.advice).toContain('spicyspec-runner install-autostart');
+
+    // No record at all is the case that mattered: nothing was installed, so nothing wrote.
+    const absent = supervisorHealth([], null, now);
+    expect(absent).toMatchObject({ reporting: false, lastAt: null });
+    expect(absent.advice).toBe(INSTALL_HINT);
+
+    // An event is proof the supervisor ran, even with no heartbeat record of its own.
+    expect(supervisorHealth([{ at: '2026-08-25T01:59:30.000Z', check: 'temporal', status: 'ok' }], null, now).reporting).toBe(true);
+  });
+
+  it("speaks the supervisor's own check names — 'leases' is the accounts row, 'lock' is its own", () => {
+    // runner health.ts HealthCheck: lock | temporal | worker | rotation | stop-flags | leases
+    // | dashboard. Six of those are the founder's roster; the two spellings that differ must
+    // still land somewhere a founder can read.
+    const rows = healthRows([
+      { at: '2026-08-25T01:00:00.000Z', check: 'leases', status: 'repaired', detail: 'released a stale lease' },
+      { at: '2026-08-25T01:00:01.000Z', check: 'lock', status: 'ok' },
+    ]);
+    expect(rows.find((r) => r.label === 'Account leases')).toMatchObject({ status: 'repaired' });
+    expect(rows.find((r) => r.check === 'lock')).toMatchObject({ label: 'Supervisor lock', status: 'ok' });
+  });
+
+  it('narrates a repair once, though the supervisor deliberately records it in two keys', async () => {
+    // The failures ring holds what went wrong; the cycle document holds the whole picture,
+    // ok checks included — so every repair exists in both, and the room reads both.
+    const repair: HealthEvent = { at: new Date().toISOString(), check: 'worker', status: 'repaired', detail: 'restarted the worker' };
+    const ok: HealthEvent = { at: new Date().toISOString(), check: 'temporal', status: 'ok' };
+    await store.setKv(HEALTH_KEY, JSON.stringify([repair]));
+    await store.setKv('health:last-cycle', JSON.stringify({ at: repair.at, healthy: false, events: [repair, ok] }));
+
+    const s = (await state()) as unknown as { health: { rows: HealthRow[]; events: HealthEvent[] } };
+    expect(s.health.events.filter((e) => e.status === 'repaired')).toHaveLength(1);
+    // The cycle document is also what makes GREEN rows possible: the ring never carries them.
+    expect(s.health.rows.find((r) => r.check === 'temporal')).toMatchObject({ status: 'ok' });
+    expect(s.health.rows.find((r) => r.check === 'worker')).toMatchObject({ status: 'repaired', lastRepairDetail: 'restarted the worker' });
+  });
+
+  it('serves the report over /api/state, and says "not reporting" rather than crashing without one', async () => {
+    const empty = (await state()) as unknown as { health: { supervisor: { reporting: boolean; advice: string }; rows: HealthRow[] } };
+    expect(empty.health.supervisor.reporting).toBe(false);
+    expect(empty.health.supervisor.advice).toBe(INSTALL_HINT);
+    expect(empty.health.rows).toHaveLength(6);
+
+    await store.setKv(HEALTH_KEY, JSON.stringify(EVENTS.map((e) => ({ ...e, at: new Date().toISOString() }))));
+    const seeded = (await state()) as unknown as { health: { supervisor: { reporting: boolean }; rows: HealthRow[]; events: HealthEvent[] } };
+    expect(seeded.health.supervisor.reporting).toBe(true);
+    expect(seeded.health.rows.find((r) => r.check === 'rotation')).toMatchObject({ status: 'failed', detail: 'workflow CANCELED' });
+    expect(seeded.health.events.length).toBe(EVENTS.length);
+  });
+});
+
+/* --------------------------------------------------------------- health panel ---- */
+
+/**
+ * The panel itself, evaluated out of room/app.html with a stub `h`. The page is plain JS with
+ * no build step, so this is the only way to prove the markup a founder sees is produced from
+ * the report rather than from hope — and it fails loudly if the panel is renamed away.
+ *
+ * The only input to `new Function` is this package's own vendored page, read off disk at test
+ * time; nothing here evaluates a value that came from a store, a request or a user.
+ */
+type Node = { type: unknown; props: Record<string, unknown> | null; children: unknown[] };
+
+function loadHealthPanel(): (props: { health: unknown }) => Node {
+  const page = readFileSync(join(ROOM_DIR, 'app.html'), 'utf8');
+  const slice = (from: string, to: string): string => {
+    const a = page.indexOf(from);
+    const b = page.indexOf(to, a + from.length);
+    if (a < 0 || b < 0) throw new Error(`app.html no longer contains ${from}`);
+    return page.slice(a, b);
+  };
+  const src = [
+    slice('const ago = (iso) => {', '\nconst clock'),
+    slice('function Panel({ title, sub, alert, children }) {', '\nfunction Stat'),
+    slice('const HEALTH_TAG = {', '\n/* The body of one lane:'),
+    'return Health;',
+  ].join('\n');
+  const h = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ type, props, children });
+  return new Function('h', 'React', src)(h, { Fragment: 'Fragment' }) as (props: { health: unknown }) => Node;
+}
+
+/** Every string anywhere in the tree — what the founder would read off the panel. */
+function text(node: unknown, out: string[] = []): string[] {
+  if (node == null || node === false) return out;
+  if (typeof node === 'string' || typeof node === 'number') { out.push(String(node)); return out; }
+  if (Array.isArray(node)) { for (const n of node) text(n, out); return out; }
+  const n = node as Node;
+  if (n.props) for (const v of Object.values(n.props)) if (typeof v === 'string') out.push(v);
+  text(n.children, out);
+  return out;
+}
+
+describe('health panel', () => {
+  const Health = loadHealthPanel();
+  const now = Date.now();
+  // Stamped at CALL time, not at suite-load time: the panel formats against the real clock,
+  // so a fixture anchored when the file loaded drifts to "31m ago" as soon as the suite ahead
+  // of it takes a minute — green alone, red in a full run.
+  const iso = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+
+  it('says nobody is watching when the report is missing entirely', () => {
+    // An older server, or a store that could not answer. Silence must read as silence.
+    expect(text(Health({ health: null })).join(' ')).toContain('no supervisor reporting');
+  });
+
+  it('carries a header chip for a silent supervisor — an unwatched loop must not look watched', async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).toContain("const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
+    expect(page).toContain("'unsupervised'");
+  });
+
+  it('renders the full roster and the install command when the supervisor has never reported', () => {
+    const health = { supervisor: supervisorHealth([], null, now), rows: healthRows([]), events: [] };
+    const said = text(Health({ health })).join(' | ');
+    for (const label of ['Temporal', 'Worker heartbeat', 'Rotation', 'Dashboard', 'Stop flags', 'Account leases']) {
+      expect(said).toContain(label);
+    }
+    expect(said).toContain('not reported');
+    expect(said).toContain('never checked');
+    expect(said).toContain('spicyspec-runner install-autostart');
+  });
+
+  it('shows each check, its state, when it was checked, and the last repair with its time', () => {
+    const events: HealthEvent[] = [
+      { at: iso(2), check: 'temporal', status: 'ok' },
+      { at: iso(3), check: 'rotation', status: 'failed', detail: 'workflow CANCELED' },
+      { at: iso(30), check: 'worker', status: 'repaired', detail: 'restarted the worker' },
+      { at: iso(29), check: 'worker', status: 'ok' },
+    ];
+    const health = { supervisor: supervisorHealth(events, null, now), rows: healthRows(events), events: recentHealthEvents(events) };
+    const said = text(Health({ health })).join(' | ');
+    expect(said).toContain('workflow CANCELED');
+    expect(said).toContain('restarted the worker');
+    expect(said).toMatch(/repaired 30m ago/);
+    expect(said).toContain('checked 3m ago');
+    // A failed check wears the page's red, the same class Accounts uses for a cold account.
+    expect(said).toContain('tag hot');
+    expect(said).not.toContain('spicyspec-runner install-autostart');
+  });
+});
+
+/* ------------------------------------------------------------------- top line ---- */
+
+/**
+ * `running` is a fresh runner heartbeat and nothing more, and for eight hours that heartbeat
+ * was the only thing the header consulted. These are the states it could not tell apart.
+ */
+describe('top line', () => {
+  const now = Date.parse('2026-08-25T12:00:00.000Z');
+  const LIVE = {
+    running: true, lanes: 0, stop: null, kill: null, rotation: null,
+    awaitingFounder: 0, reviewCap: 3, pending: 4, parked: 0,
+    heartbeatAt: '2026-08-25T11:59:50.000Z', now,
+  };
+
+  it('calls it WORKING only when a lane is actually in flight', () => {
+    expect(topLine({ ...LIVE, lanes: 1 })).toEqual({ state: 'WORKING', reason: null, tone: 'on' });
+  });
+
+  it('names the founder and the hour when a stop is armed — the flag nobody could attribute', () => {
+    const stop = { armedAt: '2026-08-25T09:00:00.000Z', armedBy: 'founder' };
+    const idle = topLine({ ...LIVE, stop });
+    expect(idle.state).toBe('IDLE');
+    expect(idle.reason).toContain('stop armed by founder 3.0h ago');
+    expect(idle.reason).toContain('opens nothing further until Clear stop');
+
+    // Armed while a lane still runs is a different promise: this tick finishes, then it ends.
+    expect(topLine({ ...LIVE, lanes: 1, stop })).toMatchObject({ state: 'STOPPING' });
+    expect(topLine({ ...LIVE, lanes: 1, kill: stop })).toMatchObject({ state: 'KILLING' });
+  });
+
+  it('says an unsigned flag is unsigned rather than implying a founder set it', () => {
+    const reason = topLine({ ...LIVE, stop: { armedAt: null, armedBy: null } }).reason ?? '';
+    expect(reason).toContain('armed by an unrecorded author');
+    expect(reason).toContain('at an unrecorded time');
+  });
+
+  it('repeats the supervisor\'s rotation verdict verbatim — a cancelled workflow is the whole story', () => {
+    const rotation = healthRows([{ at: '2026-08-25T11:00:00.000Z', check: 'rotation', status: 'failed', detail: 'workflow CANCELED' }])
+      .find((r) => r.check === 'rotation') ?? null;
+    expect(topLine({ ...LIVE, rotation })).toMatchObject({ state: 'IDLE', reason: 'rotation failed — workflow CANCELED' });
+  });
+
+  it('distinguishes review cap, a drained queue and an undispatched rotation', () => {
+    expect(topLine({ ...LIVE, awaitingFounder: 3, reviewCap: 3 }).reason).toContain('review cap reached');
+    expect(topLine({ ...LIVE, pending: 0, parked: 2 }).reason).toBe('queue drained — nothing pending, 2 parked');
+    expect(topLine({ ...LIVE }).reason).toContain('no rotation dispatched');
+  });
+
+  it('reports a dead host as STOPPED with the command that revives it, not as a bare "stopped"', () => {
+    const dead = topLine({ ...LIVE, running: false, heartbeatAt: '2026-08-25T04:00:00.000Z' });
+    expect(dead).toMatchObject({ state: 'STOPPED', tone: 'off' });
+    expect(dead.reason).toContain('no runner heartbeat since 8.0h ago');
+    expect(dead.reason).toContain('spicyspec-runner start');
+    expect(topLine({ ...LIVE, running: false, heartbeatAt: null }).reason).toContain('no runner has ever registered');
+  });
+
+  it('is served on /api/state so the header never derives it from a heartbeat again', async () => {
+    const idle = (await state()) as unknown as { activity: { state: string; reason: string } };
+    expect(idle.activity.state).toBe('STOPPED');
+    await store.setKv('runner:main', JSON.stringify({ pid: 99, heartbeatAt: new Date().toISOString() }));
+    const alive = (await state()) as unknown as { running: boolean; activity: { state: string; reason: string } };
+    // The exact lie: a live heartbeat, nothing in flight. RUNNING then; IDLE with a reason now.
+    expect(alive.running).toBe(true);
+    expect(alive.activity.state).toBe('IDLE');
+    expect(alive.activity.reason).toBeTruthy();
+  });
+
+  it('reads maxAwaitingReview off the runner config, and falls back to the runner default', () => {
+    const path = join(repo, 'cap.json');
+    writeFileSync(path, JSON.stringify({ maxAwaitingReview: 7 }), 'utf8');
+    expect(reviewCapOf(path)).toBe(7);
+    writeFileSync(path, JSON.stringify({ maxAwaitingReview: 0 }), 'utf8');
+    expect(reviewCapOf(path)).toBe(3);
+    expect(reviewCapOf(join(repo, 'no-such-config.json'))).toBe(3);
+  });
+});
+
+/* ----------------------------------------------------------------- flag author ---- */
+
+describe('stop flag authorship', () => {
+  it('signs the founder\'s stop so the supervisor never auto-clears it', async () => {
+    await post('/api/action/stop', {});
+    expect(parseArmedFlag(await store.getKv(STOP_KEY))).toEqual({ armedAt: expect.any(String), armedBy: 'founder' });
+    const s = (await state()) as unknown as { stopFlag: { armedBy: string }; stopArmed: boolean };
+    expect(s.stopArmed).toBe(true);
+    expect(s.stopFlag.armedBy).toBe('founder');
+  }, 40_000);
+
+  it('signs the founder\'s kill the same way', async () => {
+    await post('/api/action/kill', {});
+    expect(parseArmedFlag(await store.getKv(KILL_KEY))).toMatchObject({ armedBy: 'founder' });
+    expect((await state()) as unknown as { killFlag: { armedBy: string } }).toMatchObject({ killFlag: { armedBy: 'founder' } });
+  }, 40_000);
+
+  it('treats an unreadable or unsigned flag as armed by nobody, never as armed by the founder', async () => {
+    // This is the flag from the incident: written by an agent, with no author on it.
+    await store.setKv(STOP_KEY, JSON.stringify({ armedAt: '2026-08-25T01:00:00.000Z' }));
+    expect((await state()) as unknown as { stopFlag: unknown }).toMatchObject({ stopFlag: { armedBy: null } });
+    await store.setKv(STOP_KEY, 'not json at all');
+    expect((await state()) as unknown as { stopArmed: boolean }).toMatchObject({ stopArmed: true });
+    expect(parseArmedFlag('not json at all')).toEqual({ armedAt: null, armedBy: null });
+    expect(parseArmedFlag(null)).toBeNull();
+  });
 });

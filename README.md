@@ -40,7 +40,7 @@ and the store contract at 9/9 against real Postgres 16 (rollback + two-runner fe
 | `packages/orchestrator` | Temporal `specRunWorkflow` + heartbeating activities | done |
 | `packages/pipeline` | Declarative stage definitions + generalized packet builder | done |
 | `packages/store` | `node:sqlite` state: runs, gates (+JSONL export), pool, queue | done |
-| `packages/runner` | Composition root: config, snapshots, pool settle, judge wiring, CLI (init/start/seed/handoff/dashboard/service-xml) | done |
+| `packages/runner` | Composition root: config, snapshots, pool settle, judge wiring, CLI (init/start/seed/handoff/dashboard/service-xml/install-autostart) | done |
 | `packages/judge` | Second-vendor honesty chain: zod verdicts, quota fall-through, absence=UNKNOWN | done |
 | `packages/packs` | Gate packs: frontend/a11y/backend/security — 62 evidence-bearing checklist items | done |
 | `packages/control-plane` | Managers page: read API + CSRF-guarded review + self-contained live dashboard | done |
@@ -49,6 +49,31 @@ and the store contract at 9/9 against real Postgres 16 (rollback + two-runner fe
 | `packages/store` (pg) | Postgres driver behind the same contract; `postgres://` storePath = team mode | done |
 | runner federation | register/heartbeat/staleness in the shared store; `/api/runners` + dashboard | done |
 | Angular UI upgrade, npm publish (license undecided), airvia dogfood migration | parked — founder calls | next |
+
+## Leave it running overnight
+
+The loop is meant to be left alone. One command registers the operating system to keep it
+alive — a Windows Scheduled Task, a systemd **user** timer, or a launchd agent, whichever
+this machine has:
+
+```bash
+spicyspec-runner install-autostart --config spicyspec.runner.json   # --interval-minutes 3
+```
+
+From then on the OS runs one supervision sweep at boot-or-logon **and** every 3 minutes,
+forever. Each sweep restarts whatever is missing — the Temporal dev server, the runner
+worker, the dashboard — and repairs the states no crash caused: a rotation that was
+cancelled, a stop flag no human set. Worst-case outage is one interval.
+
+- **Logs:** `.spicyspec/logs/supervisor.log` — the sweep's own transcript.
+- **Did it heal?** the control room's health panel, and the `health:events` rows in the store.
+- **Undo:** the same command with `--uninstall`.
+- **It is not elevated** and does not need to be. Details, and when to add WinSW on top:
+  [docs/dev-setup.md](docs/dev-setup.md#boot-survival-which-of-the-two-and-why).
+
+Written after a real night: the founder left the loop running, and found it dead for ~8
+hours. Two causes — a stop flag the agent armed and never cleared, and *nothing supervising
+the processes*. Both are what a sweep now looks for.
 
 ## Workspace
 

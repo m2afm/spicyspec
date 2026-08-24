@@ -8,14 +8,7 @@
  */
 import { readReviewDecision } from '@spicyspec/control-plane';
 import { applyRepairs, checkQueue, promoteSignedOff, type Queue, type QueueEvidence } from '@spicyspec/core';
-import {
-  createNtfyChannel,
-  createWebhookChannel,
-  notificationFor,
-  notifyAll,
-  type NotifyChannel,
-  type NotifyEvent,
-} from '@spicyspec/notify';
+import { notificationFor, notifyAll, type NotifyChannel, type NotifyEvent } from '@spicyspec/notify';
 import type { OpenNextInput, OpenNextResult, QueueActivities, SettleInput, SettleResult } from '@spicyspec/orchestrator';
 import { specDrivenPipeline, stageAfter, type PipelineDefinition } from '@spicyspec/pipeline';
 import { execFile } from 'node:child_process';
@@ -26,6 +19,7 @@ import { exportQueueView } from './compat-view.js';
 import { rotationStopReason } from './control-flags.js';
 import { runsRootFor, writeParkDiagnosis } from './parked-writer.js';
 import { consumeReviewDecision, isReviewDecisionConsumed, markRecordedDecisionConsumed } from './review-consumption.js';
+import { notifyChannelsFor } from './notify-channels.js';
 import { findSpecDir } from './spec-dir.js';
 import type { RunnerDeps } from './wiring.js';
 
@@ -93,10 +87,7 @@ export interface QueueActivityDeps {
 
 /** Build the notification channels a runner config declares. */
 export function channelsFromConfig(deps: QueueActivityDeps): NotifyChannel[] {
-  if (deps.notifyChannels) return deps.notifyChannels;
-  return deps.runner.config.notify.channels.map((c) =>
-    c.type === 'ntfy' ? createNtfyChannel({ topic: c.topic, server: c.server }) : createWebhookChannel({ url: c.url }),
-  );
+  return deps.notifyChannels ?? notifyChannelsFor(deps.runner.config);
 }
 
 export function createQueueActivities(deps: QueueActivityDeps): QueueActivities {

@@ -112,6 +112,58 @@ export const RUNNER_CONFIG = z.object({
    * the files are read-only views.
    */
   compatLoopDir: z.string().nullable().default(null),
+  /**
+   * The self-healing supervisor (`spicyspec-runner supervise`).
+   *
+   * Written after a night the loop spent dead: Temporal, the runner and the dashboard were
+   * bare background processes of one shell with no service and no restart, an agent-armed
+   * STOP was never cleared, and the rotation workflow had been cancelled. Three independent
+   * single points of failure, none of them watched. Every knob here exists so a machine
+   * that cannot run one of those processes (no Temporal binary, no dashboard) can turn that
+   * repair OFF and still get the others.
+   */
+  supervise: z
+    .object({
+      /** false ⇒ report Temporal unreachable instead of starting it */
+      manageTemporal: z.boolean().default(true),
+      /** a REAL executable — the supervisor spawns without a shell, so no npm/batch shim (B4) */
+      temporalBin: z.string().default('temporal'),
+      /** null ⇒ derive `server start-dev --db-filename <repoCwd>/.spicyspec/temporal.db --ui-port <port>` */
+      temporalArgs: z.array(z.string()).nullable().default(null),
+      temporalUiPort: z.number().int().min(1).max(65535).default(8233),
+      /** how long a spawned dependency has to answer before the repair counts as failed */
+      startTimeoutMs: z.number().int().positive().default(60_000),
+      autostartWorker: z.boolean().default(true),
+      autostartRotation: z.boolean().default(true),
+      /** probed and restarted when set; null ⇒ this machine hosts no control room */
+      dashboardPort: z.number().int().min(1).max(65535).nullable().default(null),
+      /** a heartbeat older than this is a DEAD worker — liveness is never a record's existence (B17) */
+      workerStaleMs: z.number().int().positive().default(90_000),
+      /** an AGENT's stop older than this is swept; a founder's is never swept, at any age */
+      agentStopTtlMinutes: z.number().positive().default(30),
+      intervalSeconds: z.number().positive().default(60),
+      /** per-check exponential backoff after a failed repair — never a spawn storm */
+      backoffSeconds: z.number().positive().default(30),
+      backoffMaxSeconds: z.number().positive().default(900),
+      /** detached children write their output here (relative to repoCwd) */
+      logDir: z.string().default('.spicyspec/logs'),
+    })
+    .default({
+      manageTemporal: true,
+      temporalBin: 'temporal',
+      temporalArgs: null,
+      temporalUiPort: 8233,
+      startTimeoutMs: 60_000,
+      autostartWorker: true,
+      autostartRotation: true,
+      dashboardPort: null,
+      workerStaleMs: 90_000,
+      agentStopTtlMinutes: 30,
+      intervalSeconds: 60,
+      backoffSeconds: 30,
+      backoffMaxSeconds: 900,
+      logDir: '.spicyspec/logs',
+    }),
 });
 
 export type RunnerConfig = z.infer<typeof RUNNER_CONFIG>;

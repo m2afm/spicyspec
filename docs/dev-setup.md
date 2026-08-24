@@ -65,6 +65,49 @@ cd packages/store && node tools/live-pg-proof.mjs   # 9/9: rollback, round-trips
 docker rm -f spicyspec-pg-proof
 ```
 
-Reboot survival on Windows: `spicyspec-runner service-xml --config ... > spicyspec-runner.xml`,
-put it beside a downloaded WinSW exe renamed `spicyspec-runner-service.exe`, then
-`spicyspec-runner-service.exe install && spicyspec-runner-service.exe start`.
+## Boot survival: which of the two, and why
+
+There are two mechanisms and they answer different questions. Install the first; the second
+is optional.
+
+| | `install-autostart` (scheduled task / timer / agent) | `service-xml` (WinSW) |
+|---|---|---|
+| What it starts | `supervise --once` — a sweep that repairs **everything**: Temporal, the worker, the dashboard, a cancelled rotation, a stop flag no human set | the worker process, and only the worker |
+| When | boot-or-logon **and** every N minutes, forever | boot, plus restart-on-crash |
+| Elevation | none by default | admin (installing a Windows service) |
+| Recovers from | anything that leaves the loop not-running, including states no process crash caused | the worker process exiting |
+
+`install-autostart` is the one that answers "I left it overnight and it was dead" — the
+overnight death had a *cancelled workflow* and a *stale stop flag*, neither of which is a
+crashed process, so nothing a service manager does would have helped. Use WinSW on top only
+if you want the worker itself hosted as a real Windows service; the sweep detects it running
+and leaves it alone.
+
+```bash
+# the one to install (idempotent — re-run it to change the interval)
+spicyspec-runner install-autostart --config spicyspec.runner.json --interval-minutes 3
+
+# see it registered
+schtasks /Query /TN Spicyspec-<projectName> /V /FO LIST      # Windows
+systemctl --user status spicyspec-<project>.timer            # Linux
+launchctl print gui/$(id -u)/com.spicyspec.<project>         # macOS
+
+# remove it
+spicyspec-runner install-autostart --config spicyspec.runner.json --uninstall
+```
+
+On Windows the default task runs **as you, at logon** — not elevated, and keeping your user
+profile, which is where the ambient AI-account logins live. `--whether-logged-on` registers
+it as SYSTEM instead: it then fires with nobody logged in, but SYSTEM has no user profile, so
+the workers it starts may fail to authenticate. Read what the command prints before choosing
+it.
+
+Optional, Windows only — host the worker itself as a service:
+
+```bash
+spicyspec-runner service-xml --config ... > spicyspec-runner.xml
+# put it beside a downloaded WinSW exe renamed spicyspec-runner-service.exe, then
+spicyspec-runner-service.exe install && spicyspec-runner-service.exe start
+```
+
+Logs from the sweep land in `<repo>/.spicyspec/logs/supervisor.log`.

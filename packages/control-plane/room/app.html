@@ -232,6 +232,17 @@ header.hero h1 { font-size: clamp(1.9rem, 5vw, 3rem); }
 .pulse.off .dot { background: var(--inert); }
 .pulse.warn .dot { background: var(--flame); }
 @keyframes beat { 0%,100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+/* Why the loop is not working, on its own line under the chips. The chips describe PROCESSES
+   — "running", "live feed" — and processes are what stayed true for eight hours over a
+   cancelled rotation. The reason is the only thing on this page that describes PROGRESS. */
+.whybar {
+  flex-basis: 100%; order: 99;
+  font-family: var(--font-mono); font-size: 0.76rem; font-weight: 700; line-height: 1.4;
+  color: var(--warn-text); background: var(--surface-alt);
+  border-left: var(--ink-bold) solid var(--flame); padding: 0.4rem 0.7rem;
+}
+.whybar.off { color: var(--text-soft); border-left-color: var(--inert); }
+.tag.mute { color: var(--text-dim); }
 
 /* ── layout ───────────────────────────────────────────────────────── */
 .grid { display: grid; gap: 1.1rem; min-width: 0; }
@@ -1253,6 +1264,58 @@ function Accounts({ accounts, events }) {
       events.map((e, i) => h('li', { key: i }, h('span', { className: 'hint' }, e)))));
 }
 
+/* Supervisor status word → the tag class that colours it. Base tag is neutral (ok), warm is
+   an amber caution (repaired / blocked), hot is the red the page reserves for a real break. */
+const HEALTH_TAG = { ok: '', repaired: ' warm', failed: ' hot', blocked: ' warm', unknown: ' mute' };
+
+/**
+ * One row per supervised check — what was checked, when, and the last repair with its time.
+ *
+ * This panel exists because of the night the loop was dead for eight hours behind a header
+ * that said RUNNING / LIVE FEED. Nothing on the page watched the processes, and nothing on
+ * the page could have said so. A self-healer nobody can see is the same class of lie as a
+ * frozen feed, so an absent or silent supervisor is stated in the panel's loudest words —
+ * together with the one command that installs it.
+ */
+function Health({ health }) {
+  if (!health || !health.supervisor) {
+    return h(Panel, { title: 'Self-healing', alert: true },
+      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.76rem' } },
+        'no supervisor reporting — nothing is watching the processes.'));
+  }
+  const sup = health.supervisor;
+  const rows = health.rows || [];
+  const events = health.events || [];
+  const broken = rows.filter((r) => r.status === 'failed').length;
+  return h(Panel, {
+      title: 'Self-healing',
+      alert: !sup.reporting || broken > 0,
+      sub: sup.reporting ? 'supervisor beat ' + ago(sup.lastAt) : 'nobody is watching',
+    },
+    !sup.reporting && h('p', {
+      className: 'mono',
+      style: { margin: '0 0 0.7rem', fontSize: '0.74rem', fontWeight: 700, color: 'var(--hot)' },
+    }, sup.advice || 'supervisor not reporting'),
+    rows.map((r) => h('div', { key: r.check, className: 'acct' + (r.status === 'failed' ? ' cold' : '') },
+      h('div', { className: 'acct-top' },
+        h('span', { className: 'acct-name' }, r.label),
+        h('span', { className: 'tag' + (HEALTH_TAG[r.status] || '') }, r.reported || 'not reported')),
+      h('div', { className: 'acct-meta' },
+        h('span', null, r.checkedAt ? 'checked ' + ago(r.checkedAt) : 'never checked'),
+        r.lastRepairAt
+          ? h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'repaired ' + ago(r.lastRepairAt))
+          : h('span', null, 'no repair on record')),
+      r.detail && h('div', { className: 'acct-meta', style: { color: 'var(--text-soft)' } }, r.detail.slice(0, 140)),
+      // The repair line is only worth its own row when it is not simply the latest report
+      // repeating itself — a healed check says "repaired" once, not twice.
+      r.lastRepairDetail && r.lastRepairAt !== r.checkedAt &&
+        h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, 'last repair: ' + r.lastRepairDetail.slice(0, 120)))),
+    events.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } },
+      events.slice().reverse().map((e, i) => h('li', { key: i },
+        h('span', { className: 'tool' }, e.check),
+        h('span', { className: 'hint' }, e.status + (e.detail ? ' — ' + e.detail : '') + ' · ' + ago(e.at))))));
+}
+
 /* The body of one lane: the four figures, the action feed, the last thing it said. Shared so
    the single-lane panel is literally the prototype's Current tick (app.html:1244-1257) and the
    multi-lane one is the same body under a per-lane headline. */
@@ -1549,13 +1612,17 @@ function App() {
   const c = s.catalog;
   const active = s.active;
   const p = active && active.progress;
-  // Armed is not the same as acting. Both flags stay armed until Clear stop, so with nothing
-  // running 'killing' described an event that had already finished — and 'stopping after tick'
-  // promised a tick that does not exist. The engine reads runner:stop at a run boundary and
-  // runner:kill-now inside a live run, so the chip says which of the two it is.
-  const status = s.killArmed ? ['warn', s.running ? 'killing' : 'kill armed']
-    : s.stopArmed ? ['warn', s.running ? 'stopping after tick' : 'stop armed']
-      : s.running ? ['on', 'running'] : ['off', 'stopped'];
+  // WORKING versus NOT WORKING, derived on the server (room-server topLine) so the poll, the
+  // SSE frames and the tests all read one sentence. The chip used to be computed here from
+  // `s.running`, which is a fresh runner HEARTBEAT and nothing more: it said 'running' for
+  // eight hours while the rotation was cancelled and a stop flag sat armed. A heartbeat is now
+  // necessary and never sufficient — a lane in flight is what working means, and every other
+  // state carries the reason it is not.
+  const top = s.activity || { state: s.running ? 'WORKING' : 'STOPPED', reason: null, tone: s.running ? 'on' : 'off' };
+  const armed = s.killFlag || s.stopFlag || null;
+  // Stated beside feed health, for the same reason feed health is stated beside loop health:
+  // an unwatched loop and a watched one look identical on a page that shows only the loop.
+  const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting);
 
   const byId = new Map(live.agents.map((a) => [a.id, a]));
   // Dispatched work only, for every count and statistic: the worker is not its own subagent,
@@ -1591,10 +1658,19 @@ function App() {
   return h('div', null,
     h('header', { className: 'hero' },
       h('h1', null, 'Loop Control Room'),
-      h('span', { className: 'pulse ' + status[0] }, h('i', { className: 'dot' }), status[1]),
+      h('span', { className: 'pulse ' + top.tone, title: top.reason || 'a lane is in flight' },
+        h('i', { className: 'dot' }), top.state),
+      // WHO armed the flag, and WHEN. An unsigned flag reads as nobody's, which is exactly how
+      // an agent's stop survived a night with no founder able to say who set it.
+      armed && h('span', { className: 'pulse warn' }, h('i', { className: 'dot' }),
+        (s.killFlag ? 'kill' : 'stop') + ' armed · ' + (armed.armedBy || 'unknown author') + ' · ' + ago(armed.armedAt)),
       // Feed health is stated separately from loop health on purpose: a dead feed and a
       // stopped loop look identical on a page that shows only one of them.
       h('span', { className: 'pulse ' + feedLink[0] }, h('i', { className: 'dot' }), feedLink[1]),
+      unsupervised && h('span', {
+        className: 'pulse off',
+        title: (s.health.supervisor.advice || 'the supervisor is not reporting'),
+      }, h('i', { className: 'dot' }), 'unsupervised'),
       s.driver && h('span', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
         'pid ' + s.driver.pid + (s.driver.workerPid ? ' · worker ' + s.driver.workerPid : '') + ' · code ' + (s.driver.code || '?') + ' · beat ' + ago(s.driver.heartbeat)),
       h('span', { style: { flex: 1 } }),
@@ -1604,7 +1680,9 @@ function App() {
         h('button', { className: 'warn', disabled: busy || !s.running, onClick: () => act('stop') }, 'Pause after tick'),
         h('button', { className: 'danger', disabled: busy || !s.running, onClick: () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.') }, 'Kill now'),
         (s.stopArmed || s.killArmed) && h('button', { disabled: busy, onClick: () => act('resume') }, 'Clear stop'),
-        h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))),
+        h('button', { disabled: busy, onClick: () => act('report') }, 'Report')),
+      // Full width, last in the hero: the one line that says whether anything is happening.
+      top.reason && h('div', { className: 'whybar' + (top.tone === 'off' ? ' off' : '') }, top.reason)),
 
     h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
       h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
@@ -1787,6 +1865,10 @@ function App() {
         })),
 
       h(Live, { live: s.live, lanes: s.lanes, running: s.running }),
+
+      // Directly under Current tick: when that panel is empty, this one says why, and whether
+      // anything is trying to fix it.
+      h(Health, { health: s.health }),
 
       h(Panel, { title: 'Run totals' },
           h('div', { className: 'statrow' },

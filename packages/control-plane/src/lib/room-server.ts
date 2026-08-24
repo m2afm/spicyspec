@@ -133,6 +133,404 @@ export interface RunningRoom {
 export const STOP_KEY = 'runner:stop';
 export const KILL_KEY = 'runner:kill-now';
 
+/* ------------------------------------------------------------------------ health ---- */
+
+/**
+ * The supervisor's report, as the founder reads it.
+ *
+ * This section exists because of one night: the room said RUNNING / LIVE FEED for eight
+ * hours while the rotation workflow was CANCELED and a STOP flag armed by an AGENT was never
+ * cleared. Every chip on the page was true, and every one of them described a PROCESS; none
+ * described PROGRESS. So the room now reads what the supervisor writes about each thing it
+ * watches, and says plainly when the supervisor itself has gone quiet.
+ *
+ * The writer is the supervisor (packages/runner) — this file only ever reads these keys, and
+ * treats every field as untrusted: a malformed or absent report renders as "no supervisor
+ * reporting", never as a crash and never as health.
+ */
+export const HEALTH_KEY = 'health:events';
+export const SUPERVISOR_KEY = 'health:supervisor';
+
+/** What the supervisor writes per check. `detail` is optional; every field may be junk. */
+export interface HealthEvent {
+  at: string;
+  check: string;
+  status: string;
+  detail?: string;
+}
+
+export type HealthStatus = 'ok' | 'repaired' | 'failed' | 'blocked' | 'unknown';
+
+/**
+ * The checks the founder named, in the order they matter when the loop is dead: is there an
+ * engine, is anything hosting it, is work dispatched, can I see it, is it allowed to move,
+ * can it get an account. Anything else the supervisor reports is appended rather than
+ * dropped — a check the room refuses to render is a check nobody watches.
+ */
+const CHECK_ROSTER: Array<{ check: string; label: string; aliases: string[] }> = [
+  { check: 'temporal', label: 'Temporal', aliases: ['temporal-server', 'server'] },
+  { check: 'worker', label: 'Worker heartbeat', aliases: ['worker-heartbeat', 'heartbeat', 'runner'] },
+  { check: 'rotation', label: 'Rotation', aliases: ['workflow', 'rotation-workflow'] },
+  { check: 'dashboard', label: 'Dashboard', aliases: ['room', 'control-room'] },
+  { check: 'stop-flags', label: 'Stop flags', aliases: ['stopflags', 'stop', 'flags'] },
+  { check: 'accounts', label: 'Account leases', aliases: ['account-leases', 'leases', 'pool'] },
+];
+
+/**
+ * Checks the supervisor reports that the founder did not name. They still get a row — a check
+ * the room refuses to render is a check nobody watches — but a hand-written label beats the
+ * prettifier: 'lock' is the supervisor's single-instance lock, not a door.
+ */
+const EXTRA_LABELS: Record<string, string> = { lock: 'Supervisor lock' };
+
+const CANONICAL_CHECK = new Map<string, string>();
+for (const row of CHECK_ROSTER) {
+  CANONICAL_CHECK.set(row.check, row.check);
+  for (const alias of row.aliases) CANONICAL_CHECK.set(alias, row.check);
+}
+
+/** Reported words vary by writer; the five states the panel can colour do not. */
+const STATUS_ALIASES: Record<string, HealthStatus> = {
+  ok: 'ok', healthy: 'ok', up: 'ok', pass: 'ok', green: 'ok',
+  repaired: 'repaired', healed: 'repaired', restarted: 'repaired', fixed: 'repaired', cleared: 'repaired',
+  failed: 'failed', fail: 'failed', down: 'failed', error: 'failed', broken: 'failed',
+  blocked: 'blocked', skipped: 'blocked', manual: 'blocked',
+};
+
+export interface HealthRow {
+  check: string;
+  label: string;
+  status: HealthStatus;
+  /** exactly the word the supervisor used — normalising it away would hide a new state */
+  reported: string | null;
+  detail: string | null;
+  checkedAt: string | null;
+  lastRepairAt: string | null;
+  lastRepairDetail: string | null;
+}
+
+export interface SupervisorHealth {
+  reporting: boolean;
+  lastAt: string | null;
+  /** silence longer than this is reported as "not reporting" */
+  staleAfterMs: number;
+  /** the one command that fixes it — a self-healer nobody can install is not installed */
+  advice: string | null;
+}
+
+/** Default grace before silence is called silence: three 60s beats, plus slack. */
+const SUPERVISOR_STALE_MS = 5 * 60_000;
+const HEALTH_EVENTS_SHOWN = 20;
+export const INSTALL_HINT = 'supervisor not reporting — install with: spicyspec-runner install-autostart';
+
+const isEventish = (v: unknown): v is HealthEvent =>
+  typeof v === 'object' && v !== null && typeof (v as HealthEvent).check === 'string';
+
+/**
+ * Every shape the supervisor might have chosen, accepted: a JSON array, a `{ events: [...] }`
+ * envelope, one bare event, or newline-delimited JSON. The writer lives in another package
+ * and the room must not dictate its storage — but it must also never render a guess as a
+ * fact, so anything unparseable yields no events at all.
+ */
+export function parseHealthEvents(raw: string | null | undefined): HealthEvent[] {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  const out: HealthEvent[] = [];
+  const take = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const v of value) take(v);
+      return;
+    }
+    if (isEventish(value)) {
+      out.push(value);
+      return;
+    }
+    if (typeof value === 'object' && value !== null && Array.isArray((value as { events?: unknown }).events)) {
+      take((value as { events: unknown[] }).events);
+    }
+  };
+  try {
+    take(JSON.parse(raw));
+    return out;
+  } catch {
+    /* not one document — fall through to the line-delimited reading */
+  }
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      take(JSON.parse(line));
+    } catch {
+      /* one bad line must not void the whole report */
+    }
+  }
+  return out;
+}
+
+const eventTime = (e: HealthEvent): number => {
+  const t = Date.parse(String(e.at));
+  return Number.isFinite(t) ? t : 0;
+};
+
+/**
+ * Newest last, capped, and deduplicated — the raw report under the rows.
+ *
+ * The supervisor records a repair in TWO places on purpose: the capped failures ring
+ * (`health:events`) and the full cycle document (`health:last-cycle`, ok checks included).
+ * Both are read, so without this every repair would be narrated twice — a small lie in the
+ * one panel whose whole job is not telling them.
+ */
+export function recentHealthEvents(events: HealthEvent[]): HealthEvent[] {
+  const seen = new Set<string>();
+  const unique: HealthEvent[] = [];
+  for (const e of events) {
+    const id = `${e.at}|${e.check}|${e.status}|${e.detail ?? ''}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(e);
+  }
+  return unique.sort((a, b) => eventTime(a) - eventTime(b)).slice(-HEALTH_EVENTS_SHOWN);
+}
+
+/**
+ * One row per supervised check, newest report wins, plus the last repair recorded for it. A
+ * check with no report at all is still a ROW — "not reported yet" is the most important thing
+ * this panel can say, and a missing row says nothing at all.
+ */
+export function healthRows(events: HealthEvent[]): HealthRow[] {
+  const key = (raw: unknown): string => {
+    const id = String(raw ?? '').toLowerCase().trim();
+    return CANONICAL_CHECK.get(id) ?? id;
+  };
+  const byCheck = new Map<string, HealthEvent[]>();
+  for (const e of events) {
+    const id = key(e.check);
+    if (!id) continue;
+    const bucket = byCheck.get(id) ?? [];
+    bucket.push(e);
+    byCheck.set(id, bucket);
+  }
+  const extras = [...byCheck.keys()].filter((k) => !CHECK_ROSTER.some((r) => r.check === k)).sort();
+  const order = [
+    ...CHECK_ROSTER.map((r) => ({ check: r.check, label: r.label })),
+    ...extras.map((check) => ({
+      check,
+      label: EXTRA_LABELS[check] ?? check.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase()),
+    })),
+  ];
+
+  return order.map(({ check, label }) => {
+    const sorted = (byCheck.get(check) ?? []).slice().sort((a, b) => eventTime(a) - eventTime(b));
+    const latest = sorted[sorted.length - 1] ?? null;
+    const repair = sorted.filter((e) => STATUS_ALIASES[String(e.status).toLowerCase().trim()] === 'repaired').pop() ?? null;
+    return {
+      check,
+      label,
+      status: latest ? STATUS_ALIASES[String(latest.status).toLowerCase().trim()] ?? 'unknown' : 'unknown',
+      reported: latest ? String(latest.status) : null,
+      detail: latest?.detail != null ? String(latest.detail) : null,
+      checkedAt: latest ? String(latest.at) : null,
+      lastRepairAt: repair ? String(repair.at) : null,
+      lastRepairDetail: repair?.detail != null ? String(repair.detail) : null,
+    };
+  });
+}
+
+/**
+ * Is the supervisor itself alive? Its own heartbeat record is preferred; failing that, the
+ * newest health event is proof it ran. Both absent means nobody is watching — which the room
+ * says in the same words as the command that fixes it.
+ */
+export function supervisorHealth(events: HealthEvent[], record: string | null | undefined, now: number): SupervisorHealth {
+  let beatAt: number | null = null;
+  let staleAfterMs = SUPERVISOR_STALE_MS;
+  try {
+    const rec = record ? (JSON.parse(record) as { at?: unknown; intervalMs?: unknown }) : null;
+    const t = Date.parse(String(rec?.at));
+    if (Number.isFinite(t)) beatAt = t;
+    // The supervisor's own interval, tripled: one missed beat is a slow disk, three is a dead
+    // supervisor. A record without an interval keeps the default grace.
+    if (typeof rec?.intervalMs === 'number' && rec.intervalMs > 0) staleAfterMs = Math.max(rec.intervalMs * 3, 90_000);
+  } catch {
+    /* a corrupt record is not a heartbeat */
+  }
+  const newestEvent = events.reduce((max, e) => Math.max(max, eventTime(e)), 0);
+  if (newestEvent > (beatAt ?? 0)) beatAt = newestEvent;
+
+  const reporting = beatAt != null && beatAt > 0 && now - beatAt < staleAfterMs;
+  return {
+    reporting,
+    lastAt: beatAt && beatAt > 0 ? new Date(beatAt).toISOString() : null,
+    staleAfterMs,
+    advice: reporting ? null : INSTALL_HINT,
+  };
+}
+
+/* -------------------------------------------------------------------- stop flags ---- */
+
+/**
+ * Who armed a stop, and when. The overnight incident turned on this: an AGENT armed
+ * `runner:stop`, nothing ever cleared it, because nothing could tell an agent's flag from the
+ * founder's. The room stamps `armedBy: 'founder'` on every flag it arms, the supervisor
+ * auto-clears only flags that are NOT the founder's, and the armed chip names the author so a
+ * founder can tell "I did this" from "something did this to me".
+ */
+export interface ArmedFlag {
+  armedAt: string | null;
+  armedBy: string | null;
+}
+
+export const FOUNDER = 'founder';
+
+/** An armed flag with an unreadable body is still armed — the flag's existence is the fact. */
+export function parseArmedFlag(raw: string | null | undefined): ArmedFlag | null {
+  if (raw == null) return null;
+  try {
+    const rec = JSON.parse(raw) as { armedAt?: unknown; armedBy?: unknown };
+    return {
+      armedAt: typeof rec?.armedAt === 'string' ? rec.armedAt : null,
+      armedBy: typeof rec?.armedBy === 'string' ? rec.armedBy : null,
+    };
+  } catch {
+    return { armedAt: null, armedBy: null };
+  }
+}
+
+/* ---------------------------------------------------------------------- top line ---- */
+
+export type LoopState = 'WORKING' | 'STOPPING' | 'KILLING' | 'IDLE' | 'STOPPED';
+
+export interface TopLine {
+  state: LoopState;
+  /** why, in founder words — null only while WORKING */
+  reason: string | null;
+  tone: 'on' | 'warn' | 'off';
+}
+
+export interface TopLineInput {
+  running: boolean;
+  lanes: number;
+  stop: ArmedFlag | null;
+  kill: ArmedFlag | null;
+  /** the rotation row of the supervisor's report, when it has one */
+  rotation: HealthRow | null;
+  awaitingFounder: number;
+  reviewCap: number;
+  pending: number;
+  parked: number;
+  heartbeatAt: string | null;
+  now: number;
+}
+
+/** "3h ago" / "12m ago" — the granularity the page's own `ago` uses, so the two agree. */
+function sinceLabel(iso: string | null, now: number): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return 'at an unrecorded time';
+  const s = Math.max(0, (now - t) / 1000);
+  if (s < 90) return `${Math.round(s)}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  return `${(s / 3600).toFixed(1)}h ago`;
+}
+
+const armedPhrase = (flag: ArmedFlag | null, now: number): string =>
+  `armed by ${flag?.armedBy ?? 'an unrecorded author'} ${sinceLabel(flag?.armedAt ?? null, now)}`;
+
+/**
+ * WORKING versus NOT WORKING, in one look — the whole point of this function.
+ *
+ * `running` alone used to drive the header, and `running` is nothing but a fresh runner
+ * heartbeat. So on the night the rotation was cancelled and a stop flag sat armed, the page
+ * said RUNNING: a live process, zero progress, for eight hours. A heartbeat is now necessary
+ * and never sufficient — a lane in flight is what "working" means, and every other
+ * combination has to state its reason.
+ */
+export function topLine(input: TopLineInput): TopLine {
+  const { running, lanes, stop, kill, rotation, awaitingFounder, reviewCap, pending, parked, now } = input;
+
+  if (!running) {
+    return {
+      state: 'STOPPED',
+      reason: input.heartbeatAt
+        ? `no runner heartbeat since ${sinceLabel(input.heartbeatAt, now)} — nothing is hosting the loop (spicyspec-runner start)`
+        : 'no runner has ever registered — nothing is hosting the loop (spicyspec-runner start)',
+      tone: 'off',
+    };
+  }
+
+  // Armed-and-still-working is its own state: the lane in flight is real work that is about
+  // to be the last of it. Collapsing it into WORKING promises ticks that will not come.
+  if (lanes > 0) {
+    if (kill) return { state: 'KILLING', reason: `kill-now ${armedPhrase(kill, now)} — the live session is being interrupted`, tone: 'warn' };
+    if (stop) return { state: 'STOPPING', reason: `stop ${armedPhrase(stop, now)} — this lane finishes, then the rotation ends`, tone: 'warn' };
+    return { state: 'WORKING', reason: null, tone: 'on' };
+  }
+
+  // A worker is alive and NOTHING is in flight. This is the state that spent a night
+  // impersonating RUNNING, so it is never reported without a reason.
+  if (kill) return { state: 'IDLE', reason: `kill-now ${armedPhrase(kill, now)} — the rotation opens nothing further until Clear stop`, tone: 'warn' };
+  if (stop) return { state: 'IDLE', reason: `stop ${armedPhrase(stop, now)} — the rotation opens nothing further until Clear stop`, tone: 'warn' };
+  if (rotation && (rotation.status === 'failed' || rotation.status === 'blocked')) {
+    return { state: 'IDLE', reason: `rotation ${rotation.reported ?? rotation.status}${rotation.detail ? ` — ${rotation.detail}` : ''}`, tone: 'warn' };
+  }
+  if (reviewCap > 0 && awaitingFounder >= reviewCap) {
+    return { state: 'IDLE', reason: `review cap reached — ${awaitingFounder} spec(s) awaiting you, cap ${reviewCap}; sign one off to free a slot`, tone: 'warn' };
+  }
+  if (pending === 0) {
+    return { state: 'IDLE', reason: `queue drained — nothing pending${parked > 0 ? `, ${parked} parked` : ''}`, tone: 'warn' };
+  }
+  return { state: 'IDLE', reason: `no rotation dispatched — ${pending} spec(s) pending and no lane in flight; press Start`, tone: 'warn' };
+}
+
+/* -------------------------------------------------------------- supervisor read ---- */
+
+export interface SupervisorReport {
+  supervisor: SupervisorHealth;
+  rows: HealthRow[];
+  events: HealthEvent[];
+}
+
+/**
+ * Gather the supervisor's report from the store. Both plausible storages are read — the one
+ * `health:events` document and any `health:*` rows — and merged, so the room does not break
+ * the day the supervisor changes how it writes. Every failure path returns an EMPTY report:
+ * the panel then says "no supervisor reporting", which is the truth, instead of nothing,
+ * which is what a crash renders.
+ */
+export async function readSupervisorReport(store: Store, now: number): Promise<SupervisorReport> {
+  let events: HealthEvent[] = [];
+  let record: string | null = null;
+  try {
+    const rows = await store.listKv('health:');
+    for (const row of rows) {
+      if (row.key === SUPERVISOR_KEY) {
+        record = row.value;
+        continue;
+      }
+      events = events.concat(parseHealthEvents(row.value));
+    }
+    if (!rows.some((r) => r.key === HEALTH_KEY)) events = events.concat(parseHealthEvents(await store.getKv(HEALTH_KEY)));
+    if (record == null) record = await store.getKv(SUPERVISOR_KEY);
+  } catch {
+    /* a store that cannot answer is a supervisor that is not reporting */
+  }
+  return { supervisor: supervisorHealth(events, record, now), rows: healthRows(events), events: recentHealthEvents(events) };
+}
+
+/**
+ * The rotation's review cap, straight from the runner config the loop actually runs on
+ * (packages/runner config.ts `maxAwaitingReview`, default 3). Read here rather than passed in
+ * because the callers of this room are other packages; an unreadable config falls back to the
+ * runner's own default so the reason "review cap reached" can never be invented out of zero.
+ */
+export function reviewCapOf(configPath: string): number {
+  try {
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+    const cap = raw['maxAwaitingReview'];
+    if (typeof cap === 'number' && Number.isInteger(cap) && cap > 0) return cap;
+  } catch {
+    /* no config here — the default below is the runner's own */
+  }
+  return 3;
+}
+
 const STATUS_TO_ROOM: Record<string, string> = {
   'awaiting-review': 'awaiting-founder',
   done: 'done',
@@ -260,6 +658,13 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
   // Armed stop state is a store flag, not a guess: the original showed STOP / STOP-NOW file
   // existence, and a Kill button whose armed state never displays reads as a broken button.
   const [stopFlag, killFlag] = await Promise.all([store.getKv(STOP_KEY), store.getKv(KILL_KEY)]);
+  const stop = parseArmedFlag(stopFlag);
+  const kill = parseArmedFlag(killFlag);
+
+  // What the supervisor says about each thing it watches. Read through listKv as well as the
+  // one key, because the writer lives in another package and may have chosen either shape;
+  // an absent report is a report of absence, never an assumption of health.
+  const health = await readSupervisorReport(store, now);
 
   const specDirInWorktree = (id: string): string | null => {
     // A spec whose directory exists only on its lane branch is invisible in the main
@@ -323,11 +728,33 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
   ]);
   const dirtyPaths = porcelain.split('\n').filter((l) => l.length > 3).map((l) => l.slice(3));
 
+  // The header's one-look answer. Derived here rather than in the page so that the SSE
+  // frames, the 15s poll backstop and the tests all read the same sentence.
+  const activity = topLine({
+    running: Boolean(liveRunner),
+    lanes: lanes.length,
+    stop,
+    kill,
+    rotation: health.rows.find((r) => r.check === 'rotation') ?? null,
+    awaitingFounder: entries.filter((e) => e.status === 'awaiting-founder').length,
+    reviewCap: reviewCapOf(options.configPath),
+    pending: entries.filter((e) => e.status === 'pending').length,
+    parked: entries.filter((e) => e.status === 'parked').length,
+    heartbeatAt: runners.map((r) => r.heartbeatAt).sort().pop() ?? null,
+    now,
+  });
+
   return {
     at: new Date().toISOString(),
     running: Boolean(liveRunner),
     stopArmed: Boolean(stopFlag),
     killArmed: Boolean(killFlag),
+    // WHO armed it, and when. A flag with no author reads as nobody's, which is exactly how
+    // an agent's stop survived a night nobody could explain.
+    stopFlag: stop,
+    killFlag: kill,
+    activity,
+    health,
     driver: liveRunner
       ? {
           pid: liveRunner.pid,
@@ -1018,7 +1445,10 @@ data: ${JSON.stringify(data)}
       };
     },
     stop: async () => {
-      await options.store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
+      // Stamped with its author, always. The supervisor auto-clears flags it can attribute to
+      // an agent and never touches the founder's — an unsigned flag is what let an agent's
+      // stop sit armed through a night with nobody able to say who set it.
+      await options.store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString(), armedBy: FOUNDER }));
       try {
         const out = execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
           cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 30_000,
@@ -1042,7 +1472,7 @@ data: ${JSON.stringify(data)}
       // live run (scored `aborted`, never a worker failure) and the rotation opens nothing
       // further while it is armed (runner control-flags.ts).
       const messages: string[] = ['kill-now armed — the live session is interrupted and the rotation opens nothing further'];
-      await options.store.setKv(KILL_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
+      await options.store.setKv(KILL_KEY, JSON.stringify({ armedAt: new Date().toISOString(), armedBy: FOUNDER }));
       try {
         execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
           cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 30_000,

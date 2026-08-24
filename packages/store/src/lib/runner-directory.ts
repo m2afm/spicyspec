@@ -40,12 +40,27 @@ export interface RunnerView extends RunnerRecord {
   stale: boolean;
 }
 
+/**
+ * The control flags `runner:stop` and `runner:kill-now` share this prefix, and their contract
+ * explicitly allows a hand-written or unparseable value — so a bare `STOP` typed into the
+ * store used to throw out of here and, because the throw happened before the spawn, left the
+ * supervisor unable to restart a dead worker while such a flag was armed. A row that is not
+ * a runner record is not an error; it is not a runner.
+ */
 export async function listRunners(store: Store, nowMs: number): Promise<RunnerView[]> {
   const rows = await store.listKv('runner:');
-  return rows.map((r) => {
-    const record = JSON.parse(r.value) as RunnerRecord;
-    return { ...record, stale: nowMs - Date.parse(record.heartbeatAt) > STALE_AFTER_MS };
-  });
+  const out: RunnerView[] = [];
+  for (const r of rows) {
+    let record: RunnerRecord;
+    try {
+      record = JSON.parse(r.value) as RunnerRecord;
+    } catch {
+      continue;
+    }
+    if (!record || typeof record.id !== 'string' || typeof record.heartbeatAt !== 'string') continue;
+    out.push({ ...record, stale: nowMs - Date.parse(record.heartbeatAt) > STALE_AFTER_MS });
+  }
+  return out;
 }
 
 /** Start the heartbeat loop; returns a stop function. Failures are silent-but-bounded —

@@ -3,7 +3,9 @@
  *
  *   spicyspec-runner init                      write a starter config beside you
  *   spicyspec-runner start  --config <path>    connect to Temporal and poll for work
+ *   spicyspec-runner supervise --config <path>  heal the stack: temporal, worker, rotation
  *   spicyspec-runner service-xml --config <path>   emit WinSW XML for a Windows service
+ *   spicyspec-runner install-autostart --config <path>   register the OS to sweep forever
  *
  * Argument parsing is a pure function so it is testable; the commands stay thin.
  * No CLI framework: three subcommands do not justify a dependency.
@@ -13,25 +15,88 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 export interface CliArgs {
-  command: 'init' | 'start' | 'run' | 'halt' | 'service-xml' | 'seed' | 'handoff' | 'dashboard' | 'help';
+  command:
+    | 'init'
+    | 'start'
+    | 'run'
+    | 'halt'
+    | 'service-xml'
+    | 'install-autostart'
+    | 'seed'
+    | 'handoff'
+    | 'dashboard'
+    | 'supervise'
+    | 'help';
   configPath: string;
   catalogPath: string;
   outPath: string | null;
   port: number | null;
+  /** install-autostart: how often the OS re-runs the supervision sweep */
+  intervalMinutes: number | null;
+  /** supervise: seconds between cycles; null = whatever the config says */
+  intervalSeconds: number | null;
+  uninstall: boolean;
+  whetherLoggedOn: boolean;
+  /** supervise: one cycle, then exit — the exit code IS the health verdict */
+  once: boolean;
   problems: string[];
 }
 
-const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | 'outPath' | 'port'>> = {
+const FLAGS: Record<string, keyof Pick<CliArgs, 'configPath' | 'catalogPath' | 'outPath'>> = {
   '--config': 'configPath',
   '--catalog': 'catalogPath',
   '--out': 'outPath',
-  '--port': 'port',
+};
+
+/**
+ * Numeric flags carry their own range check: a value the scheduler will reject must be a
+ * usage error here, not a task that registers and never fires.
+ */
+const NUMBER_FLAGS: Record<
+  string,
+  { field: keyof Pick<CliArgs, 'port' | 'intervalMinutes' | 'intervalSeconds'>; min: number; max: number; problem: string }
+> = {
+  '--port': { field: 'port', min: 0, max: 65535, problem: '--port must be a valid port number' },
+  '--interval-minutes': {
+    // schtasks /MO caps at 599940 minutes; below 1 there is no schedule to register.
+    field: 'intervalMinutes',
+    min: 1,
+    max: 599_940,
+    problem: '--interval-minutes must be a whole number of minutes between 1 and 599940',
+  },
+  '--interval': {
+    // A supervise cycle probes ports and may wait on a spawned dependency; below a second
+    // there is no cycle, and above a day the loop could be dead most of a weekend.
+    field: 'intervalSeconds',
+    min: 1,
+    max: 86_400,
+    problem: '--interval must be a whole number of seconds between 1 and 86400',
+  },
+};
+
+/** Presence-only flags — asking for a value would be a usage error, not a missing argument. */
+const BOOLEAN_FLAGS: Record<string, keyof Pick<CliArgs, 'uninstall' | 'whetherLoggedOn' | 'once'>> = {
+  '--uninstall': 'uninstall',
+  '--whether-logged-on': 'whetherLoggedOn',
+  '--once': 'once',
 };
 
 export function parseCliArgs(argv: readonly string[]): CliArgs {
   const problems: string[] = [];
   const [raw, ...rest] = argv;
-  const known = new Set(['init', 'start', 'run', 'halt', 'service-xml', 'seed', 'handoff', 'dashboard', 'help']);
+  const known = new Set([
+    'init',
+    'start',
+    'run',
+    'halt',
+    'service-xml',
+    'install-autostart',
+    'seed',
+    'handoff',
+    'dashboard',
+    'supervise',
+    'help',
+  ]);
   const command = (known.has(raw ?? '') ? raw : 'help') as CliArgs['command'];
   if (raw !== undefined && !known.has(raw)) problems.push(`unknown command "${raw}"`);
 
@@ -41,19 +106,37 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     catalogPath: 'spicyspec.catalog.json',
     outPath: null,
     port: null,
+    intervalMinutes: null,
+    intervalSeconds: null,
+    uninstall: false,
+    whetherLoggedOn: false,
+    once: false,
     problems,
   };
   for (let i = 0; i < rest.length; i += 1) {
+    const boolField = BOOLEAN_FLAGS[rest[i]];
+    if (boolField) {
+      args[boolField] = true;
+      continue;
+    }
+    const numeric = NUMBER_FLAGS[rest[i]];
+    if (numeric) {
+      const value = rest[i + 1];
+      if (!value || value.startsWith('--')) {
+        problems.push(`${rest[i]} needs a value`);
+        continue;
+      }
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < numeric.min || n > numeric.max) problems.push(numeric.problem);
+      else args[numeric.field] = n;
+      i += 1;
+      continue;
+    }
     const field = FLAGS[rest[i]];
     if (field) {
       const value = rest[i + 1];
       if (!value || value.startsWith('--')) problems.push(`${rest[i]} needs a value`);
-      else if (field === 'port') {
-        const n = Number(value);
-        if (!Number.isInteger(n) || n < 0 || n > 65535) problems.push('--port must be a valid port number');
-        else args.port = n;
-        i += 1;
-      } else {
+      else {
         args[field] = value;
         i += 1;
       }
@@ -98,13 +181,13 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   const args = parseCliArgs(argv);
   if (args.problems.length) {
     for (const p of args.problems) console.error(`spicyspec-runner: ${p}`);
-    console.error('usage: spicyspec-runner <init|start|service-xml> [--config <path>]');
+    console.error('usage: spicyspec-runner <init|start|run|halt|supervise|seed|handoff|dashboard|service-xml|install-autostart> [--config <path>] [--once] [--interval <seconds>]');
     return 2;
   }
 
   switch (args.command) {
     case 'help':
-      console.log('usage: spicyspec-runner <init|start|service-xml> [--config <path>]');
+      console.log('usage: spicyspec-runner <init|start|run|halt|supervise|seed|handoff|dashboard|service-xml|install-autostart> [--config <path>] [--once] [--interval <seconds>]');
       return 0;
 
     case 'init': {
@@ -125,11 +208,12 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       const { readFile } = await import('node:fs/promises');
       const { Client, Connection } = await import('@temporalio/client');
       const { parseRunnerConfig } = await import('./config.js');
+      const { rotationWorkflowId } = await import('./rotation-id.js');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
       const connection = await Connection.connect({ address: config.temporal.address });
       try {
         const client = new Client({ connection, namespace: config.temporal.namespace });
-        const workflowId = `queue-${config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        const workflowId = rotationWorkflowId(config.projectName);
         try {
           await client.workflow.getHandle(workflowId).cancel();
           console.log(`rotation ${workflowId} cancelled — the current run finishes, then the rotation ends`);
@@ -145,7 +229,41 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     case 'service-xml': {
       const cliPath = resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
       console.log(winswXml(resolve(args.configPath), process.execPath, cliPath));
+      console.error('# hosts the WORKER as a service; for whole-loop boot survival also run install-autostart');
       return 0;
+    }
+
+    case 'install-autostart': {
+      // The reboot answer. `service-xml` hosts ONE process — the worker — as a Windows
+      // service; this registers the OS to run the SUPERVISOR, which is what brings back
+      // Temporal, the worker, the dashboard and a cancelled rotation. Boot survival for the
+      // whole loop instead of for one child of it. Written after the night the founder left
+      // it running and found it dead for ~8 hours with nothing on the machine trying to
+      // restart anything.
+      const { readFile } = await import('node:fs/promises');
+      const { homedir } = await import('node:os');
+      const { fileURLToPath } = await import('node:url');
+      const { join: joinPath } = await import('node:path');
+      const { parseRunnerConfig } = await import('./config.js');
+      const { planAutostart, applyAutostart, describeAutostart } = await import('./autostart.js');
+      const configPath = resolve(args.configPath);
+      const config = parseRunnerConfig(JSON.parse(await readFile(configPath, 'utf8')), dirname(configPath));
+      const plan = planAutostart({
+        projectName: config.projectName,
+        configPath,
+        // bin.js, not this module: cli.js is not executable on its own.
+        cliPath: joinPath(dirname(fileURLToPath(import.meta.url)), '..', 'bin.js'),
+        nodePath: process.execPath,
+        intervalMinutes: args.intervalMinutes ?? 3,
+        stateDir: resolve(config.repoCwd, '.spicyspec'),
+        whetherLoggedOn: args.whetherLoggedOn,
+        homeDir: homedir(),
+        uid: process.getuid?.(),
+      });
+      const mode = args.uninstall ? 'uninstall' : 'install';
+      const result = await applyAutostart(plan, mode);
+      for (const line of describeAutostart(plan, result, mode)) console.log(line);
+      return result.failures.length ? 1 : 0;
     }
 
     case 'start': {
@@ -157,34 +275,33 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     case 'run': {
       // Ignition: start (or join) the durable rotation. `start` only hosts the WORKER —
       // found by the first real ignition attempt: everything was up and nothing moved,
-      // because no client had ever started queueRunWorkflow.
+      // because no client had ever started queueRunWorkflow. The dispatch itself lives in
+      // supervisor.ts, so a self-healed restart is exactly what a founder gets by hand.
       const { readFile } = await import('node:fs/promises');
-      const { Client, Connection } = await import('@temporalio/client');
       const { parseRunnerConfig } = await import('./config.js');
+      const { dispatchRotation } = await import('./supervisor.js');
       const config = parseRunnerConfig(JSON.parse(await readFile(resolve(args.configPath), 'utf8')), dirname(resolve(args.configPath)));
-      const connection = await Connection.connect({ address: config.temporal.address });
-      try {
-        const client = new Client({ connection, namespace: config.temporal.namespace });
-        const workflowId = `queue-${config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-        try {
-          const handle = await client.workflow.start('queueRunWorkflow', {
-            taskQueue: config.temporal.taskQueue,
-            workflowId,
-            args: [{ maxRunsPerSpec: 40, maxConsecutiveStalls: 2, maxSpecRuns: 200, maxParallelSpecs: config.maxParallelSpecs }],
-          });
-          console.log(`rotation started — workflowId ${handle.workflowId}`);
-          console.log('watch it: the dashboard, or the Temporal UI at http://localhost:8233');
-        } catch (err) {
-          if (String((err as Error).name).includes('WorkflowExecutionAlreadyStarted')) {
-            console.log(`rotation already running — workflowId ${workflowId}`);
-          } else {
-            throw err;
-          }
-        }
-        return 0;
-      } finally {
-        await connection.close();
+      const result = await dispatchRotation(config);
+      if (result.started) {
+        console.log(`rotation started — workflowId ${result.workflowId}`);
+        console.log('watch it: the dashboard, or the Temporal UI at http://localhost:8233');
+      } else {
+        console.log(`rotation already running — workflowId ${result.workflowId}`);
       }
+      return 0;
+    }
+
+    case 'supervise': {
+      // The night watch. Six checks, each repairing what it finds broken: Temporal, the
+      // worker's heartbeat, the rotation workflow, a stale AGENT stop flag, orphaned account
+      // leases, the dashboard. `--once` exits 0 healthy / 1 still-broken, which is what the
+      // scheduled task install-autostart registers actually reports on.
+      const { superviseCommand } = await import('./supervisor.js');
+      return superviseCommand({
+        configPath: resolve(args.configPath),
+        once: args.once,
+        intervalSeconds: args.intervalSeconds,
+      });
     }
 
     case 'seed': {

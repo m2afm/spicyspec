@@ -19,6 +19,30 @@ describe('scaffoldProject', () => {
     expect(readme).toContain('spicyspec-runner seed');
   });
 
+  it('ships supervise defaults so install-autostart works the minute the project exists', async () => {
+    // A fresh project with no supervise block is exactly the shape that died overnight:
+    // nothing on the machine described how the loop comes back.
+    const dir = await freshDir();
+    await scaffoldProject(dir, { projectName: 'demo' });
+    const config = JSON.parse(await readFile(join(dir, 'spicyspec.runner.json'), 'utf8'));
+    expect(config.supervise).toMatchObject({
+      manageTemporal: true,
+      autostartWorker: true,
+      autostartRotation: true,
+      logDir: '.spicyspec/logs',
+    });
+  });
+
+  it('the README tells a founder how to leave it running overnight', async () => {
+    const dir = await freshDir();
+    await scaffoldProject(dir, { projectName: 'demo' });
+    const readme = await readFile(join(dir, 'README.md'), 'utf8');
+    expect(readme).toContain('spicyspec-runner install-autostart');
+    expect(readme).toContain('.spicyspec/logs/');
+    expect(readme).toContain('health:events');
+    expect(readme).toContain('--uninstall');
+  });
+
   it('the scaffolded config validates against the real runner schema', { timeout: 30_000 }, async () => {
     const dir = await freshDir();
     await scaffoldProject(dir, { projectName: 'demo' });
