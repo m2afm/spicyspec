@@ -11,6 +11,7 @@ import {
   markLimitType,
   markRefused,
   pickAccount,
+  pickOrder,
   poolState,
   recordUse,
 } from './accounts.js';
@@ -93,6 +94,28 @@ describe('pickAccount', () => {
   it('an unobserved window is treated as short — never guessed weekly', () => {
     const pool = buildPool([{ id: 'only' }]);
     expect(pickAccount(pool, NOW)!.id).toBe('only');
+  });
+});
+
+describe('pickOrder — the order a lease loop must walk', () => {
+  it('C4 at pick time: every reserve sorts AFTER every short-window account, even at zero uses', () => {
+    // The runner's lease loop once sorted by uses alone — a warm seven_day reserve with
+    // zero uses out-ranked a used five-hour account and the weekly quota was burned on
+    // ordinary work. The order is the rule; the lease only serializes it.
+    const pool = threeAccounts();
+    markLimitType(pool, 'secondary', 'seven_day', AT);
+    recordUse(pool, 'primary');
+    recordUse(pool, 'primary');
+    recordUse(pool, 'tertiary');
+    expect(pickOrder(pool, NOW).map((a) => a.id)).toEqual(['tertiary', 'primary', 'secondary']);
+  });
+
+  it('excludes cold accounts entirely and agrees with pickAccount on the head', () => {
+    const pool = threeAccounts();
+    markCold(pool, 'primary', null, NOW);
+    const order = pickOrder(pool, NOW);
+    expect(order.map((a) => a.id)).toEqual(['secondary', 'tertiary']);
+    expect(pickAccount(pool, NOW)!.id).toBe(order[0].id);
   });
 });
 

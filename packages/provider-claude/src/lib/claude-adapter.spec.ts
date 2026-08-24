@@ -4,7 +4,7 @@
  */
 import { collectSession } from '@spicyspec/provider';
 import { describe, expect, it } from 'vitest';
-import { createClaudeAdapter, mapMessage, mirrorShellPatterns, protectedPathsHook, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
+import { createClaudeAdapter, createTaskSynthesisState, mapMessage, mirrorShellPatterns, protectedPathsHook, violatesProtectedPaths, type QueryFn } from './claude-adapter.js';
 
 const assistant = (parent: string | null, ...content: unknown[]) => ({
   type: 'assistant',
@@ -213,5 +213,113 @@ describe('the detached-subagent tombstone class (live 009/011/013 parks)', () =>
       'PowerShell(git push --force*)',
     ]);
     expect(mirrorShellPatterns(undefined)).toBeUndefined();
+  });
+});
+
+describe('task-lifecycle synthesis (History-tab / agents-grid gap)', () => {
+  const user = (...content: unknown[]) => ({ type: 'user', message: { content } });
+  const lifecycle = (events: ReturnType<typeof mapMessage>) => events.filter((e) => e.type === 'task_lifecycle');
+
+  it('a Task tool_use opens a local_agent task — the grid shows more than the worker', () => {
+    const tasks = createTaskSynthesisState();
+    const events = mapMessage(
+      assistant(null, {
+        type: 'tool_use',
+        id: 'tu_agent',
+        name: 'Task',
+        input: { subagent_type: 'qa-critic', description: 'gate review', prompt: 'review the diff' },
+      }),
+      tasks,
+    );
+    expect(lifecycle(events)).toEqual([
+      expect.objectContaining({
+        subtype: 'task_started',
+        taskId: 'tu_agent',
+        toolUseId: 'tu_agent',
+        taskType: 'local_agent',
+        subagentType: 'qa-critic',
+        description: 'gate review',
+        prompt: 'review the diff',
+      }),
+    ]);
+  });
+
+  it('Bash AND PowerShell tool_use open local_bash tasks with the command as description', () => {
+    const tasks = createTaskSynthesisState();
+    const bash = mapMessage(assistant(null, { type: 'tool_use', id: 'tu_sh', name: 'Bash', input: { command: 'pnpm nx test runner' } }), tasks);
+    const pwsh = mapMessage(assistant(null, { type: 'tool_use', id: 'tu_ps', name: 'PowerShell', input: { command: 'git status' } }), tasks);
+    expect(lifecycle(bash)[0]).toMatchObject({ subtype: 'task_started', taskId: 'tu_sh', taskType: 'local_bash', description: 'pnpm nx test runner' });
+    expect(lifecycle(pwsh)[0]).toMatchObject({ subtype: 'task_started', taskId: 'tu_ps', taskType: 'local_bash', description: 'git status' });
+  });
+
+  it('a matching tool_result closes the task completed; is_error closes it failed', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_ok', name: 'Bash', input: { command: 'ls' } }), tasks);
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_bad', name: 'Bash', input: { command: 'false' } }), tasks);
+
+    const ok = lifecycle(mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_ok', is_error: false, content: 'fine' }), tasks));
+    expect(ok).toEqual([expect.objectContaining({ subtype: 'task_updated', taskId: 'tu_ok', status: 'completed' })]);
+    expect(typeof (ok[0] as { endTime?: string }).endTime).toBe('string');
+
+    const bad = lifecycle(mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_bad', is_error: true, content: 'boom' }), tasks));
+    expect(bad).toEqual([expect.objectContaining({ subtype: 'task_updated', taskId: 'tu_bad', status: 'failed' })]);
+  });
+
+  it('an agent close carries what it returned as a task_notification summary', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_a', name: 'Task', input: { subagent_type: 'planner', description: 'plan' } }), tasks);
+    const events = lifecycle(
+      mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_a', is_error: false, content: [{ type: 'text', text: 'plan is three waves' }] }), tasks),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({ subtype: 'task_updated', taskId: 'tu_a', status: 'completed' }),
+      expect.objectContaining({ subtype: 'task_notification', taskId: 'tu_a', status: 'completed', summary: 'plan is three waves' }),
+    ]);
+  });
+
+  it('a tool_result for a non-task tool synthesizes nothing — Reads are not agents', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_r', name: 'Read', input: { file_path: 'a.ts' } }), tasks);
+    const events = mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_r', is_error: false, content: 'text' }), tasks);
+    expect(lifecycle(events)).toEqual([]);
+  });
+
+  it('one close per task: a second tool_result for the same id synthesizes nothing more', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_once', name: 'Bash', input: { command: 'ls' } }), tasks);
+    mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_once', is_error: false, content: 'x' }), tasks);
+    const again = mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_once', is_error: false, content: 'x' }), tasks);
+    expect(lifecycle(again)).toEqual([]);
+  });
+
+  it('native lifecycle wins: task_started claims the id, remaps native ids, suppresses the synthetic close', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage(assistant(null, { type: 'tool_use', id: 'tu_n', name: 'Task', input: { subagent_type: 'explorer', description: 'scan' } }), tasks);
+
+    // native started quoting our tool_use — must adopt the synthesized id, not mint a twin
+    const started = lifecycle(mapMessage({ type: 'system', subtype: 'task_started', task_id: 'native_1', tool_use_id: 'tu_n', task_type: 'local_agent', subagent_type: 'explorer' }, tasks));
+    expect(started).toEqual([expect.objectContaining({ subtype: 'task_started', taskId: 'tu_n', toolUseId: 'tu_n' })]);
+
+    // the tool_result close is now the native stream job — no synthetic task_updated
+    const close = mapMessage(user({ type: 'tool_result', tool_use_id: 'tu_n', is_error: false, content: 'done' }), tasks);
+    expect(lifecycle(close)).toEqual([]);
+
+    // native progress/notification remap onto the canonical id
+    const progress = lifecycle(mapMessage({ type: 'system', subtype: 'task_progress', task_id: 'native_1', description: 'reading', last_tool_name: 'Read', usage: { total_tokens: 900, tool_uses: 3, duration_ms: 1200 } }, tasks));
+    expect(progress).toEqual([expect.objectContaining({ subtype: 'task_progress', taskId: 'tu_n', lastToolName: 'Read', usage: { totalTokens: 900, toolUses: 3, durationMs: 1200 } })]);
+    const done = lifecycle(mapMessage({ type: 'system', subtype: 'task_notification', task_id: 'native_1', status: 'completed', summary: 'scanned' }, tasks));
+    expect(done).toEqual([expect.objectContaining({ subtype: 'task_notification', taskId: 'tu_n', status: 'completed', summary: 'scanned' })]);
+  });
+
+  it('a native task_started seen first suppresses later synthesis for its tool_use', () => {
+    const tasks = createTaskSynthesisState();
+    mapMessage({ type: 'system', subtype: 'task_started', task_id: 'native_2', tool_use_id: 'tu_pre', task_type: 'local_agent' }, tasks);
+    const events = mapMessage(assistant(null, { type: 'tool_use', id: 'tu_pre', name: 'Task', input: { description: 'dup' } }), tasks);
+    expect(lifecycle(events)).toEqual([]);
+  });
+
+  it('non-task system messages stay opaque, never guessed at', () => {
+    const [e] = mapMessage({ type: 'system', subtype: 'init', session_id: 's' });
+    expect(e.type).toBe('opaque');
   });
 });

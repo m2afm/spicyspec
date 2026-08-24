@@ -45,7 +45,13 @@ export async function handleApi(req: ApiRequest, deps: ApiDeps): Promise<ApiResp
       return json(200, await runHistory(store, limit));
     }
     if (req.path === '/api/gates') return json(200, await gateTrail(store, req.query['spec']));
-    if (req.path === '/api/runners') return json(200, await listRunners(store, Date.parse(deps.now())));
+    // The armed stop/kill flags share the runner: prefix, so the listing has to say what a
+    // runner IS: a record with a pid. Without this a founder saw 'runner' rows for the STOP
+    // flag, permanently stale, and could not tell which entry was a machine.
+    if (req.path === '/api/runners') {
+      const rows = await listRunners(store, Date.parse(deps.now()));
+      return json(200, rows.filter((r) => typeof r.pid === 'number' && typeof r.heartbeatAt === 'string'));
+    }
     const m = /^\/api\/specs\/([^/]+)\/review$/.exec(req.path);
     if (m) return json(200, { specId: m[1], decision: await readReviewDecision(store, m[1]) });
     return json(404, { error: 'not found' });

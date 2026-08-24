@@ -163,6 +163,32 @@ export function checkQueue(
   return { violations, halting: violations.filter((v) => v.severity === 'halt') };
 }
 
+/**
+ * Credit founder sign-offs: every awaiting-review entry whose sign-off evidence exists
+ * becomes `done`, freeing its review slot. Returns the ids promoted, so the caller logs
+ * each one — a state change nobody can see is a state change nobody can audit.
+ *
+ * Runs BEFORE `checkQueue`, and on every rotation iteration, exactly where the prototype's
+ * guardQueue ran it: an entry that is both signed off and otherwise suspect must be
+ * credited rather than demoted, and the freed slot has to be visible to the review-cap
+ * check in the SAME pass. Without this the cap filled, the rotation reported idle forever,
+ * and a founder signing off at 3am resumed nothing.
+ */
+export function promoteSignedOff(
+  queue: Queue,
+  signedOff: (id: string) => boolean,
+  at: string = new Date().toISOString(),
+): string[] {
+  const promoted: string[] = [];
+  for (const entry of queue.entries ?? []) {
+    if (entry.status !== 'awaiting-review' || !signedOff(entry.id)) continue;
+    entry.status = 'done';
+    entry.closedAt = at;
+    promoted.push(entry.id);
+  }
+  return promoted;
+}
+
 export interface AppliedRepair extends Violation {
   from: string;
   to: string;

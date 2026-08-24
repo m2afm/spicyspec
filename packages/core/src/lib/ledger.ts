@@ -10,6 +10,14 @@
 export interface LedgerEntry {
   /** run number — a rate-limited attempt keeps its number and is retried */
   tick: number;
+  /**
+   * Retry identity for a row that SHARES its tick with another: 'rate-limited-retry',
+   * 'account-refused-retry', 'no-attempt-retry', or null on a real work run. Declared,
+   * not left to the index signature, because two things read it — `runs` counts distinct
+   * ticks (so retries never inflate the total) and the control room renders this tag so a
+   * founder can tell a real run from an infra retry in the same table.
+   */
+  attempt?: string | null;
   startedAt?: string;
   durationMinutes?: number;
   exit?: string;

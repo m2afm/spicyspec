@@ -115,13 +115,24 @@ export function poolState(pool: Pool): Record<string, Required<AccountState>> {
  */
 const isReserve = (a: PoolAccount) => a.limitType === 'seven_day';
 
+/**
+ * Every warm account, in the order pickAccount would spend them: reserve-last, then fewest
+ * uses. A lease loop that walks candidates MUST walk this order — the runner once sorted by
+ * uses alone, so a warm seven_day reserve with zero uses out-ranked every five-hour account
+ * and the weekly quota was burned on ordinary runs (the C4 reserve rule, bypassed at pick
+ * time because only pickAccount carried it).
+ */
+export function pickOrder(pool: Pool, nowMs: number): PoolAccount[] {
+  return pool.accounts
+    .filter((a) => a.coldUntilMs <= nowMs)
+    .sort((a, b) => {
+      const reserve = Number(isReserve(a)) - Number(isReserve(b));
+      return reserve !== 0 ? reserve : a.uses - b.uses;
+    });
+}
+
 export function pickAccount(pool: Pool, nowMs: number): PoolAccount | null {
-  const warm = pool.accounts.filter((a) => a.coldUntilMs <= nowMs);
-  if (!warm.length) return null;
-  return [...warm].sort((a, b) => {
-    const reserve = Number(isReserve(a)) - Number(isReserve(b));
-    return reserve !== 0 ? reserve : a.uses - b.uses;
-  })[0];
+  return pickOrder(pool, nowMs)[0] ?? null;
 }
 
 /**

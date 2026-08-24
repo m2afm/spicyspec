@@ -8,10 +8,14 @@ import { parseRunnerConfig } from './config.js';
 import { createQueueActivities, type QueueEvidenceFns } from './queue-activities.js';
 import type { RunnerDeps } from './wiring.js';
 
+// `signedOff: false` is the DEFAULT here on purpose. A sign-off tag is an event, not a
+// resting state, and openNextSpec now credits one by promoting the entry to done before any
+// other rule runs — so a fixture claiming every id is signed off retired every
+// awaiting-review entry and hid the Q4/Q5 repairs those tests exist to prove.
 const healthyEvidence = (over: Partial<QueueEvidenceFns> = {}): QueueEvidenceFns => ({
   specDirExists: () => true,
   commitsFor: () => 5,
-  signedOff: () => true,
+  signedOff: () => false,
   ...over,
 });
 
@@ -72,6 +76,44 @@ describe('openNextSpec', () => {
     expect(r.kind).toBe('idle');
     expect((r as { reason: string }).reason).toContain('cap');
     expect((await deps.store.loadQueue()).entries[2].status).toBe('pending'); // untouched
+  });
+
+  it('a founder sign-off promotes awaiting-review to done and frees the review slot', async () => {
+    // The gap that lost overnight autonomy: nothing anywhere flipped awaiting-review to
+    // done, so the review cap filled, the rotation reported idle forever, and a founder
+    // signing off at 3am resumed nothing. Promotion runs on EVERY rotation iteration.
+    const deps = makeRunnerDeps();
+    await deps.store.saveQueue({
+      entries: [
+        { id: '001', status: 'awaiting-review' },
+        { id: '002', status: 'awaiting-review' },
+        { id: '003', status: 'pending' },
+      ],
+    });
+    const evidence = healthyEvidence({ signedOff: (id) => id === '001' });
+    const r = await acts(deps, evidence, 2).openNextSpec({ busy: [] });
+    const entries = (await deps.store.loadQueue()).entries;
+    expect(entries[0]).toMatchObject({ id: '001', status: 'done' });
+    expect(entries[1]).toMatchObject({ id: '002', status: 'awaiting-review' });
+    // The freed slot must be visible to the cap check in the SAME pass, or the rotation
+    // idles for one more cycle on a cap that is no longer full.
+    expect(r).toEqual({ kind: 'next', next: { specId: '003', stage: 'intake' } });
+  });
+
+  it('a recorded review approval promotes too — and only once, so a re-queue is not re-retired', async () => {
+    const deps = makeRunnerDeps();
+    await deps.store.saveQueue({ entries: [{ id: '001', status: 'awaiting-review' }] });
+    await deps.store.setKv(
+      'review:decision:001',
+      JSON.stringify({ specId: '001', approved: true, note: 'journey walked', by: 'founder', at: '2026-08-24T03:00:00Z' }),
+    );
+    await acts(deps).openNextSpec({ busy: [] });
+    expect((await deps.store.loadQueue()).entries[0].status).toBe('done');
+
+    // A founder puts it back by hand. The same stale approval must not retire it again.
+    await deps.store.saveQueue({ entries: [{ id: '001', status: 'awaiting-review' }] });
+    await acts(deps).openNextSpec({ busy: [] });
+    expect((await deps.store.loadQueue()).entries[0].status).toBe('awaiting-review');
   });
 
   it('drained catalog reports idle', async () => {

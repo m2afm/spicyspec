@@ -1226,7 +1226,7 @@ function Progress({ done, built, total }) {
       h('span', null, 'of ', h('b', null, total))));
 }
 
-function Accounts({ accounts }) {
+function Accounts({ accounts, events }) {
   return h(Panel, { title: 'Accounts', sub: 'the API reports a % only past ~90%' },
     accounts.map((a) => {
       const u = a.utilization;
@@ -1246,7 +1246,11 @@ function Accounts({ accounts }) {
           a.windowEndsAt && h('span', null, 'window ' + clock(a.windowEndsAt)),
           a.overageStatus === 'allowed' && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'OVERAGE ON')),
         a.refusedReason && a.cold && h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, a.refusedReason.slice(0, 110)));
-    }));
+    }),
+    // The switch narration the prototype logged on every tick start: "account X is cold —
+    // leased Y". Derived from the run rows, so it is the same fact the tick table shows.
+    events && events.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } },
+      events.map((e, i) => h('li', { key: i }, h('span', { className: 'hint' }, e)))));
 }
 
 function LaneBlock({ lane, divider }) {
@@ -1273,12 +1277,30 @@ function Live({ live, lanes, running }) {
     all.map((lane, i) => h(LaneBlock, { key: lane.spec || i, lane, divider: i > 0 })));
 }
 
+/**
+ * Red-first leaves the tree deliberately broken to prove a test fails before it passes. A
+ * run that ENDS with residue left a break behind, which is the only thing worth a column;
+ * an empty list is clean and a missing field is unknown, never clean.
+ */
+const redFirstCell = (r) => {
+  if (r == null) return '—';
+  const n = Array.isArray(r) ? r.length : Number(r) || 0;
+  if (!n) return h('span', { className: 'pill clean' }, 'clean');
+  return h('span', { className: 'pill bad' }, n);
+};
+const redFirstTitle = (r) =>
+  Array.isArray(r) && r.length
+    ? r.map((x) => (typeof x === 'string' ? x : [x.file, x.marker].filter(Boolean).join(' '))).join('\n')
+    : r == null
+      ? 'no red-first residue was recorded for this run — unknown, not clean'
+      : '';
+
 function Ticks({ ticks }) {
   return h(Panel, { title: 'Tick history', sub: ticks.length + ' most recent' },
     h('div', { className: 'tablewrap' },
       h('table', null,
         h('thead', null, h('tr', null,
-          ['#', 'exit', 'acct', 'dur', 'closed', '$', 'spec', 'tracker', 'note'].map((c) => h('th', { key: c }, c)))),
+          ['#', 'exit', 'acct', 'dur', 'closed', '$', 'spec', 'tracker', 'red', 'note'].map((c) => h('th', { key: c }, c)))),
         h('tbody', null, ticks.map((t, i) => {
           const bad = BAD.includes(t.exit), warn = WARN.includes(t.exit);
           return h('tr', { key: i, className: bad ? 'bad' : warn ? 'warnrow' : '' },
@@ -1290,6 +1312,9 @@ function Ticks({ ticks }) {
             h('td', null, t.cost == null ? h('span', { title: 'no result envelope — unknown, not zero' }, '?') : '$' + t.cost.toFixed(2)),
             h('td', null, t.spec || '—'),
             h('td', null, t.tracker || '—'),
+            // Red-first residue: files this run left carrying a deliberate break. A count,
+            // because the file list is long and the point is whether the tree was restored.
+            h('td', { title: redFirstTitle(t.redFirst) }, redFirstCell(t.redFirst)),
             h('td', { className: 'note' }, (t.note || '').slice(0, 150)));
         })))));
 }
@@ -1714,6 +1739,12 @@ function App() {
       h('div', { className: 'grid' },
       h(Panel, { title: 'Catalog', sub: c.signedOff + ' of ' + c.total + ' signed off' },
         h(Progress, { done: c.signedOff, built: c.builtFraction, total: c.total }),
+        // "The platform never marks its own work done": a spec that retired on an empty task
+        // list with no closing-gate APPROVE on record gets said out loud, not just logged.
+        c.entries.some((e) => e.closingGateWarning) &&
+          h('p', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--warn-text)', fontWeight: 700, margin: '0.6rem 0 0' } },
+            '⚠ retired without a closing-gate record: ' +
+            c.entries.filter((e) => e.closingGateWarning).map((e) => e.id).join(', ')),
         h('div', { className: 'statrow', style: { marginTop: '1rem' } },
           h(Stat, { n: c.signedOff, l: 'signed off' }),
           h(Stat, { n: c.awaitingFounder.length, l: 'awaiting you' }),
@@ -1786,7 +1817,13 @@ function App() {
                       style: { width: Math.round((item.progress.done / item.progress.total) * 100) + '%' },
                     }))))))),
 
-        h(Accounts, { accounts: s.accounts }),
+        h(Accounts, { accounts: s.accounts, events: s.accountEvents }),
+
+        // What only the founder can clear, straight from PARKED.md — a parked count with no
+        // reasons is a number the founder cannot act on.
+        s.parked && s.parked.length > 0 && h(Panel, { title: 'Parked', alert: true, sub: 'only you can clear these — see PARKED.md' },
+          h('ul', { className: 'feed' }, s.parked.map((p, i) =>
+            h('li', { key: i }, h('span', { className: 'hint' }, parkedLabel(p)))))),
         h(Panel, { title: 'Tree' },
           h('p', { className: 'mono', style: { fontSize: '0.76rem', margin: 0 } },
             h('b', null, s.git.head), ' ', s.git.subject),

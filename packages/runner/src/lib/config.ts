@@ -39,6 +39,27 @@ export const RUNNER_CONFIG = z.object({
     .default({ disallowedTools: [], protectedPaths: ['.spicyspec/'] }),
   accounts: z.array(ACCOUNT_CONFIG).min(1),
   /**
+   * In-session watchdog — kills a live-but-wedged session so the run scores as a
+   * CLASSIFIED exit (hung/stalled/timed-out) instead of an activity timeout the retry
+   * policy re-runs a dozen times. Defaults are the prototype's tuned values
+   * (driver.mjs:462-513), learned on its tick 4: a stall requires BOTH no forward
+   * progress over a long horizon AND the worker being quiet right now — an integration
+   * tier is legitimately silent for ~12 minutes while healthy.
+   */
+  watchdog: z
+    .object({
+      /** hard backstop for "alive but achieving nothing" (prototype maxTickMinutes) */
+      maxRunMinutes: z.number().positive().default(240),
+      /** no stream event at all for this long — the session is wedged */
+      hangMinutes: z.number().positive().default(30),
+      /** no commit for this long ... */
+      stallMinutes: z.number().positive().default(90),
+      /** ... AND no stream event for this long — both required (B6) */
+      quietMinutes: z.number().positive().default(12),
+      pollSeconds: z.number().positive().default(60),
+    })
+    .default({ maxRunMinutes: 240, hangMinutes: 30, stallMinutes: 90, quietMinutes: 12, pollSeconds: 60 }),
+  /**
    * Second-vendor judge chain, tried in order — plural on purpose: the prototype's
    * single-vendor tracker died to a quota mid-run and the honesty check silently
    * vanished. `bin` must be a REAL executable (node.exe + script args), never a bare

@@ -19,6 +19,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { closingGate, DEFAULT_VERIFICATION_PATTERNS } from '@spicyspec/core';
 import type { Store } from '@spicyspec/store';
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +31,7 @@ interface BriefModule {
   specDirFor(root: string, id: string): string | null;
   buildBrief(root: string, args: { kind: string; id: string; parkedKey: string | null }): Record<string, unknown>;
   listOwed(root: string, queueEntries: unknown[]): Array<Record<string, unknown>>;
+  parseParked(root: string, relPath?: string): { items: Array<{ date: string | null; reason: string }>; problems: string[] };
 }
 interface ChecksModule {
   loadChecks(path: string): Record<string, unknown>;
@@ -51,13 +53,51 @@ interface AgentsModule {
   createRegistry(meta?: Record<string, unknown>): Record<string, unknown>;
   ingest(reg: Record<string, unknown>, event: unknown): Iterable<string>;
   snapshot(reg: Record<string, unknown>, opts?: { detail?: boolean }): { agents: Array<Record<string, unknown>>; counts: Record<string, number> };
+  agentDetail(reg: Record<string, unknown>, id: string): Record<string, unknown> | null;
 }
 
-async function vendored(): Promise<{ brief: BriefModule; checks: ChecksModule; agents: AgentsModule }> {
+interface RoleMessage {
+  at: string;
+  from: string;
+  text: string;
+  costUsd?: number;
+  activity?: unknown[];
+  error?: string | null;
+}
+
+interface RolesModule {
+  ROLE_IDS: string[];
+  ROLE_DEFS: Record<string, { id: string; name: string; permissionMode: string }>;
+  rolesSnapshot(stateDir: string): Array<Record<string, unknown>>;
+  loadSession(stateDir: string, id: string): { sessionId: string | null; turns?: number; costUsd?: number; lastAt?: string | null };
+  readMessages(stateDir: string, id: string, limit?: number): RoleMessage[];
+  readTasks(stateDir: string, id: string): Array<Record<string, unknown>>;
+  addTask(stateDir: string, id: string, task: { text: unknown; scheduledFor?: unknown }): Record<string, unknown>;
+  updateTask(stateDir: string, id: string, taskId: string, patch: Record<string, unknown>): Record<string, unknown> | null;
+  readMandate(stateDir: string, id: string): string | null;
+  writeMandate(stateDir: string, id: string, text: unknown): void;
+  isBusy(id: string): boolean;
+  say(args: {
+    stateDir: string;
+    root: string;
+    id: string;
+    text: string;
+    config: Record<string, unknown>;
+    onEvent?: (e: Record<string, unknown>) => void;
+  }): Promise<RoleMessage>;
+}
+
+interface NarrativeModule {
+  describeWhereWeAre(input: Record<string, unknown>): Record<string, unknown>;
+}
+
+async function vendored(): Promise<{ brief: BriefModule; checks: ChecksModule; agents: AgentsModule; roles: RolesModule; narrative: NarrativeModule }> {
   const brief = (await import(new URL('founder-brief.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as BriefModule;
   const checks = (await import(new URL('founder-checks.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as ChecksModule;
   const agents = (await import(new URL('agents.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as AgentsModule;
-  return { brief, checks, agents };
+  const roles = (await import(new URL('roles.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as RolesModule;
+  const narrative = (await import(new URL('narrative.mjs', new URL('../../room/', import.meta.url)).href)) as unknown as NarrativeModule;
+  return { brief, checks, agents, roles, narrative };
 }
 
 /* ---------------------------------------------------------------------- options ---- */
@@ -83,6 +123,15 @@ export interface RunningRoom {
   close(): Promise<void>;
 }
 
+/**
+ * The two-level stop, as store flags. STOP (graceful: finish the current run, then halt)
+ * and KILL-NOW (terminate the live session) were files in the prototype; here they are KV
+ * rows the rotation and watchdog check, and this server reads them back as armed state so
+ * the header's Kill button never claims a state it does not have.
+ */
+export const STOP_KEY = 'runner:stop';
+export const KILL_KEY = 'runner:kill-now';
+
 const STATUS_TO_ROOM: Record<string, string> = {
   'awaiting-review': 'awaiting-founder',
   done: 'done',
@@ -92,6 +141,9 @@ const STATUS_TO_ROOM: Record<string, string> = {
 };
 
 /* ------------------------------------------------------------------- state build ---- */
+
+/** The last non-empty line of a CLI's output — what these commands print as their answer. */
+const lastLine = (text: string): string => text.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
 
 async function git(repoCwd: string, args: string[]): Promise<string> {
   try {
@@ -106,7 +158,26 @@ async function git(repoCwd: string, args: string[]): Promise<string> {
   }
 }
 
-function specProgress(repoCwd: string, dir: string | null, specId?: string): { done: number; open: number; held: number; total: number } | null {
+export interface SpecProgress {
+  done: number;
+  open: number;
+  held: number;
+  unmarked: number;
+  total: number;
+  waves: number;
+  currentWave: string | null;
+}
+
+/**
+ * Task progress, counted by task ID and by list item only — a line port of the prototype's
+ * specProgress (ui/server.mjs:102-125). Deliberately the same rules as the terminal view:
+ * prose that merely mentions an id is not a task, and a task held open WITH a stated reason
+ * ("left unmarked", "NOT CLOSED", ✖, ⚠) is not the same as one silently blank. Both
+ * distinctions were learned the hard way — held:0 hardcoded made the per-lane 'built'
+ * segment permanently empty and builtFraction diverge from the airvia room's numbers the
+ * moment a task was held.
+ */
+export function specProgress(repoCwd: string, dir: string | null, specId?: string): SpecProgress | null {
   if (!dir) return null;
   // Parallel lanes work in worktrees under .spicyspec/worktrees/<id>/ — the main tree's
   // copy of tasks.md is stale the moment a lane commits. The lane's copy is the truth.
@@ -115,12 +186,42 @@ function specProgress(repoCwd: string, dir: string | null, specId?: string): { d
     : [join(repoCwd, dir, 'tasks.md')];
   const path = candidates.find((c) => existsSync(c));
   if (!path) return null;
-  const text = readFileSync(path, 'utf8');
-  // Both id styles are real: the prototype wrote `- [x] **T001**`, airvia's lanes write
-  // `- [x] T001` — the strict bold-only match rendered a working spec as "0 of 0".
-  const done = (text.match(/^\s*[-*] \[[xX]\] (?:\*\*)?T\d+/gm) ?? []).length;
-  const open = (text.match(/^\s*[-*] \[ \] (?:\*\*)?T\d+/gm) ?? []).length;
-  return { done, open, held: 0, total: done + open };
+
+  const seen = new Set<string>();
+  let done = 0;
+  let open = 0;
+  let held = 0;
+  let unmarked = 0;
+  let currentWave: string | null = null;
+  let waveAtFirstOpen: string | null = null;
+  const waves: string[] = [];
+
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const wave = line.match(/^#{2,3}\s+(Wave\s+[^\n·]*)/i);
+    if (wave) {
+      currentWave = wave[1].trim();
+      waves.push(currentWave);
+    }
+    if (!/^\s*-\s/.test(line)) continue;
+    // Both id styles are real: the prototype wrote `- [x] **T001**`, airvia's lanes write
+    // `- [x] T001` — the strict bold-only match rendered a working spec as "0 of 0". The
+    // plain form is only accepted at the head of the bullet (after an optional checkbox),
+    // so prose that merely mentions an id still does not count as a task.
+    const tid =
+      (line.match(/\*\*(T\d{3}[a-z]?)\*\*/) ?? [])[1] ??
+      (line.match(/^\s*-\s*(?:\[[ xX]\]\s*)?(T\d{3}[a-z]?)\b/) ?? [])[1];
+    if (!tid || seen.has(tid)) continue;
+    seen.add(tid);
+
+    if (/^\s*-\s*\[ \]/.test(line)) {
+      open += 1;
+      if (!waveAtFirstOpen) waveAtFirstOpen = currentWave;
+    } else if (/^\s*-\s*\[[xX]\]/.test(line) || line.includes('✔')) done += 1;
+    else if (/left unmarked|NOT CLOSED|✖|⚠/.test(line)) held += 1;
+    else unmarked += 1;
+  }
+
+  return { done, open, held, unmarked, total: seen.size, waves: waves.length, currentWave: waveAtFirstOpen ?? currentWave };
 }
 
 async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: LaneLive[] = []): Promise<Record<string, unknown>> {
@@ -131,8 +232,22 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
   const now = Date.now();
 
   const runnersRaw = await store.listKv('runner:');
-  const runners = runnersRaw.map((r) => JSON.parse(r.value) as { pid: number; heartbeatAt: string });
+  const runners = runnersRaw
+    .map((r) => {
+      try {
+        return JSON.parse(r.value) as { pid?: number; heartbeatAt?: string; startedAt?: string };
+      } catch {
+        return null;
+      }
+    })
+    // The stop/kill flags live under the same prefix (runner:stop / runner:kill-now) and
+    // are not runner records — a numeric pid is what makes a row a runner.
+    .filter((r): r is { pid: number; heartbeatAt: string; startedAt?: string } => typeof r?.pid === 'number' && typeof r?.heartbeatAt === 'string');
   const liveRunner = runners.find((r) => now - Date.parse(r.heartbeatAt) < 90_000) ?? null;
+
+  // Armed stop state is a store flag, not a guess: the original showed STOP / STOP-NOW file
+  // existence, and a Kill button whose armed state never displays reads as a broken button.
+  const [stopFlag, killFlag] = await Promise.all([store.getKv(STOP_KEY), store.getKv(KILL_KEY)]);
 
   const specDirInWorktree = (id: string): string | null => {
     // A spec whose directory exists only on its lane branch is invisible in the main
@@ -145,17 +260,37 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
       return null;
     }
   };
-  const entries = queue.entries.map((e) => {
-    const dir = brief.specDirFor(repoCwd, e.id) ?? specDirInWorktree(e.id);
-    return {
-      id: e.id,
-      slug: dir ? dir.replace(/\\/g, '/').split('/').pop()?.replace(/^\d+-/, '') : null,
-      dir,
-      status: STATUS_TO_ROOM[String(e.status)] ?? String(e.status),
-      stage: e.stage ?? null,
-      progress: specProgress(repoCwd, dir, e.id),
-    };
-  });
+  const entries = await Promise.all(
+    queue.entries.map(async (e) => {
+      const dir = brief.specDirFor(repoCwd, e.id) ?? specDirInWorktree(e.id);
+      const status = STATUS_TO_ROOM[String(e.status)] ?? String(e.status);
+      const progress = specProgress(repoCwd, dir, e.id);
+      // "The platform never marks its own work done": a spec that retired on an empty task
+      // list without a recorded closing-gate APPROVE gets a loud flag, matching the
+      // prototype's warn-not-block guard (driver.mjs:667-681). Absence means UNKNOWN, never
+      // PASS — and the verdict is the LATEST record, not any record: a spec approved and then
+      // re-reviewed REVISE is open, which an `any APPROVE` test would have called clean.
+      let closingGateState: string | null = null;
+      if ((status === 'awaiting-founder' || status === 'done') && progress && progress.open === 0) {
+        try {
+          closingGateState = closingGate(await store.listGates(e.id), e.id).state;
+        } catch {
+          closingGateState = null; // an unreadable gate table is its own problem, not this flag's
+        }
+      }
+      const closingGateWarning = closingGateState != null && closingGateState !== 'approved';
+      return {
+        id: e.id,
+        slug: dir ? dir.replace(/\\/g, '/').split('/').pop()?.replace(/^\d+-/, '') : null,
+        dir,
+        status,
+        stage: e.stage ?? null,
+        progress,
+        closingGate: closingGateState,
+        closingGateWarning,
+      };
+    }),
+  );
   const actives = entries.filter((e) => e.status === 'active');
   const active = actives[0] ?? null;
 
@@ -179,10 +314,19 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
   return {
     at: new Date().toISOString(),
     running: Boolean(liveRunner),
-    stopArmed: false,
-    killArmed: false,
+    stopArmed: Boolean(stopFlag),
+    killArmed: Boolean(killFlag),
     driver: liveRunner
-      ? { pid: liveRunner.pid, workerPid: liveRunner.pid, code: 'spicyspec', config: options.projectName, startedAt: null, heartbeat: liveRunner.heartbeatAt }
+      ? {
+          pid: liveRunner.pid,
+          workerPid: liveRunner.pid,
+          code: 'spicyspec',
+          config: options.projectName,
+          // From the registration record the runner writes at boot — uptime never showed
+          // while this was hardcoded null.
+          startedAt: liveRunner.startedAt ?? null,
+          heartbeat: liveRunner.heartbeatAt,
+        }
       : null,
     git: { head, subject, branch, dirty: dirtyPaths.length, dirtyPaths: dirtyPaths.slice(0, 8) },
     catalog: {
@@ -213,10 +357,21 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
         cost: rows.reduce((s, t) => s + (Number(t.costUsd) || 0), 0),
         rateStatus: (last?.['rateStatus'] as string) ?? null,
         utilization: typeof last?.['utilization'] === 'number' ? last['utilization'] : null,
-        windowEndsAt: null,
+        // The original read the last ledger row's rateResetsAt (epoch seconds); the pool row
+        // may also carry a windowEndsAt in ms. Either populates the 'window HH:MM' chip.
+        windowEndsAt:
+          typeof (a as Record<string, unknown>)['windowEndsAt'] === 'number'
+            ? ((a as Record<string, unknown>)['windowEndsAt'] as number)
+            : typeof last?.['rateResetsAt'] === 'number'
+              ? (last['rateResetsAt'] as number) * 1000
+              : null,
         overageStatus: (last?.['overageStatus'] as string) ?? null,
       };
     }),
+    // Per-switch narration: the prototype logged describePool on every tick start and every
+    // switch; the founder named "visible account health". Derived from the run rows and the
+    // pool rather than a new event table — the same facts, one writer.
+    accountEvents: accountEvents(runs, pool, now),
     totals: {
       rows: runs.length,
       ticks: new Set(runs.map((t) => t.tick)).size,
@@ -230,7 +385,10 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
       .reverse()
       .map((t) => ({
         tick: t.tick,
-        attempt: null,
+        // The retry tag: an infra retry (rate-limited / refused / no-attempt) keeps its
+        // number and carries an attempt marker — without it a founder cannot tell a real
+        // tick from a retry and the run counts disagree with what airvia showed.
+        attempt: (t['attempt'] as string) ?? null,
         exit: t.exit ?? null,
         account: (t['account'] as string) ?? null,
         minutes: Math.round(Number(t.durationMinutes) || 0),
@@ -241,13 +399,70 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
         startedAt: (t['startedAt'] as string) ?? null,
         tracker: (t['judgeAction'] as string) ?? null,
         note: (t['note'] as string) ?? (t['judgedBy'] ? `judge ${t['judgedBy']}: ${t['judgeHonest'] === false ? 'dishonest' : 'ok'}` : ''),
-        redFirst: null,
+        // Red-first residue, straight off the run row when the pipeline persisted it —
+        // absence means unknown, never clean.
+        redFirst: (t['redFirst'] as unknown) ?? (t['redFirstResidue'] as unknown) ?? null,
       })),
     // The Current-tick panel's data — one entry per live lane, from the pump's tails.
     live: lanes[0] ?? null,
     lanes,
-    parked: [],
+    parked: parkedList(options, brief, entries.filter((e) => e.status === 'parked').map((e) => e.id)),
   };
+}
+
+/**
+ * PARKED.md headings plus queue entries parked without a written diagnosis — the founder's
+ * "what only I can clear" list. The parser already existed (founder-brief.mjs); this was
+ * hardcoded [] while the same file was parsed two panels away.
+ *
+ * A parked entry with nothing written about it is listed anyway, and says so: the rotation
+ * can park a spec by notification alone, and a park no founder can read is a park no founder
+ * can clear.
+ */
+export function parkedList(options: RoomOptions, brief: BriefModule, parkedIds: string[] = []): string[] {
+  const out: string[] = [];
+  try {
+    const parsed = brief.parseParked(options.repoCwd, '.spicyspec/PARKED.md');
+    for (const item of parsed.items) out.push(item.date ? `${item.date} · ${item.reason}` : item.reason);
+  } catch {
+    /* a missing or malformed PARKED.md must not take the state down */
+  }
+  const written = out.join(' | ');
+  for (const id of parkedIds) {
+    if (!written.includes(id)) out.push(`${id} — parked with no diagnosis written to PARKED.md`);
+  }
+  return out;
+}
+
+/**
+ * Account narration, derived from recorded facts: a switch is two adjacent run rows naming
+ * different accounts; a cooling is a row whose exit says so; a cold account is the pool's
+ * own state. Last six, oldest first — the shape of the prototype's describePool log lines.
+ */
+function accountEvents(
+  runs: Array<Record<string, unknown>>,
+  pool: Record<string, { coldUntilMs?: number; refusedReason?: string | null }>,
+  now: number,
+): string[] {
+  const events: string[] = [];
+  let prev: string | null = null;
+  for (const t of runs.slice(-40)) {
+    const account = (t['account'] as string) ?? null;
+    if (!account) continue;
+    if (prev && account !== prev) events.push(`run ${String(t['tick'])}: switched ${prev} → ${account}`);
+    const exit = String(t['exit'] ?? '');
+    if (exit === 'rate-limited' || exit === 'account-refused') {
+      events.push(`run ${String(t['tick'])}: ${account} went cold (${exit})`);
+    }
+    prev = account;
+  }
+  for (const [id, a] of Object.entries(pool)) {
+    if ((a.coldUntilMs ?? 0) > now) {
+      const until = new Date(a.coldUntilMs ?? 0).toTimeString().slice(0, 5);
+      events.push(`${id} is cold until ${until}${a.refusedReason ? ` — ${String(a.refusedReason).slice(0, 80)}` : ''}`);
+    }
+  }
+  return events.slice(-6);
 }
 
 /* --------------------------------------------------------------------- sign-off ---- */
@@ -279,6 +494,10 @@ interface LaneTail {
   // Current-tick panel counters — kept here so the panel costs nothing extra to serve.
   tools: number;
   bash: number;
+  /** Bash calls matching the verification patterns ONLY — 'verify cmds' once counted every
+   * Bash call, so a worker doing 30 greps showed 30 "verifications". The number must mean
+   * what the label says (prototype harvest.mjs classifier). */
+  verify: number;
   subagents: number;
   actions: Array<{ tool: string; hint: string }>;
   say: string;
@@ -351,6 +570,7 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
     ended: false,
     tools: 0,
     bash: 0,
+    verify: 0,
     subagents: 0,
     actions: [],
     say: '',
@@ -375,7 +595,11 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
           tail.tools += 1;
           const name = String(b['name'] ?? '');
           if (name === 'Task' || name === 'Agent') tail.subagents += 1;
-          if (name === 'Bash') tail.bash += 1;
+          if (name === 'Bash') {
+            tail.bash += 1;
+            const command = String((b['input'] as Record<string, unknown>)?.['command'] ?? '').replace(/\s+/g, ' ');
+            if (DEFAULT_VERIFICATION_PATTERNS.some((re) => re.test(command))) tail.verify += 1;
+          }
           tail.actions.push({ tool: name, hint: hintFor((b['input'] as Record<string, unknown>) ?? {}) });
           if (tail.actions.length > 8) tail.actions.splice(0, tail.actions.length - 8);
         }
@@ -488,6 +712,46 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
       }
       return { agents, counts: mergedCounts(), meta, where: null };
     },
+    /**
+     * The full record for one agent, by its lane-namespaced id ('<lane>·<rawId>'). Fetched
+     * once when a sheet opens — prompt and summary are too big to push on every frame, which
+     * is why the feed strips them and this endpoint exists.
+     */
+    detail(namespacedId: string): Record<string, unknown> | null {
+      const sep = namespacedId.indexOf('·');
+      if (sep < 0) return null;
+      const lane = namespacedId.slice(0, sep);
+      const rawId = namespacedId.slice(sep + 1);
+      const tail = tails.get(lane);
+      if (!tail) return null;
+      const d = agentsMod.agentDetail(tail.reg, rawId);
+      if (!d) return null;
+      // Re-namespace every id the sheet joins against the feed's agents — the feed sent
+      // namespaced ids, so a bare child id here would match nothing.
+      return {
+        ...d,
+        id: namespacedId,
+        lane,
+        parentId: d['parentId'] != null ? `${lane}·${String(d['parentId'])}` : null,
+        children: ((d['children'] as unknown[]) ?? []).map((c) => `${lane}·${String(c)}`),
+      };
+    },
+    /**
+     * The primary lane's registry view, for the derived narrative: agents, the root's own
+     * narration, and the run meta. First non-ended lane by spec order — with the single-spec
+     * flow pinned there is exactly one.
+     */
+    primary(): { agents: Array<Record<string, unknown>>; narration: unknown[]; meta: Record<string, unknown> | null } | null {
+      const live = [...tails.entries()].filter(([, t]) => !t.ended).sort(([a], [b]) => a.localeCompare(b));
+      const first = live[0] ?? [...tails.entries()].sort(([a], [b]) => a.localeCompare(b))[0];
+      if (!first) return null;
+      const [, tail] = first;
+      return {
+        agents: agentsMod.snapshot(tail.reg, { detail: false }).agents,
+        narration: ((tail.reg as Record<string, unknown>)['narration'] as unknown[]) ?? [],
+        meta: tail.meta,
+      };
+    },
     lanes(): LaneLive[] {
       return [...tails.entries()]
         .filter(([, tail]) => !tail.ended)
@@ -498,7 +762,7 @@ function createLivePump(runsRoot: string, agentsMod: AgentsModule, broadcast: (e
           account: String(tail.meta?.['account'] ?? '?'),
           startedAt: tail.meta?.['startedAt'] ? Date.parse(String(tail.meta['startedAt'])) : null,
           tools: tail.tools,
-          verification: tail.bash,
+          verification: tail.verify,
           subagents: tail.subagents,
           actions: [...tail.actions],
           say: tail.say,
@@ -514,10 +778,23 @@ const MIME: Record<string, string> = {
 };
 
 export async function startControlRoom(options: RoomOptions): Promise<RunningRoom> {
-  const { brief, checks, agents: agentsMod } = await vendored();
+  const { brief, checks, agents: agentsMod, roles, narrative } = await vendored();
   const host = options.host ?? '127.0.0.1';
   const token = randomUUID();
   const checksPath = join(options.stateDir, 'founder-checks.json');
+
+  // The worker section of the runner config, raw: the roles spawn the same binary the
+  // workers use (bin ?? claudeBin ?? 'claude'), resolved inside roles.mjs so every caller
+  // gets the same chain. Read outside the zod schema on purpose — the schema strips keys
+  // it does not know, and `bin` is a deployment detail, not an orchestration one.
+  const workerConfig = ((): Record<string, unknown> => {
+    try {
+      const raw = JSON.parse(readFileSync(options.configPath, 'utf8')) as Record<string, unknown>;
+      return (raw['worker'] as Record<string, unknown>) ?? {};
+    } catch {
+      return {};
+    }
+  })();
 
   // live feed: tail the runner's session logs, broadcast to every open EventSource
   const sseClients = new Set<ServerResponse>();
@@ -543,6 +820,59 @@ data: ${JSON.stringify(data)}
     }
   }, 1000);
   pumpTimer.unref?.();
+
+  /**
+   * "Where we are", derived from recorded facts only — the primary lane's registry, the
+   * queue, and commits since the run began. The narrative module is the prototype's,
+   * unchanged; only the inputs are gathered from the spicyspec store instead of flat files.
+   */
+  const buildWhere = async (): Promise<Record<string, unknown>> => {
+    const prim = live.primary();
+    const queue = await options.store.loadQueue();
+    const queueEntries = queue.entries.map((e) => ({ ...e, status: STATUS_TO_ROOM[String(e.status)] ?? String(e.status) }));
+    const runnersRaw = await options.store.listKv('runner:');
+    const running = runnersRaw.some((r) => {
+      try {
+        const rec = JSON.parse(r.value) as { pid?: number; heartbeatAt?: string };
+        return typeof rec.pid === 'number' && typeof rec.heartbeatAt === 'string' && Date.now() - Date.parse(rec.heartbeatAt) < 90_000;
+      } catch {
+        return false;
+      }
+    });
+    const meta = prim?.meta ?? null;
+    const startedAt = meta?.['startedAt'] ? String(meta['startedAt']) : null;
+    let commitsThisTick: string[] = [];
+    if (startedAt) {
+      const spec = meta?.['spec'] ? String(meta['spec']) : null;
+      const worktree = spec ? join(options.repoCwd, '.spicyspec', 'worktrees', spec) : null;
+      const cwd = worktree && existsSync(worktree) ? worktree : options.repoCwd;
+      const out = await git(cwd, ['log', `--since=${startedAt}`, '--format=%s']);
+      commitsThisTick = out ? out.split('\n').filter(Boolean) : [];
+    }
+    const elapsedMin = startedAt ? (Date.now() - Date.parse(startedAt)) / 60000 : null;
+    return narrative.describeWhereWeAre({
+      agents: prim?.agents ?? [],
+      narration: prim?.narration ?? [],
+      tick: meta ? { number: meta['number'], spec: meta['spec'], stage: meta['stage'], account: meta['account'], startedAt, elapsedMin } : null,
+      queue: queueEntries,
+      commitsThisTick,
+      running,
+    });
+  };
+
+  /** Everything the chat sheet needs when a role is opened. Prototype rolePayload, verbatim. */
+  const rolePayload = (id: string): Record<string, unknown> => {
+    const def = roles.ROLE_DEFS[id];
+    const session = roles.loadSession(options.stateDir, id);
+    return {
+      ...def,
+      busy: roles.isBusy(id),
+      session: { turns: session.turns ?? 0, costUsd: session.costUsd ?? 0, started: Boolean(session.sessionId), lastAt: session.lastAt ?? null },
+      messages: roles.readMessages(options.stateDir, id, 100),
+      tasks: roles.readTasks(options.stateDir, id),
+      mandate: roles.readMandate(options.stateDir, id),
+    };
+  };
 
   const briefFor = async (kind: string, id: string) => {
     const built = brief.buildBrief(options.repoCwd, { kind, id, parkedKey: kind === 'parked' ? id : null });
@@ -612,27 +942,90 @@ data: ${JSON.stringify(data)}
     return { ok: true, message: `spec ${id} is tagged signed-off/${id} and the review decision is recorded — the rotation collects it.` };
   };
 
-  const actions: Record<string, () => { ok: boolean; message: string }> = {
-    start: () => {
+  /* Two-level stop, prototype semantics: STOP is graceful (the current run finishes, then
+   * the rotation halts — armed via the store flag AND the runner CLI's durable halt), KILL
+   * terminates the live worker now (halt + kill the runner's process tree, in-flight session
+   * work may be lost). RESUME clears the armed flags; REPORT writes the handoff brief. The
+   * previous version aliased kill to stop, so the scarier confirm ran the gentler action. */
+  const actions: Record<string, () => Promise<{ ok: boolean; message: string }> | { ok: boolean; message: string }> = {
+    start: async () => {
+      await options.store.release(STOP_KEY).catch(() => undefined);
+      await options.store.release(KILL_KEY).catch(() => undefined);
       const child = spawn(process.execPath, [options.runnerBin, 'run', '--config', options.configPath], {
         cwd: options.repoCwd, detached: true, stdio: 'ignore', windowsHide: true,
       });
       child.unref();
       return { ok: true, message: 'rotation start dispatched (idempotent) — a runner must be up: spicyspec-runner start' };
     },
-    stop: () => {
+    stop: async () => {
+      await options.store.setKv(STOP_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
       try {
         const out = execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
           cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 30_000,
         });
-        return { ok: true, message: out.trim().split('\n')[0] || 'rotation cancelled' };
+        return { ok: true, message: out.trim().split('\n')[0] || 'stop armed — the current run finishes, then the rotation ends' };
+      } catch (err) {
+        // The flag is still armed: the rotation reads it between activities even when the
+        // CLI could not be reached from here.
+        return { ok: true, message: 'stop armed (halt CLI unreachable: ' + String((err as Error).message).split('\n')[0] + ')' };
+      }
+    },
+    kill: async () => {
+      const messages: string[] = [];
+      await options.store.setKv(KILL_KEY, JSON.stringify({ armedAt: new Date().toISOString() }));
+      try {
+        execFileSync(process.execPath, [options.runnerBin, 'halt', '--config', options.configPath], {
+          cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+        });
+        messages.push('rotation cancelled');
+      } catch (err) {
+        messages.push('halt: ' + String((err as Error).message).split('\n')[0]);
+      }
+      // Terminate the live runner tree, prototype-style. Liveness is a fresh heartbeat,
+      // never the record's existence (B17).
+      const rows = await options.store.listKv('runner:');
+      const liveRec = rows
+        .map((r) => {
+          try {
+            return JSON.parse(r.value) as { pid?: number; heartbeatAt?: string };
+          } catch {
+            return null;
+          }
+        })
+        .find((r) => typeof r?.pid === 'number' && typeof r?.heartbeatAt === 'string' && Date.now() - Date.parse(r.heartbeatAt) < 90_000);
+      if (liveRec?.pid) {
+        try {
+          if (process.platform === 'win32') {
+            execFileSync('taskkill', ['/PID', String(liveRec.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          } else {
+            process.kill(liveRec.pid, 'SIGKILL');
+          }
+          messages.push(`runner tree killed (pid ${liveRec.pid}) — in-flight session work may be lost`);
+        } catch (err) {
+          messages.push('kill: ' + String((err as Error).message).split('\n')[0]);
+        }
+      } else {
+        messages.push('no live runner');
+      }
+      return { ok: true, message: messages.join(' · ') };
+    },
+    resume: async () => {
+      await options.store.release(STOP_KEY).catch(() => undefined);
+      await options.store.release(KILL_KEY).catch(() => undefined);
+      return { ok: true, message: 'stop flags cleared — START dispatches the rotation' };
+    },
+    report: () => {
+      try {
+        const out = execFileSync(process.execPath, [options.runnerBin, 'handoff', '--config', options.configPath], {
+          cwd: options.repoCwd, encoding: 'utf8', windowsHide: true, timeout: 60_000,
+        });
+        // The CLI prints the path it wrote; echoing our own guess is how a moved output file
+        // becomes a message that points at nothing.
+        return { ok: true, message: lastLine(out) || 'handoff written' };
       } catch (err) {
         return { ok: false, message: String((err as Error).message).split('\n')[0] };
       }
     },
-    kill: () => actions['stop'](),
-    resume: () => ({ ok: true, message: 'nothing armed — START dispatches the rotation' }),
-    report: () => ({ ok: true, message: 'use: spicyspec-runner handoff — writes HANDOFF-PACKAGE.md' }),
   };
 
   const ALLOWED_HOSTS = (port: number) => new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
@@ -693,12 +1086,79 @@ data: ${JSON.stringify(data)}
         if (url.pathname.startsWith('/api/action/') && req.method === 'POST') {
           const name = url.pathname.split('/').pop() ?? '';
           const fn = Object.prototype.hasOwnProperty.call(actions, name) ? actions[name] : null;
-          return send(fn ? 200 : 404, JSON.stringify(fn ? fn() : { ok: false, message: 'no such action' }));
+          return send(fn ? 200 : 404, JSON.stringify(fn ? await fn() : { ok: false, message: 'no such action' }));
+        }
+        // Talking to a role changes state (it spends quota and writes a transcript), so the
+        // POSTs ride the same token guard as every other mutation above.
+        if (url.pathname === '/api/roles') {
+          return send(200, JSON.stringify({ roles: roles.rolesSnapshot(options.stateDir) }));
+        }
+        if (url.pathname === '/api/role') {
+          const id = url.searchParams.get('id') ?? '';
+          if (!roles.ROLE_IDS.includes(id)) return send(404, JSON.stringify({ error: 'unknown role: ' + id }));
+          return send(200, JSON.stringify(rolePayload(id)));
+        }
+        if (url.pathname.startsWith('/api/role/') && req.method === 'POST') {
+          const action = url.pathname.split('/').pop() ?? '';
+          const body = await readBody();
+          const id = String(body['id'] ?? '');
+          if (!roles.ROLE_IDS.includes(id)) return send(400, JSON.stringify({ ok: false, message: 'unknown role: ' + id }));
+
+          if (action === 'say') {
+            const text = String(body['text'] ?? '').trim();
+            if (!text) return send(400, JSON.stringify({ ok: false, message: 'nothing to say' }));
+            if (roles.isBusy(id)) {
+              return send(409, JSON.stringify({
+                ok: false,
+                message: roles.ROLE_DEFS[id].name + ' is still answering. A session cannot be resumed twice at once, ' +
+                  'so this message is refused rather than silently lost — send it again when the reply lands.',
+              }));
+            }
+            // Answered immediately; the reply arrives over the SSE feed. A chat turn can take
+            // minutes, and holding an HTTP request open that long is how a proxy or a sleeping
+            // laptop turns a working answer into a failed one.
+            send(202, JSON.stringify({ ok: true, message: 'sent — watch the panel', streaming: true }));
+            broadcast('role', { kind: 'started', role: id, at: new Date().toISOString(), text });
+            try {
+              await roles.say({
+                stateDir: options.stateDir, root: options.repoCwd, id, text, config: workerConfig,
+                onEvent: (e) => broadcast('role', e),
+              });
+            } catch (err) {
+              broadcast('role', { kind: 'failed', role: id, error: String((err as Error).message) });
+            }
+            return;
+          }
+
+          if (action === 'task') {
+            const task = roles.addTask(options.stateDir, id, { text: body['text'], scheduledFor: body['scheduledFor'] ?? null });
+            broadcast('role', { kind: 'task', role: id, task });
+            return send(200, JSON.stringify({ ok: true, task }));
+          }
+
+          if (action === 'task-status') {
+            const task = roles.updateTask(options.stateDir, id, String(body['taskId'] ?? ''), { status: String(body['status'] ?? 'done') });
+            if (!task) return send(404, JSON.stringify({ ok: false, message: 'no such task' }));
+            broadcast('role', { kind: 'task', role: id, task });
+            return send(200, JSON.stringify({ ok: true, task }));
+          }
+
+          if (action === 'mandate') {
+            try {
+              roles.writeMandate(options.stateDir, id, body['text']); // throws for any role but special
+            } catch (err) {
+              return send(400, JSON.stringify({ ok: false, message: String((err as Error).message) }));
+            }
+            return send(200, JSON.stringify({ ok: true, mandate: roles.readMandate(options.stateDir, id) }));
+          }
+
+          return send(404, JSON.stringify({ ok: false, message: 'no such role action: ' + action }));
         }
         if (url.pathname === '/api/live') {
           res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
           res.write('retry: 3000\n\n');
-          res.write(`event: hello\ndata: ${JSON.stringify(live.hello())}\n\n`);
+          const where = await buildWhere().catch(() => null);
+          res.write(`event: hello\ndata: ${JSON.stringify({ ...(live.hello() as Record<string, unknown>), where })}\n\n`);
           sseClients.add(res);
           const beat = setInterval(() => {
             try {
@@ -713,11 +1173,19 @@ data: ${JSON.stringify(data)}
           });
           return;
         }
-        // Tabs whose machinery is not ported yet return valid empty shapes, never a crash.
-        if (url.pathname === '/api/roles') return send(200, JSON.stringify({ roles: [] }));
-        if (url.pathname === '/api/agents') return send(200, JSON.stringify({ agents: [], counts: {}, meta: null }));
-        if (url.pathname === '/api/agent') return send(200, JSON.stringify({ agent: null }));
-        if (url.pathname === '/api/where') return send(200, JSON.stringify({ text: 'narrative not ported yet' }));
+        if (url.pathname === '/api/agents') {
+          // hello() carries where:null because the SSE frame fills it in; a plain fetch has no
+          // later frame to wait for, so it gets the real narrative rather than a false null.
+          const where = await buildWhere().catch(() => null);
+          return send(200, JSON.stringify({ ...(live.hello() as Record<string, unknown>), where }));
+        }
+        if (url.pathname === '/api/agent') {
+          const detail = live.detail(url.searchParams.get('id') ?? '');
+          if (!detail) return send(404, JSON.stringify({ error: 'no such agent in the current tick' }));
+          return send(200, JSON.stringify(detail));
+        }
+        if (url.pathname === '/api/where') return send(200, JSON.stringify(await buildWhere()));
+        // Ship is not ported yet; a valid empty shape, never a crash.
         if (url.pathname === '/api/ship') return send(200, JSON.stringify({ readiness: { ready: false, reasons: ['ship is not ported yet'] }, request: null, specIds: [], plan: null }));
 
         // static assets
@@ -734,6 +1202,27 @@ data: ${JSON.stringify(data)}
     })();
   });
 
+  // The stream pushes state every 4s so Overview numbers move within seconds of reality —
+  // the 15s fetch poll in the page is only a backstop for a stream that dies unnoticed.
+  // Skipped with no clients: buildRoomState shells out to git for nobody otherwise.
+  const stateTimer = setInterval(() => {
+    if (!sseClients.size) return;
+    void buildRoomState(options, brief, live.lanes())
+      .then((state) => broadcast('state', state))
+      .catch(() => undefined);
+  }, 4000);
+  stateTimer.unref?.();
+
+  // The narrative is derived from git and the queue as well as the stream, so it refreshes
+  // on its own slower cadence rather than on every appended line.
+  const whereTimer = setInterval(() => {
+    if (!sseClients.size) return;
+    void buildWhere()
+      .then((where) => broadcast('where', where))
+      .catch(() => undefined);
+  }, 5000);
+  whereTimer.unref?.();
+
   return new Promise((resolvePromise) => {
     server.listen(options.port ?? 0, host, () => {
       const addr = server.address();
@@ -744,6 +1233,8 @@ data: ${JSON.stringify(data)}
         close: () =>
           new Promise<void>((r) => {
             clearInterval(pumpTimer);
+            clearInterval(stateTimer);
+            clearInterval(whereTimer);
             for (const c of sseClients) {
               try {
                 c.end();

@@ -9,7 +9,14 @@ import { describe, expect, it } from 'vitest';
 import { parseRunnerConfig } from './config.js';
 import { filterSelfOwned, parsePorcelain, snapshot } from './git-snapshot.js';
 import { countTasks } from './tasks.js';
-import { createRunnerActivities, loadPoolFromStore, NoWarmAccountError, settlePool, type RunnerDeps } from './wiring.js';
+import {
+  createRunnerActivities,
+  loadPoolFromStore,
+  NO_WARM_ACCOUNT,
+  NoWarmAccountError,
+  settlePool,
+  type RunnerDeps,
+} from './wiring.js';
 
 /* ------------------------------------------------------------------------- tasks ---- */
 
@@ -122,6 +129,13 @@ describe('parseRunnerConfig', () => {
     expect(c.temporal.address).toBe('localhost:7233');
     expect(c.worker.protectedPaths).toEqual(['.spicyspec/']);
     expect(c.accounts[0].enabled).toBe(true);
+    // The single-spec flow is the PINNED default, not merely a possible setting: exactly
+    // one active spec is the invariant Q3 halts on, and the parallel-lane machinery stays
+    // available only as an explicit opt-in.
+    expect(c.maxParallelSpecs).toBe(1);
+    // The watchdog exists on every config whether or not anyone declared it — an absent
+    // block used to mean no watchdog, i.e. a wedged session ran to the activity timeout.
+    expect(c.watchdog).toEqual({ maxRunMinutes: 240, hangMinutes: 30, stallMinutes: 90, quietMinutes: 12, pollSeconds: 60 });
   });
 
   it('a typo is a startup error with the path named', () => {
@@ -227,13 +241,52 @@ describe('createRunnerActivities', () => {
     expect(prompt).toContain('RUN_STATUS: awaiting-review');
   });
 
-  it('every account cold → NoWarmAccountError (Temporal retry takes over)', async () => {
+  // CONTRACT CHANGE: this used to read "Temporal retry takes over". It no longer does, and
+  // must not: the retry policy's backoff exhausted its 12 attempts in ~2h and then FAILED
+  // the spec on a normal overnight 5-hour window. The failure is now NONRETRYABLE and
+  // carries the earliest reset, and the workflow sleeps a durable timer to it instead.
+  it('every account cold → a nonRetryable NoWarmAccountError carrying the earliest reset', async () => {
     const deps = makeDeps();
     await settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'primary');
     await settlePool(deps, cls({ exit: 'rate-limited', rateResetsAt: 9_999 }), 'secondary');
-    await expect(createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 2 })).rejects.toThrow(
-      NoWarmAccountError,
-    );
+    const err = await createRunnerActivities(deps)
+      .runWorkerSession({ specId: '006', run: 2 })
+      .then(() => null, (e: unknown) => e);
+    // Asserting the CONSTRUCTED failure, not just its class: assigning `name` (read-only on
+    // ApplicationFailure) threw a TypeError from inside this constructor, so the throw site
+    // produced a meaningless error and every cold-pool rule downstream was unreachable.
+    expect(err).toBeInstanceOf(NoWarmAccountError);
+    expect((err as NoWarmAccountError).type).toBe(NO_WARM_ACCOUNT);
+    expect((err as NoWarmAccountError).nonRetryable).toBe(true);
+    expect((err as NoWarmAccountError).details).toEqual([9_999 * 1000 + 60_000, 1_000_000]);
+  });
+
+  it('an infra attempt is TAGGED and keeps its run number — the ledger can tell it from real work', async () => {
+    // Two rows can share a run number, because a rate-limited attempt is retried under the
+    // same number. Untagged, the report counted that run twice and the tick table gave the
+    // founder no way to tell an infra retry from a run that actually did something.
+    const deps = makeDeps();
+    deps.provider = {
+      id: 'fake',
+      createSession: () => ({
+        events: async function* (): AsyncGenerator<WorkerEvent> {
+          yield { type: 'tool_use', id: '1', name: 'Bash', input: {}, parentToolUseId: null };
+          yield { type: 'rate_limit', info: { status: 'limited', resetsAt: 9_999, rateLimitType: 'five_hour' } };
+          yield { type: 'result', envelope: { total_cost_usd: 0.2, num_turns: 1, result: '' } };
+        },
+        interrupt: async () => undefined,
+      }),
+    } as ProviderAdapter;
+    const outcome = await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 7 });
+    expect(outcome.exit).toBe('rate-limited');
+    const rows = await deps.store.listRuns();
+    expect(rows[0]).toMatchObject({ tick: 7, exit: 'rate-limited', attempt: 'rate-limited-retry' });
+  });
+
+  it('a real work run carries no attempt tag', async () => {
+    const deps = makeDeps();
+    await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect((await deps.store.listRuns())[0].attempt).toBeNull();
   });
 
   it('load-spreading: the next run picks the least-used warm account', async () => {
@@ -520,7 +573,10 @@ describe('account leasing — N concurrent sessions never share an account', () 
     expect(seen.sort()).toEqual(['primary', 'secondary', 'tertiary']); // no double-booking
   });
 
-  it('a fourth concurrent session finds every account leased and fails for retry', async () => {
+  // CONTRACT CHANGE: "fails for retry" was the old shape. Every account leased reports an
+  // earliest-warm already in the past, which the workflow floors at a 60s durable sleep —
+  // a re-check, not a hot spin, and not a consumed retry budget either.
+  it('a fourth concurrent session finds every account leased and fails nonRetryably', async () => {
     const deps = makeDeps(); // two accounts
     deps.config = parseRunnerConfig({
       projectName: 'Acme', repoCwd: '/repo', maxParallelSpecs: 3,
@@ -539,6 +595,28 @@ describe('account leasing — N concurrent sessions never share an account', () 
     await deps.store.tryReserve('account:lease:secondary', JSON.stringify({ at: 1_000_000 - 7 * 3600_000 }));
     const outcome = await createRunnerActivities(deps).runWorkerSession({ specId: '009', run: 1 });
     expect(outcome.exit).toBeDefined(); // claimed despite the dead leases
+  });
+
+  it('the lease NEVER outranks the C4 reserve rule: a used five-hour beats an unused weekly', async () => {
+    // The lease loop once ordered candidates by `uses` alone, which is exactly the moment
+    // the reserve rule exists for: `secondary` reports a seven_day window with zero uses,
+    // so uses-first leased it and the week's quota went to an ordinary run. The lease
+    // serializes the chosen account; core pickOrder chooses it.
+    const deps = makeDeps();
+    await deps.store.savePoolState({
+      primary: { coldUntilMs: 0, uses: 3, limitType: 'five_hour' },
+      secondary: { coldUntilMs: 0, uses: 0, limitType: 'seven_day' },
+    });
+    let leasedTo = '';
+    deps.provider = {
+      id: 'fake',
+      createSession: (opts) => {
+        leasedTo = opts.account.id;
+        return { events: fakeEvents, interrupt: async () => undefined };
+      },
+    } as ProviderAdapter;
+    await createRunnerActivities(deps).runWorkerSession({ specId: '009', run: 1 });
+    expect(leasedTo).toBe('primary');
   });
 
   it('the lease is released after classification — the next run can claim it', async () => {

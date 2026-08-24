@@ -10,6 +10,7 @@ import {
   attribution,
   checkQueue,
   mayAdvance,
+  promoteSignedOff,
   specIdsIn,
   type Queue,
   type QueueEntry,
@@ -186,5 +187,26 @@ describe('Q3 with a parallel cap', () => {
     expect(checkQueue(q, ev(), { maxActive: 2 }).halting.map((v) => v.code)).toEqual(['Q3']);
     // the single-writer default is unchanged
     expect(checkQueue(q, ev()).halting.map((v) => v.code)).toEqual(['Q3']);
+  });
+});
+
+describe('promoteSignedOff — the founder click that resumes the loop', () => {
+  it('credits every awaiting-review entry whose sign-off exists, and nothing else', () => {
+    const q = Q(
+      { id: '001', status: 'awaiting-review' },
+      { id: '002', status: 'awaiting-review' },
+      { id: '003', status: 'active', stage: 'execute' },
+      { id: '004', status: 'parked' },
+    );
+    const promoted = promoteSignedOff(q, (id) => id === '001' || id === '003' || id === '004', 'AT');
+    expect(promoted).toEqual(['001']);
+    expect(q.entries.map((e) => e.status)).toEqual(['done', 'awaiting-review', 'active', 'parked']);
+    expect(q.entries[0].closedAt).toBe('AT');
+  });
+
+  it('with nothing signed off it touches nothing and reports nothing', () => {
+    const q = Q({ id: '001', status: 'awaiting-review' });
+    expect(promoteSignedOff(q, () => false)).toEqual([]);
+    expect(q.entries[0].status).toBe('awaiting-review');
   });
 });

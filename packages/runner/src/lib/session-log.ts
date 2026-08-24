@@ -12,7 +12,7 @@
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { WorkerEvent } from '@spicyspec/provider';
+import type { TaskLifecycleEvent, TaskLifecycleUsage, WorkerEvent } from '@spicyspec/provider';
 
 export interface SessionLogMeta {
   number: number;
@@ -28,9 +28,70 @@ export interface SessionLog {
   close(): void;
 }
 
+/** snake_case usage in the registry's shape, absent fields dropped rather than nulled. */
+function usageLine(usage: TaskLifecycleUsage | null | undefined): Record<string, number> | undefined {
+  if (!usage) return undefined;
+  const out: Record<string, number> = {};
+  if (typeof usage.totalTokens === 'number') out['total_tokens'] = usage.totalTokens;
+  if (typeof usage.toolUses === 'number') out['tool_uses'] = usage.toolUses;
+  if (typeof usage.durationMs === 'number') out['duration_ms'] = usage.durationMs;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Task lifecycle → the prototype's `{type:'system', subtype:'task_*'}` lines, field for
+ * field what agents.mjs ingest() reads. This is the wire the History tab and the agents
+ * grid hang off: before it existed, stream.jsonl carried no task_started lines, so the
+ * only agent ever registered was the root session and History was permanently empty.
+ */
+function taskLifecycleLine(event: TaskLifecycleEvent): string {
+  const base: Record<string, unknown> = { type: 'system', subtype: event.subtype, task_id: event.taskId };
+  if (event.timestamp) base['timestamp'] = event.timestamp;
+  switch (event.subtype) {
+    case 'task_started':
+      return JSON.stringify({
+        ...base,
+        tool_use_id: event.toolUseId ?? null,
+        task_type: event.taskType ?? 'local_agent',
+        subagent_type: event.subagentType ?? null,
+        description: event.description ?? null,
+        prompt: event.prompt ?? null,
+      });
+    case 'task_progress':
+      return JSON.stringify({
+        ...base,
+        description: event.description ?? null,
+        last_tool_name: event.lastToolName ?? null,
+        usage: usageLine(event.usage),
+      });
+    case 'task_updated':
+      // patchAgent only acts on truthy patch fields — null end_time is "no close time",
+      // never an Invalid Date.
+      return JSON.stringify({ ...base, patch: { status: event.status ?? null, end_time: event.endTime ?? null } });
+    case 'task_notification':
+      return JSON.stringify({
+        ...base,
+        status: event.status ?? null,
+        summary: event.summary ?? null,
+        output_file: event.outputFile ?? null,
+        usage: usageLine(event.usage),
+      });
+  }
+}
+
 /** One session event → the prototype stream-json line the agents registry understands. */
 export function toStreamLine(event: WorkerEvent): string | null {
   switch (event.type) {
+    case 'task_lifecycle':
+      return taskLifecycleLine(event);
+    case 'result':
+      // Closes the ROOT agent. Without this line the worker session itself stayed
+      // 'running' forever, so History's `status !== 'running'` filter never matched it.
+      return JSON.stringify({
+        type: 'result',
+        is_error: event.envelope.is_error === true,
+        result: typeof event.envelope.result === 'string' ? event.envelope.result.slice(0, 2000) : null,
+      });
     case 'tool_use':
       return JSON.stringify({
         type: 'assistant',

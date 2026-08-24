@@ -6,7 +6,8 @@
  * what it cannot reason about, and never let the review backlog silently grow past the
  * cap that keeps every spec close to the human click that verifies it.
  */
-import { applyRepairs, checkQueue, type Queue, type QueueEvidence } from '@spicyspec/core';
+import { readReviewDecision } from '@spicyspec/control-plane';
+import { applyRepairs, checkQueue, promoteSignedOff, type Queue, type QueueEvidence } from '@spicyspec/core';
 import {
   createNtfyChannel,
   createWebhookChannel,
@@ -136,8 +137,49 @@ export function createQueueActivities(deps: QueueActivityDeps): QueueActivities 
       const busy = new Set(input?.busy ?? []);
       const maxParallel = Math.max(1, deps.runner.config.maxParallelSpecs);
       const queue: Queue = await store.loadQueue();
-      awaitingCount = queue.entries.filter((e) => e.status === 'awaiting-review').length;
+
+      // Evidence is read BEFORE the promotion below, on purpose: `signedOff` is the git
+      // tag, which is the same fact the prototype's guardQueue promoted on. `reviewCapBlocks`
+      // is lazy (it reads awaitingCount at call time), so recounting after the promotion
+      // still gives the cap check the freed slot.
       const ev = await evidence();
+
+      // guardQueue parity (prototype driver.mjs:200-209): credit founder sign-offs FIRST,
+      // on EVERY rotation iteration, so an entry that is both signed off and otherwise
+      // suspect is credited rather than demoted — and the freed review slot is visible to
+      // the cap check in this same pass. Without this promotion the review cap filled,
+      // openNextSpec idled forever, and a founder click at 3am resumed nothing.
+      const promotions = promoteSignedOff(queue, ev.signedOff);
+      for (const id of promotions) {
+        await announce('complete', id, 'founder sign-off found — the entry is done and its review slot is freed');
+      }
+      // The room's sign-off endpoint ALSO records a review decision, which is the path a
+      // manager approval takes when no tag is cut. Keyed to its own timestamp so it
+      // promotes at most once: a spec re-queued by hand after a past approval must not be
+      // auto-retired by the stale record. (The tag has no such key — a tag IS permanent
+      // evidence, and the prototype re-credited it on every iteration too.)
+      for (const entry of queue.entries) {
+        if (entry.status !== 'awaiting-review') continue;
+        const decision = await readReviewDecision(store, entry.id);
+        if (decision?.approved !== true) continue;
+        const promotedKey = `review:promoted:${entry.id}`;
+        // A hand-written record with no timestamp still promotes exactly once: falling back
+        // to a constant makes the key match forever after, which errs toward "already
+        // credited" rather than re-retiring a re-queued spec on every rotation iteration.
+        const stamp = decision.at || 'undated';
+        if ((await store.getKv(promotedKey)) === stamp) continue;
+        entry.status = 'done';
+        entry.closedAt = new Date().toISOString();
+        await store.setKv(promotedKey, stamp);
+        promotions.push(entry.id);
+        await announce('complete', entry.id, 'recorded review approval credited — the entry is done and its review slot is freed');
+      }
+      if (promotions.length) {
+        await store.saveQueue(queue);
+        await mirrorQueue();
+      }
+
+      awaitingCount = queue.entries.filter((e) => e.status === 'awaiting-review').length;
 
       const check = checkQueue(queue, ev, { maxActive: maxParallel });
       if (check.halting.length) {

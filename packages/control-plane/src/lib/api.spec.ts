@@ -1,6 +1,7 @@
 import { openStore, type Store } from '@spicyspec/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { handleApi, type ApiDeps } from './api.js';
+import { KILL_KEY, STOP_KEY } from './room-server.js';
 import { readReviewDecision, type OverviewView } from './views.js';
 
 let store: Store;
@@ -110,5 +111,17 @@ describe('runners endpoint — federation visibility', () => {
     const runners = r.json as Array<{ id: string; stale: boolean }>;
     expect(runners.find((x) => x.id === 'box-1')?.stale).toBe(false);
     expect(runners.find((x) => x.id === 'box-2')?.stale).toBe(true);
+  });
+
+  it('does not list the armed stop/kill flags as runners — they share the runner: prefix', async () => {
+    const { registerRunner } = await import('@spicyspec/store');
+    await registerRunner(store, {
+      id: 'box-1', host: 'box', pid: 1, taskQueue: 'spicyspec',
+      startedAt: '2026-08-23T23:00:00Z', heartbeatAt: '2026-08-23T23:59:45Z', accounts: ['primary'],
+    });
+    await store.setKv(STOP_KEY, JSON.stringify({ armedAt: '2026-08-24T00:00:00Z' }));
+    await store.setKv(KILL_KEY, JSON.stringify({ armedAt: '2026-08-24T00:00:00Z' }));
+    const runners = (await GET('/api/runners')).json as Array<{ id: string }>;
+    expect(runners.map((x) => x.id)).toEqual(['box-1']);
   });
 });

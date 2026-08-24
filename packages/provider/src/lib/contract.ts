@@ -76,6 +76,47 @@ export interface RateLimitEvent {
   info: RateLimitInfo;
 }
 
+/** Authoritative usage totals from the vendor runtime — taken as-is, never summed by us. */
+export interface TaskLifecycleUsage {
+  totalTokens?: number | null;
+  toolUses?: number | null;
+  durationMs?: number | null;
+}
+
+/**
+ * Subagent / command lifecycle — the events the agents registry rebuilds its tree from.
+ *
+ * Without this variant the control room's History tab was permanently empty and the agents
+ * grid showed only the worker: every task_started the runtime knew about fell into `opaque`
+ * before it reached the feed, so the only agent ever registered was the root session and it
+ * stayed 'running' for the whole run (gap-matrix P0, prototype tick 34: 41 agent lifetimes
+ * invisible). The field set is exactly what the vendored registry ingests —
+ * task_started / task_progress / task_updated / task_notification.
+ */
+export interface TaskLifecycleEvent {
+  type: 'task_lifecycle';
+  subtype: 'task_started' | 'task_progress' | 'task_updated' | 'task_notification';
+  taskId: string;
+  /** the tool_use that dispatched this task — the ONLY link to the parent agent */
+  toolUseId?: string | null;
+  /** 'local_agent' for subagents, 'local_bash' for commands — the History tab's filter key */
+  taskType?: string | null;
+  subagentType?: string | null;
+  description?: string | null;
+  prompt?: string | null;
+  /** task_updated / task_notification: completed | failed | running | stopped … */
+  status?: string | null;
+  /** task_updated: close time (ISO) */
+  endTime?: string | null;
+  /** task_notification: what the task returned */
+  summary?: string | null;
+  outputFile?: string | null;
+  /** task_progress */
+  lastToolName?: string | null;
+  usage?: TaskLifecycleUsage | null;
+  timestamp?: string | null;
+}
+
 export interface ResultEvent {
   type: 'result';
   envelope: ResultEnvelope;
@@ -92,6 +133,7 @@ export type WorkerEvent =
   | ToolResultEvent
   | AssistantTextEvent
   | RateLimitEvent
+  | TaskLifecycleEvent
   | ResultEvent
   | OpaqueEvent;
 

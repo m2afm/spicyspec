@@ -37,6 +37,17 @@ describe('collectSession', () => {
     expect(outcome.envelope?.total_cost_usd).toBe(2.5);
   });
 
+  it('task_lifecycle events pass through without inflating toolCalls — lifecycle is telemetry, not work', async () => {
+    const outcome = await collectSession(
+      sessionOf(
+        { type: 'tool_use', id: '1', name: 'Task', input: {}, parentToolUseId: null },
+        { type: 'task_lifecycle', subtype: 'task_started', taskId: '1', toolUseId: '1', taskType: 'local_agent' },
+        { type: 'task_lifecycle', subtype: 'task_updated', taskId: '1', status: 'completed' },
+      ),
+    );
+    expect(outcome.toolCalls).toBe(1);
+  });
+
   it('an empty session yields an empty outcome, never a throw', async () => {
     const outcome = await collectSession(sessionOf());
     expect(outcome).toEqual({ envelope: null, rateLimit: null, text: '', toolCalls: 0 });

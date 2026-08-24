@@ -4,4 +4,4 @@
  * activities file imports node modules it must never bundle).
  */
 export { specRunWorkflow, reviewSignal, stateQuery } from './workflows.js';
-export { queueRunWorkflow } from './queue-workflow.js';
+export { queueRunWorkflow, stopRotationSignal, queueStateQuery } from './queue-workflow.js';

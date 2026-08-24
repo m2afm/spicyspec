@@ -12,12 +12,14 @@ import {
   markCold,
   markLimitType,
   markRefused,
-  pickAccount,
+  pickOrder,
   poolState,
   recordUse,
   type Classification,
   type Pool,
+  type PoolAccount,
 } from '@spicyspec/core';
+import { ApplicationFailure } from '@temporalio/client';
 import { readReviewDecision } from '@spicyspec/control-plane';
 import { buildJudgePrompt, cliJudgeProvider, judgeChain, type JudgeProvider, type JudgeResult } from '@spicyspec/judge';
 import { createActivities, type ActivityDeps, type SpecRunActivities, type WorkerRunInput } from '@spicyspec/orchestrator';
@@ -25,6 +27,8 @@ import { buildPacket, specDrivenPipeline, type PacketContext, type PipelineDefin
 import { packSectionsFor, type GatePack } from '@spicyspec/packs';
 import type { ProviderAdapter } from '@spicyspec/provider';
 import type { Store } from '@spicyspec/store';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { RunnerConfig } from './config.js';
 import { appendLedgerView, exportAccountsView } from './compat-view.js';
 import { createQueueActivities } from './queue-activities.js';
@@ -50,6 +54,8 @@ export interface RunnerDeps {
   nowMs?: () => number;
   nowIso?: () => string;
 }
+
+const execFileAsync = promisify(execFile);
 
 const judgeKey = (specId: string) => `judge:last:${specId}`;
 
@@ -101,10 +107,24 @@ export async function sweepOrphanedLeases(store: RunnerDeps['store']): Promise<s
   return swept;
 }
 
-export class NoWarmAccountError extends Error {
-  constructor(public readonly earliestWarmAtMs: number | null, poolDescription: string) {
-    super(`every account is cold (${poolDescription})`);
-    this.name = 'NoWarmAccountError';
+/**
+ * Every account cold (or leased). An ApplicationFailure, NOT a plain Error, and
+ * nonRetryable, on purpose: the retry policy's exponential backoff capped out after ~2h
+ * of hot retries and then FAILED the spec — on a normal overnight 5-hour window. The
+ * workflow catches this type instead and sleeps a durable timer to the earliest reset
+ * (the prototype's sleepUntil, driver.mjs:743-749). Details carry [earliestWarmAtMs,
+ * thrownAtMs] so the workflow computes the wait without touching its own clock.
+ *
+ * `type` is the identity the workflow matches on, and it is the ONLY one available there:
+ * a failure crosses the activity boundary as serialized data, so no subclass survives the
+ * trip. Do NOT assign `name` — the base declares it read-only, and assigning threw a
+ * TypeError that replaced this failure with a meaningless one at the throw site.
+ */
+export const NO_WARM_ACCOUNT = 'NoWarmAccountError';
+
+export class NoWarmAccountError extends ApplicationFailure {
+  constructor(public readonly earliestWarmAtMs: number | null, poolDescription: string, thrownAtMs: number) {
+    super(`every account is cold (${poolDescription})`, NO_WARM_ACCOUNT, true, [earliestWarmAtMs, thrownAtMs]);
   }
 }
 
@@ -157,6 +177,26 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
   const activityDeps: ActivityDeps = {
     provider: deps.provider,
 
+    // In-session watchdog timings — config with the prototype's defaults (240/30/90/12).
+    watchdog: cfg.watchdog,
+
+    // The watchdog's forward-progress signal: HEAD of the tree this run works. A commit
+    // resets the stall horizon, exactly as the prototype's headOf poll did — without it
+    // a worker mid-verify with commits landing would trip the stall rule (B6).
+    async headOf(input: WorkerRunInput) {
+      const cwd = workCwdBySpec.get(input.specId) ?? cfg.repoCwd;
+      try {
+        const { stdout } = await execFileAsync('git', ['--no-optional-locks', 'rev-parse', 'HEAD'], {
+          cwd,
+          timeout: 15_000,
+          windowsHide: true,
+        });
+        return stdout.trim() || null;
+      } catch {
+        return null;
+      }
+    },
+
     async buildPacket(input: WorkerRunInput) {
       const pool = await loadPoolFromStore(deps);
       const nowMs = deps.nowMs ?? Date.now;
@@ -164,10 +204,15 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       // Lease an account: with N concurrent sessions, N packet builds race — pickAccount
       // alone would triple-book the least-used one. tryReserve is the atomic claim; a
       // lease older than 6h is stale (its holder died mid-run) and is broken.
-      let account = null as ReturnType<typeof pickAccount>;
+      //
+      // Candidates walk in core pickOrder — reserve-last (seven_day held back), then
+      // fewest uses. This loop once sorted by uses alone, which bypassed the C4 reserve
+      // rule at exactly the moment it exists for: a warm weekly account with zero uses
+      // out-ranked every five-hour account and the week's quota went to ordinary runs.
+      // The lease only SERIALIZES the chosen account; core owns the choice.
+      let account: PoolAccount | null = null;
       const leased = new Set<string>();
-      for (const candidate of [...pool.accounts].sort((a, b) => a.uses - b.uses)) {
-        if (candidate.coldUntilMs > nowMs()) continue;
+      for (const candidate of pickOrder(pool, nowMs())) {
         const leaseKey = `account:lease:${candidate.id}`;
         const claim = JSON.stringify({ specId: input.specId, run: input.run, at: nowMs(), pid: process.pid });
         if (await deps.store.tryReserve(leaseKey, claim)) {
@@ -187,11 +232,12 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       }
       if (!account) {
         // Every warm account is leased to a concurrent session, or the pool is cold.
-        // The activity fails; Temporal's retry re-runs it after backoff — the durable
-        // equivalent of the prototype's sleep-to-earliest-reset.
+        // NonRetryable by construction: the workflow catches this type and sleeps a
+        // durable timer to the earliest reset instead of hot-retrying (see the class).
         throw new NoWarmAccountError(
           earliestWarmMs(pool),
           describePool(pool, nowMs()) + (leased.size ? ` · leased: ${[...leased].join(',')}` : ''),
+          nowMs(),
         );
       }
       leasedAccountBySpec.set(input.specId, account.id);
@@ -326,8 +372,22 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
         await deps.store.setKv(judgeKey(input.specId), JSON.stringify(judged));
       }
 
+      // Retry identity (the prototype ledger's `attempt` tag, driver.mjs:804-877): an
+      // infra attempt keeps its run number and is retried, so two rows can share a tick.
+      // Without the tag the report counted the same run twice and the founder could not
+      // tell a real run from an infra retry in the tick table.
+      const attempt =
+        cls.exit === 'rate-limited'
+          ? 'rate-limited-retry'
+          : cls.exit === 'account-refused'
+            ? 'account-refused-retry'
+            : cls.exit === 'no-attempt'
+              ? 'no-attempt-retry'
+              : null;
+
       await deps.store.appendRun({
         tick: input.run,
+        attempt,
         spec: input.specId,
         exit: cls.exit,
         costUsd: cls.costUsd,
