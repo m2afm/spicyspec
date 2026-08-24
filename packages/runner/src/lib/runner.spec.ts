@@ -420,3 +420,34 @@ describe('review bridge — dashboard intent to at-most-once delivery', () => {
     expect(await activities.checkReviewDecision({ specId: '006' })).toMatchObject({ approved: false });
   });
 });
+
+/* ------------------------------------------------------------------ registration ---- */
+
+import { heartbeatRunner, listRunners, registerRunner, STALE_AFTER_MS } from '@spicyspec/store';
+
+describe('runner registration — liveness is a heartbeat, never a record (B17)', () => {
+  const record = (id: string, heartbeatAt: string) => ({
+    id, host: 'box', pid: 1, taskQueue: 'q', startedAt: '2026-08-24T00:00:00Z', heartbeatAt, accounts: ['primary'],
+  });
+
+  it('registers, lists, and flags staleness by timestamp', async () => {
+    const deps = makeDeps();
+    const now = Date.parse('2026-08-24T01:00:00Z');
+    await registerRunner(deps.store, record('fresh', new Date(now - 10_000).toISOString()));
+    await registerRunner(deps.store, record('dead', new Date(now - STALE_AFTER_MS - 1000).toISOString()));
+    const runners = await listRunners(deps.store, now);
+    expect(runners.find((r) => r.id === 'fresh')?.stale).toBe(false);
+    expect(runners.find((r) => r.id === 'dead')?.stale).toBe(true); // record EXISTS, runner is not alive
+  });
+
+  it('heartbeat refreshes only the timestamp; a beat for an unknown runner is a no-op', async () => {
+    const deps = makeDeps();
+    await registerRunner(deps.store, record('r1', '2026-08-24T00:00:00Z'));
+    await heartbeatRunner(deps.store, 'r1', '2026-08-24T02:00:00Z');
+    await heartbeatRunner(deps.store, 'ghost', '2026-08-24T02:00:00Z');
+    const runners = await listRunners(deps.store, Date.parse('2026-08-24T02:00:10Z'));
+    expect(runners).toHaveLength(1);
+    expect(runners[0].heartbeatAt).toBe('2026-08-24T02:00:00Z');
+    expect(runners[0].startedAt).toBe('2026-08-24T00:00:00Z');
+  });
+});

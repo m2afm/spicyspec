@@ -143,5 +143,15 @@ describe.each(DRIVERS)('store contract — $name', ({ makeStore, supportsRollbac
       await store.setKv('k', 'v2');
       expect(await store.getKv('k')).toBe('v2');
     });
+
+    it('listKv enumerates a prefix in key order and nothing else', async () => {
+      await store.setKv('runner:beta', 'b');
+      await store.setKv('runner:alpha', 'a');
+      await store.setKv('other:x', 'z');
+      expect(await store.listKv('runner:')).toEqual([
+        { key: 'runner:alpha', value: 'a' },
+        { key: 'runner:beta', value: 'b' },
+      ]);
+    });
   });
 });

@@ -7,7 +7,7 @@
  * (prototype B32: the dashboard's process-control API was CSRF-open). GET carries no
  * token; a mutation without a valid token is refused before it touches the store.
  */
-import type { Store } from '@spicyspec/store';
+import { listRunners, type Store } from '@spicyspec/store';
 import { gateTrail, overview, readReviewDecision, recordReviewDecision, runHistory } from './views.js';
 
 export interface ApiRequest {
@@ -45,6 +45,7 @@ export async function handleApi(req: ApiRequest, deps: ApiDeps): Promise<ApiResp
       return json(200, await runHistory(store, limit));
     }
     if (req.path === '/api/gates') return json(200, await gateTrail(store, req.query['spec']));
+    if (req.path === '/api/runners') return json(200, await listRunners(store, Date.parse(deps.now())));
     const m = /^\/api\/specs\/([^/]+)\/review$/.exec(req.path);
     if (m) return json(200, { specId: m[1], decision: await readReviewDecision(store, m[1]) });
     return json(404, { error: 'not found' });

@@ -44,6 +44,8 @@ export interface QueueStore {
 export interface KvStore {
   getKv(key: string): Promise<string | null>;
   setKv(key: string, value: string): Promise<void>;
+  /** every key under a prefix — how the dashboard enumerates runners, decisions, etc. */
+  listKv(prefix: string): Promise<Array<{ key: string; value: string }>>;
 }
 
 export type Store = RunStore & GateStore & PoolStore & QueueStore & KvStore & { close(): Promise<void> };
@@ -182,6 +184,13 @@ export function openStore(path: string): Store {
         key,
         value,
       );
+    },
+
+    async listKv(prefix: string): Promise<Array<{ key: string; value: string }>> {
+      const rows = db
+        .prepare("SELECT key, value FROM kv WHERE key LIKE ? || '%' ORDER BY key ASC")
+        .all(prefix) as Array<{ key: string; value: string }>;
+      return rows;
     },
 
     async close(): Promise<void> {

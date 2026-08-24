@@ -60,6 +60,7 @@ export function renderDashboard(projectName: string, csrfToken: string): string 
   <section><h2>Specs</h2><div class="scroll"><table id="specs"><tbody></tbody></table></div></section>
   <section><h2>Awaiting your review</h2><div id="review">&mdash;</div></section>
   <section><h2>Runs</h2><div class="scroll"><table id="runs"><tbody></tbody></table></div></section>
+  <section><h2>Runners</h2><div id="runners" class="muted">&mdash;</div></section>
 </main>
 <script>
   const CSRF = ${JSON.stringify(csrfToken)};
@@ -121,8 +122,23 @@ export function renderDashboard(projectName: string, csrfToken: string): string 
       ).join('');
   }
 
+  function renderRunners(runners) {
+    const el = document.getElementById('runners');
+    el.innerHTML = runners.length
+      ? runners.map((r) =>
+          '<div class="row" style="margin:4px 0"><code>' + esc(r.host) + '</code>' +
+          '<span class="' + (r.stale ? 'bad' : 'ok') + '">' + (r.stale ? 'stale' : 'alive') + '</span>' +
+          '<span class="muted">queue ' + esc(r.taskQueue) + ' · accounts ' + esc(r.accounts.join(', ')) +
+          ' · beat ' + esc(new Date(r.heartbeatAt).toLocaleTimeString()) + '</span></div>'
+        ).join('')
+      : '<span class="muted">no runners registered</span>';
+  }
+
   async function refresh() {
-    try { render(await getJSON('/api/overview'), await getJSON('/api/runs?limit=40')); }
+    try {
+      render(await getJSON('/api/overview'), await getJSON('/api/runs?limit=40'));
+      renderRunners(await getJSON('/api/runners'));
+    }
     catch (e) { document.getElementById('sub').textContent = 'connection lost'; }
   }
   refresh();

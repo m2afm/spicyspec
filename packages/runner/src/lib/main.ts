@@ -10,7 +10,10 @@ import { createClaudeAdapter } from '@spicyspec/provider-claude';
 import { openConfiguredStore } from './open-store.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { hostname } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { parseRunnerConfig } from './config.js';
+import { registerRunner, startHeartbeat } from '@spicyspec/store';
 import { createRunnerActivities } from './wiring.js';
 
 export async function startRunner(configPath: string): Promise<void> {
@@ -29,6 +32,21 @@ export async function startRunner(configPath: string): Promise<void> {
   const provider = createClaudeAdapter();
   const activities = createRunnerActivities({ config, store, provider, secrets });
 
+  // Register in the shared store so the dashboard lists this runner; liveness is the
+  // heartbeat timestamp, never the record's existence (prototype B17).
+  const runnerId = `${hostname()}-${randomUUID().slice(0, 8)}`;
+  const nowIso = () => new Date().toISOString();
+  await registerRunner(store, {
+    id: runnerId,
+    host: hostname(),
+    pid: process.pid,
+    taskQueue: config.temporal.taskQueue,
+    startedAt: nowIso(),
+    heartbeatAt: nowIso(),
+    accounts: config.accounts.map((a) => a.id),
+  });
+  const stopHeartbeat = startHeartbeat(store, runnerId, nowIso);
+
   const connection = await NativeConnection.connect({ address: config.temporal.address });
   try {
     const worker = await Worker.create({
@@ -44,6 +62,7 @@ export async function startRunner(configPath: string): Promise<void> {
     );
     await worker.run();
   } finally {
+    stopHeartbeat();
     await connection.close();
     await store.close();
   }

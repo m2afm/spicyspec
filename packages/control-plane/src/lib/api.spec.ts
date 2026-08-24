@@ -94,3 +94,21 @@ describe('method discipline', () => {
     expect((await handleApi({ method: 'DELETE', path: '/api/overview', query: {}, body: null }, deps())).status).toBe(405);
   });
 });
+
+describe('runners endpoint — federation visibility', () => {
+  it('lists registered runners with staleness computed at request time', async () => {
+    const { registerRunner } = await import('@spicyspec/store');
+    await registerRunner(store, {
+      id: 'box-1', host: 'box', pid: 1, taskQueue: 'spicyspec',
+      startedAt: '2026-08-23T23:00:00Z', heartbeatAt: '2026-08-23T23:59:45Z', accounts: ['primary'],
+    });
+    await registerRunner(store, {
+      id: 'box-2', host: 'laptop', pid: 2, taskQueue: 'spicyspec',
+      startedAt: '2026-08-23T20:00:00Z', heartbeatAt: '2026-08-23T20:05:00Z', accounts: ['secondary'],
+    });
+    const r = await GET('/api/runners');
+    const runners = r.json as Array<{ id: string; stale: boolean }>;
+    expect(runners.find((x) => x.id === 'box-1')?.stale).toBe(false);
+    expect(runners.find((x) => x.id === 'box-2')?.stale).toBe(true);
+  });
+});

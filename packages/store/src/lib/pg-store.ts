@@ -180,6 +180,11 @@ export async function openPgStore(options: PgStoreOptions): Promise<Store> {
       ]);
     },
 
+    async listKv(prefix: string): Promise<Array<{ key: string; value: string }>> {
+      const { rows } = await pg.query("SELECT key, value FROM kv WHERE key LIKE $1 || '%' ORDER BY key ASC", [prefix]);
+      return rows.map((r) => ({ key: String(r['key']), value: String(r['value']) }));
+    },
+
     async close(): Promise<void> {
       await options.end?.();
     },
