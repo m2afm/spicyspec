@@ -38,6 +38,7 @@ import { runsRootFor } from './parked-writer.js';
 import { consumeReviewDecision } from './review-consumption.js';
 import { findSpecDir } from './spec-dir.js';
 import { openSessionLogDir } from './session-log.js';
+import { ensureSpecBranch, specBranchName } from './spec-branch.js';
 import { ensureWorktree } from './worktree.js';
 
 export interface RunnerDeps {
@@ -52,6 +53,8 @@ export interface RunnerDeps {
   /** injected for tests */
   snapshotFn?: (input: WorkerRunInput) => Promise<FullSnapshot>;
   worktreeFn?: typeof ensureWorktree;
+  /** injected for tests; defaults to a real checkout */
+  ensureBranchFn?: typeof ensureSpecBranch;
   judgeProviders?: JudgeProvider[];
   judgeChainFn?: typeof judgeChain;
   nowMs?: () => number;
@@ -269,6 +272,15 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       if (cfg.maxParallelSpecs > 1) {
         const worktree = await (deps.worktreeFn ?? ensureWorktree)(cfg.repoCwd, input.specId);
         workCwd = worktree.path;
+      } else {
+        // Single-spec mode works the repo itself, so the BRANCH is the isolation. Without
+        // this the convention drifted: 005, 006, 007 and 008 all committed onto the 004
+        // branch, so four features of history answered to a fifth feature's name and no
+        // spec could be reviewed or reverted alone.
+        const dir = await findSpecDir(cfg.repoCwd, cfg.specsDir, input.specId);
+        const branch = specBranchName(dir, input.specId);
+        const result = await (deps.ensureBranchFn ?? ensureSpecBranch)(cfg.repoCwd, branch);
+        await deps.store.setKv(`branch:${input.specId}`, JSON.stringify(result));
       }
       workCwdBySpec.set(input.specId, workCwd);
 
