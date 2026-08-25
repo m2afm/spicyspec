@@ -218,6 +218,41 @@ h1, h2, h3, .display {
   color: var(--text-dim); text-transform: uppercase;
 }
 
+/* ── THE FAILURE CARD ──────────────────────────────────────
+   What a panel looks like when its own code threw. Two bad calls have blanked
+   this whole room; from now on a throw costs exactly the cell that threw, and
+   the card says so in words, because a founder looking at one red box needs to
+   know instantly whether the rest of the page is still telling the truth.
+   Static by law — a failure must not shimmer.                                */
+.panel-failed {
+  min-width: 0; min-height: 0; overflow: auto;
+  background: var(--surface);
+  border: var(--ink-thick) solid var(--shatta);
+  box-shadow: var(--shadow-red);
+  padding: 0.7rem 0.85rem;
+}
+.panel-failed .pf-head {
+  display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+  font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.04em;
+  color: var(--text); margin-bottom: 0.4rem;
+}
+.panel-failed .pf-tag {
+  font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--on-fill); background: var(--shatta);
+  padding: 0.1rem 0.35rem;
+}
+.panel-failed .pf-msg {
+  font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.45; color: var(--text);
+  background: var(--surface-alt); border: var(--ink-thin) solid var(--hairline);
+  padding: 0.35rem 0.45rem; overflow-wrap: anywhere; max-height: 7rem; overflow: auto;
+}
+.panel-failed .pf-hint {
+  font-family: var(--font-mono); font-size: 0.62rem; line-height: 1.5;
+  color: var(--text-dim); margin-top: 0.4rem;
+}
+/* Inside a Panel the chrome is already drawn, so the body failure is bare. */
+.panel-failed.inline { border: 0; box-shadow: none; padding: 0; background: none; }
+
 header.hero {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem;
   border-bottom: var(--ink-bold) solid var(--line);
@@ -611,6 +646,194 @@ footer { margin-top: 1.4rem; padding-top: 0.7rem; border-top: var(--ink-medium) 
 .where-list li { border-left: var(--ink-thick) solid var(--line); padding: 0.25rem 0 0.25rem 0.6rem; margin-bottom: 0.4rem; font-size: 0.85rem; }
 .where-list li.block { border-left-color: var(--shatta); }
 .where-src { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); margin-top: 0.7rem; }
+/* ── THE AGENTS DECK ───────────────────────────────────────────────
+   Colour is a token, never a literal (R5). Motion is transform/opacity only and
+   nothing here animates on the 4s push: the bands and the timeline set width
+   directly, so a state frame redraws them without a 400ms slide that makes a
+   still page look busy and a busy page look like it is lying. */
+
+.dim { color: var(--text-dim); }
+.hot { color: var(--hot); }
+.warnish { color: var(--flame); font-weight: 700; }
+
+/* what kind of command it was — the one word that orients the eye before reading */
+.cmdtag {
+  font-family: var(--font-mono); font-size: 0.54rem; font-weight: 700; letter-spacing: 0.1em;
+  padding: 0.06rem 0.3rem; border: 1px solid var(--line); background: var(--surface-alt);
+  color: var(--text-soft); flex: 0 0 auto; align-self: center; white-space: nowrap;
+}
+.cmdtag.test   { border-color: var(--hot); color: var(--hot); }
+.cmdtag.build  { border-color: var(--flame); color: var(--flame); }
+.cmdtag.script { border-color: var(--line); color: var(--text); }
+.cmdtag.write  { border-color: var(--flame); color: var(--text); }
+.cmdtag.git    { border-color: var(--line); color: var(--text-soft); }
+.cmdtag.unknown { border-style: dashed; border-color: var(--shatta); color: var(--shatta); }
+
+/* the sentence that replaced the wall of shell */
+.cmdwhat { font-size: 0.86rem; line-height: 1.35; color: var(--text); min-width: 0; overflow-wrap: anywhere; flex: 1 1 8rem; }
+.cmdwhat.unsure { color: var(--text-soft); font-style: italic; }
+.cmdhead { display: block; font-family: var(--font-mono); font-size: 0.64rem; font-style: normal; color: var(--text-dim); margin-top: 0.15rem; }
+.cmdhead code { font-size: inherit; overflow-wrap: anywhere; }
+
+.cmdshape { display: contents; }
+.cmdcount {
+  font-family: var(--font-mono); font-size: 0.66rem; font-weight: 700;
+  padding: 0.02rem 0.28rem; border: var(--ink-thin) solid var(--shatta); color: var(--shatta);
+  flex: 0 0 auto; align-self: center;
+}
+.cmdout {
+  font-family: var(--font-mono); font-size: 0.58rem; text-transform: uppercase;
+  letter-spacing: 0.09em; color: var(--text-dim); flex: 0 0 auto; align-self: center;
+}
+.cmdout.failed { color: var(--shatta); font-weight: 700; }
+
+.cmdlist { list-style: none; margin: 0; padding: 0; }
+.cmdrow {
+  border-left: var(--ink-bold) solid var(--line); background: var(--surface-alt);
+  padding: 0.4rem 0.55rem; margin-bottom: 0.45rem; min-width: 0;
+}
+.cmdrow.failed { border-left-color: var(--shatta); }
+.cmdrow.stopped { border-left-color: var(--inert); }
+.cmdrow-top { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: flex-start; min-width: 0; }
+.cmdrow-meta {
+  display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 0.3rem;
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the raw text: present, exact, and never the default face of a command */
+.cmdraw { margin-top: 0.35rem; }
+.cmdraw > summary {
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--hot);
+  cursor: pointer; list-style: none;
+}
+.cmdraw > summary::-webkit-details-marker { display: none; }
+.cmdraw > summary::before { content: '▸ '; }
+.cmdraw[open] > summary::before { content: '▾ '; }
+.cmdraw pre {
+  margin: 0.35rem 0 0.3rem; padding: 0.45rem 0.55rem; background: var(--surface-sunk);
+  border: 1px solid var(--hairline); font-size: 0.68rem; line-height: 1.45;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16rem; overflow-y: auto;
+}
+
+.cmdblock { margin-top: 0.9rem; border-top: var(--ink-thin) dashed var(--line-soft); padding-top: 0.6rem; }
+.cmdblock-head {
+  font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--shatta); margin-bottom: 0.45rem;
+}
+
+/* ── THE TREE ──────────────────────────────────────────────────── */
+.treebar, .histbar {
+  display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.7rem;
+}
+.histsearch {
+  flex: 1 1 12rem; min-width: 0; font-family: var(--font-mono); font-size: 0.72rem;
+  padding: 0.25rem 0.45rem; border: 1px solid var(--line); background: var(--surface);
+  color: var(--text);
+}
+.tree { list-style: none; margin: 0; padding: 0; }
+.tree > li { min-width: 0; }
+.tnode {
+  display: flex; align-items: stretch; gap: 0; width: 100%; text-align: left;
+  background: var(--surface); border: 0; border-top: 1px dashed var(--hairline);
+  box-shadow: none; padding: 0.35rem 0.2rem; cursor: pointer; min-width: 0; font: inherit;
+  color: var(--text);
+}
+.tnode:first-child { border-top: 0; }
+.tnode:hover:not(:disabled) { background: var(--surface-alt); transform: none; box-shadow: none; }
+.tnode:active:not(:disabled) { transform: none; box-shadow: none; }
+.tnode[aria-current="true"] { background: var(--surface-alt); }
+.tnode.worker .tn-name { font-size: 1rem; }
+.tnode.running { background: var(--surface); }
+.tnode.running .tn-name { color: var(--hot); }
+.tnode.failed .tn-name { color: var(--shatta); }
+.tnode.stopped { opacity: 0.72; }
+
+.tn-rail { display: flex; flex: 0 0 auto; align-self: stretch; }
+.tn-rail > i { display: block; width: 1.05rem; position: relative; }
+.tn-rail > i.pipe::before, .tn-rail > i.tee::before, .tn-rail > i.elbow::before {
+  content: ''; position: absolute; left: 50%; top: 0; width: 1px; background: var(--line-soft);
+}
+.tn-rail > i.pipe::before, .tn-rail > i.tee::before { bottom: 0; }
+.tn-rail > i.elbow::before { height: 0.85rem; }
+.tn-rail > i.tee::after, .tn-rail > i.elbow::after {
+  content: ''; position: absolute; left: 50%; top: 0.85rem; right: 0; height: 1px; background: var(--line-soft);
+}
+
+.tn-body { display: flex; flex-direction: column; gap: 0.18rem; min-width: 0; flex: 1 1 auto; }
+.tn-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
+.tn-name { font-family: var(--font-display); font-size: 0.92rem; letter-spacing: 0.03em; flex: 0 0 auto; }
+.tn-kids, .tn-ix {
+  font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim);
+  letter-spacing: 0.06em; flex: 0 0 auto;
+}
+.tn-ix { margin-left: auto; font-variant-numeric: tabular-nums; }
+.tn-what { font-size: 0.82rem; line-height: 1.35; color: var(--text-soft); min-width: 0; overflow-wrap: anywhere; }
+.tn-what .cmdwhat { font-size: 0.82rem; }
+.tn-meta {
+  display: flex; flex-wrap: wrap; gap: 0.6rem; font-family: var(--font-mono);
+  font-size: 0.6rem; color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.tn-now {
+  display: flex; gap: 0.4rem; font-family: var(--font-mono); font-size: 0.64rem;
+  color: var(--text-soft); min-width: 0; overflow-wrap: anywhere;
+}
+.tn-nowk { font-weight: 700; color: var(--text-dim); flex: 0 0 auto; }
+.tnode .runbar { height: 4px; }
+
+/* ── FAN-OUT INSTRUMENTS ───────────────────────────────────────── */
+.fanout {
+  display: grid; gap: 0; min-width: 0; margin: 0 calc(-1 * var(--pane-pad));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: var(--ink-thin) solid var(--line-soft);
+  border-bottom: var(--ink-thin) solid var(--line-soft);
+}
+@media (max-width: 1100px) { .fanout { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fan-n {
+  font-family: var(--font-display); font-size: 1.9rem; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.fan-n.hot { color: var(--hot); }
+.fan-n.bad { color: var(--shatta); }
+.fan-sub { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim); line-height: 1.4; }
+.fan-pairs {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.15rem 0.5rem;
+  font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim);
+}
+.fan-pairs b { font-family: var(--font-display); font-size: 0.85rem; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.bands { display: flex; height: 10px; border: 1px solid var(--line); background: var(--surface-alt); overflow: hidden; }
+.bands.unknown {
+  height: 10px; border: 1px solid var(--line);
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px);
+}
+.band { display: block; height: 100%; background: var(--line-soft); }
+.band.agents { background: var(--fill-solid); }
+.band.cmds   { background: var(--inert); }
+.band.done   { background: var(--fill-solid); }
+.band.cold   { background: var(--inert); }
+.band.bad    { background: var(--shatta); }
+.band.live   { background: var(--flame-soft); }
+.bandlegend {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem;
+  font-family: var(--font-mono); font-size: 0.56rem; color: var(--text-dim);
+}
+.bandlegend .band { width: 7px; height: 7px; display: inline-block; margin-right: 0.2rem; vertical-align: baseline; }
+.bandlegend b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* one agent's life, placed inside the tick's own window */
+.tl-track { position: relative; height: 12px; border: 1px solid var(--line); background: var(--surface-alt); overflow: hidden; }
+.tl-track.unknown { background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px); }
+.tl-span { position: absolute; top: 0; bottom: 0; background: var(--fill-solid); }
+.tl-span.running { background: var(--hot); }
+.tl-span.failed  { background: var(--shatta); }
+.tl-span.stopped { background: var(--inert); }
+.tl-scale {
+  display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.2rem;
+  font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 .linkish { background: none; border: 0; box-shadow: none; padding: 0; font: inherit; color: var(--hot); text-decoration: underline; cursor: pointer; }
 .linkish:hover:not(:disabled), .linkish:active:not(:disabled) { transform: none; box-shadow: none; }
 
@@ -1902,41 +2125,230 @@ const agentBadge = (liveCount, total, workerBusy) => {
 const barClass = (status) =>
   status === 'running' ? 'runbar live' : status === 'failed' ? 'runbar bad' : status === 'stopped' ? 'runbar cold' : 'runbar done';
 
-const AgentCard = ({ a, parent, index, selected, onOpen }) =>
-  h('button', {
-    className: 'agent ' + a.status + (a.kind === 'local_bash' ? ' cmd' : ''),
-    'aria-current': selected ? 'true' : 'false',
-    onClick: () => onOpen(a.id),
-  },
-    h('div', { className: 'agent-top' },
-      h('i', { className: 'sdot ' + a.status }),
-      h('span', { className: 'agent-name' }, agentLabel(a)),
-      h('span', { className: 'agent-ix' }, String(index).padStart(2, '0'))),
-    a.depth > 1 && parent && h('div', { className: 'agent-under' }, 'under ' + agentLabel(parent)),
-    h('div', { className: 'agent-desc' }, a.description),
-    h('div', { className: barClass(a.status) }, h('i', null)),
-    h('div', { className: 'agent-meta' }, AGENT_STAT(a).map((b, i) => h('span', { key: i }, b)),
-      a.status === 'running' && h('span', { style: { color: 'var(--hot)' } }, 'working')),
-    // The runtime's first progress line often just echoes the description; printing it twice
-    // makes a card look like it has news when it does not.
-    a.lastActivity && a.lastActivity !== a.description &&
-      h('div', { className: 'agent-last' }, a.lastActivity));
+/* ── COMMANDS, MADE LEGIBLE ────────────────────────────────────────
+   Everything below renders a `commandIntent()` result. The raw shell is never
+   the default face of a command anywhere in the room — it lives behind one
+   disclosure, verbatim, with a copy button, on every surface that shows it.
+   ------------------------------------------------------------------ */
 
-const AgentSheet = ({ a, parent, children, log, onClose }) => {
+const CMD_TAG_LABEL = {
+  test: 'TEST', build: 'BUILD', script: 'SCRIPT', write: 'WRITE', git: 'GIT',
+  search: 'SEARCH', read: 'READ', net: 'NET', proc: 'PROC', shell: 'SHELL', unknown: '?',
+};
+
+/** The kind chip. `unknown` gets its own face so an unclassified row cannot pass as one. */
+const CmdTag = ({ intent }) =>
+  h('span', {
+    className: 'cmdtag ' + intent.tag,
+    title: intent.known
+      ? 'classified from the command\'s shape, not from a model'
+      : 'the room has no rule that matches this command\'s shape',
+  }, CMD_TAG_LABEL[intent.tag] || '?');
+
+/**
+ * What the command was for, in one line — plus, when the room cannot tell, the LITERAL first
+ * step instead of an invented sentence. An unreadable command is a fact about the command,
+ * and printing a plausible description over it would be the room lying to look competent.
+ */
+const CmdWhat = ({ intent }) =>
+  h('span', { className: 'cmdwhat' + (intent.known ? '' : ' unsure') },
+    intent.text,
+    !intent.known && intent.head &&
+      h('span', { className: 'cmdhead' }, 'starts with: ', h('code', null, intent.head)));
+
+/** Shape facts, all literal counts off the text itself — never an estimate. */
+const CmdShape = ({ intent }) =>
+  h('span', { className: 'cmdshape' },
+    intent.heredoc
+      ? h('span', { title: 'the command carries an inline document terminated by ' + intent.heredoc }, 'inline document')
+      : intent.steps > 1 && h('span', { title: 'steps joined by &&, || or ;' }, intent.steps + ' steps'),
+    h('span', { title: 'the length of the command the runtime recorded' }, intent.chars + ' chars'));
+
+/** The raw text, one click away, verbatim, copyable. The founder's escape hatch to evidence. */
+const RawCommand = ({ raw, onCopy, label }) =>
+  h('details', { className: 'cmdraw' },
+    h(
+      'summary',
+      null,
+      label ||
+        (cmdTruncated(raw)
+          // The runner caps a recorded command at RUNNER_DESC_CAP characters. A quarter of
+          // the corpus hits that cap and is cut mid-word, so "the N characters it actually
+          // ran" was a completeness claim the room cannot make. Say what it has.
+          ? 'show the first ' + RUNNER_DESC_CAP + ' characters — the runner cut it off here'
+          : 'show the ' + String(raw || '').length + ' characters it actually ran'),
+    ),
+    h('pre', null, raw || '(the runtime recorded no text for this command)'),
+    onCopy && h('button', {
+      type: 'button', className: 'linkish',
+      onClick: (e) => { e.preventDefault(); onCopy(raw); },
+    }, 'copy command'));
+
+/**
+ * A collapsed group of identical commands: one row, one count.
+ *
+ * The founder's screenshot had four of these stacked, each 300 characters of shell, pushing
+ * the only line that needed a human off the panel. One row with a ×4 is the same information
+ * and none of the wall.
+ */
+const CmdGroupRow = ({ row, onCopy, onOpen }) =>
+  h('li', { className: 'cmdrow ' + row.status },
+    h('div', { className: 'cmdrow-top' },
+      h('i', { className: 'sdot ' + row.status }),
+      h(CmdTag, { intent: row.intent }),
+      h(CmdWhat, { intent: row.intent }),
+      row.count > 1 && h('span', {
+        className: 'cmdcount',
+        title: 'the same command, with the same outcome, ' + row.count + ' times this tick',
+      }, '×' + row.count),
+      h('span', { className: 'cmdout ' + row.status }, row.status)),
+    h('div', { className: 'cmdrow-meta' },
+      h(CmdShape, { intent: row.intent }),
+      row.durationMs != null && h('span', null,
+        (row.count > 1 ? 'median ' : '') + spanShort(row.durationMs) +
+        (row.count > 1 ? ' of ' + row.timed + ' timed' : '')),
+      row.durationMs == null && h('span', { className: 'dim' }, 'no duration recorded'),
+      onOpen && h('button', { type: 'button', className: 'linkish', onClick: () => onOpen(row.ids[0]) },
+        row.count > 1 ? 'open the first' : 'open')),
+    h(RawCommand, { raw: row.raw, onCopy }));
+
+/* ── THE LIVE TREE ─────────────────────────────────────────────────
+   A tick is not a list. On the tick that started this, the worker dispatched
+   one agent and fifty-eight background commands, and a flat grid of fifty-nine
+   equal cards said nothing about who dispatched what. Parentage and depth are
+   the structure of the work, so they are the structure of the view.
+   ------------------------------------------------------------------ */
+
+/** The elbow/pipe guides down the left of a nested row. Pure decoration, hidden from AT. */
+const TreeRail = ({ depth, trail }) =>
+  depth === 0 ? null : h('span', { className: 'tn-rail', 'aria-hidden': 'true' },
+    Array.from({ length: depth }, (unused, i) => h('i', {
+      key: i,
+      className: i === depth - 1 ? (trail[i] ? 'elbow' : 'tee') : (trail[i] ? 'blank' : 'pipe'),
+    })));
+
+const TreeNode = ({ node, index, tokenShare, selected, onOpen, now }) => {
+  const a = node.a;
+  const isCmd = a.kind === 'local_bash';
+  const intent = isCmd ? commandIntent(a.description) : null;
+  const startMs = a.startedAt ? Date.parse(a.startedAt) : NaN;
+  const elapsed = a.status === 'running' && isFinite(startMs) ? (now - startMs) : null;
+  return h('li', null,
+    h('button', {
+      className: 'tnode ' + a.status + (isCmd ? ' cmd' : '') + (a.kind === 'session' ? ' worker' : ''),
+      'aria-current': selected ? 'true' : 'false',
+      onClick: () => onOpen(a.id),
+      title: isCmd ? 'open this command — its full text, timing and place in the tree' : 'open this agent',
+    },
+      h(TreeRail, { depth: node.depth, trail: node.trail }),
+      h('span', { className: 'tn-body' },
+        h('span', { className: 'tn-head' },
+          h('i', { className: 'sdot ' + a.status }),
+          h('span', { className: 'tn-name' }, isCmd ? 'command' : agentLabel(a)),
+          intent && h(CmdTag, { intent }),
+          node.childCount > 0 && h('span', {
+            className: 'tn-kids',
+            title: node.childCount + ' dispatched by this one, ' + node.liveKids + ' still out',
+          }, node.childCount + ' below' + (node.liveKids ? ' · ' + node.liveKids + ' out' : '')),
+          node.orphan && h('span', {
+            className: 'tn-kids warnish',
+            title: 'this row names a parent that has not reached this page — it is shown at the root rather than hidden',
+          }, 'parent not seen'),
+          h('span', { className: 'tn-ix', title: 'position in this tick\'s dispatch order' },
+            String(index).padStart(2, '0'))),
+        // What it is FOR. For a command that is the intent; for an agent, its own description.
+        h('span', { className: 'tn-what' },
+          intent ? h(CmdWhat, { intent }) : a.description),
+        h('span', { className: barClass(a.status) }, h('i', null)),
+        h('span', { className: 'tn-meta' },
+          AGENT_STAT(a).map((b, i) => h('span', { key: i }, b)),
+          tokenShare != null && h('span', {
+            title: 'this agent\'s share of every token the runtime attributed to a subagent this tick',
+          }, Math.round(tokenShare * 100) + '% of subagent tokens'),
+          elapsed != null && h('span', { className: 'hot' }, 'working ' + spanShort(elapsed)),
+          a.status === 'running' && elapsed == null && h('span', { className: 'hot' }, 'working')),
+        // The runtime's first progress line often just echoes the description; printing it
+        // twice makes a row look like it has news when it does not.
+        a.lastActivity && a.lastActivity !== a.description &&
+          h('span', { className: 'tn-now' },
+            h('span', { className: 'tn-nowk' }, a.status === 'running' ? 'now' : 'last'),
+            a.lastActivity))));
+};
+
+/**
+ * The tree itself. `rows` is already flattened into document order by `agentTree`, so this is
+ * a map — the recursion lives in the pure helper where it can be tested.
+ */
+const AgentTreeView = ({ rows, tokenTotal, openId, onOpen, order, now }) =>
+  h('ul', { className: 'tree' }, rows.map((node) => h(TreeNode, {
+    key: node.a.id,
+    node,
+    // Position in the tick's SPAWN order, not in this list, so a row keeps its number as
+    // things finish around it and as filters change what is on screen.
+    index: order.indexOf(node.a.id),
+    tokenShare: tokenTotal > 0 && node.a.kind !== 'session' && node.a.tokens ? node.a.tokens / tokenTotal : null,
+    selected: node.a.id === openId,
+    onOpen,
+    now,
+  })));
+
+/** One agent's life drawn inside the tick's own window, so "when" is a place, not a number. */
+const AgentTimeline = ({ span, series, a, now }) => {
+  if (!span || !span.known) {
+    return h('div', null,
+      h('div', { className: 'tl-track unknown', role: 'img',
+        'aria-label': 'this row carries no start stamp and no duration to subtract one from, so its place in the tick is unknown' }),
+      h('div', { className: 'tl-scale' },
+        h('span', { className: 'dim' }, 'no start stamp, and no duration to subtract one from — the room cannot place this in the tick')));
+  }
+  const st = agentStamps(a, now);
+  const hhmmss = (t) => (isFinite(t) ? new Date(t).toTimeString().slice(0, 8) : '—');
+  const ended = isFinite(st.end) ? (a.status === 'running' ? 'still out' : hhmmss(st.end)) : '—';
+  return h('div', null,
+    h('div', { className: 'tl-track', role: 'img',
+      'aria-label': 'ran from ' + hhmmss(st.start) + ' to ' + ended + ' within a tick window of ' + spanShort(series.to - series.from) },
+      h('i', { className: 'tl-span ' + a.status, style: { left: (span.left * 100).toFixed(2) + '%', width: (span.width * 100).toFixed(2) + '%' } })),
+    h('div', { className: 'tl-scale' },
+      h('span', null, new Date(series.from).toTimeString().slice(0, 5)),
+      h('span', null, hhmmss(st.start) + (span.derived ? ' (derived)' : '') + ' → ' + ended),
+      h('span', null, new Date(series.to).toTimeString().slice(0, 5))),
+    span.derived && h('div', { className: 'where-src' },
+      'This stream carried no start stamp for the row. The start above is its END TIME MINUS THE ' +
+      'DURATION the runtime reported — arithmetic, not a measurement, and it is marked as such.'));
+};
+
+const AgentSheet = ({ a, parent, children, log, series, now, onCopy, onClose }) => {
   if (!a) return null;
+  const isCmd = a.kind === 'local_bash';
+  const intent = isCmd ? commandIntent(a.description) : null;
   return h('div', { className: 'sheet', role: 'dialog', 'aria-label': 'Agent ' + a.name },
     h('div', { className: 'sheet-head' },
       h('i', { className: 'sdot ' + a.status }),
       h('span', { className: 'display', style: { fontSize: '1.3rem', flex: 1, minWidth: 0 } }, agentLabel(a)),
       h('button', { onClick: onClose }, 'Close')),
     h('div', { className: 'sheet-body' },
-      h('h4', null, 'What it was asked to do'),
-      h('div', { style: { fontSize: '0.9rem' } }, a.description),
+      h('h4', null, isCmd ? 'What this command was for' : 'What it was asked to do'),
+      isCmd
+        ? h('div', null,
+            h('div', { className: 'cmdrow-top', style: { fontSize: '0.9rem' } },
+              h(CmdTag, { intent }), h(CmdWhat, { intent })),
+            h('div', { className: 'cmdrow-meta' }, h(CmdShape, { intent })),
+            h(RawCommand, {
+              raw: a.description,
+              onCopy,
+              label: cmdTruncated(a.description)
+                ? 'show the first ' + RUNNER_DESC_CAP + ' characters — the runner cut it off here'
+                : 'show the command it actually ran',
+            }))
+        : h('div', { style: { fontSize: '0.9rem' } }, a.description),
       h('div', { className: 'agent-meta', style: { marginTop: '0.5rem' } },
         h('span', null, a.status),
         ...AGENT_STAT(a).map((b, i) => h('span', { key: i }, b)),
         parent && h('span', null, 'dispatched by ' + agentLabel(parent)),
         h('span', null, 'depth ' + a.depth)),
+
+      h('h4', null, 'When it ran, inside the tick'),
+      h(AgentTimeline, { span: agentSpan(a, series, now), series, a, now }),
 
       children.length > 0 && h('div', null,
         h('h4', null, 'It dispatched ' + children.length + ' of its own'),
@@ -1955,19 +2367,68 @@ const AgentSheet = ({ a, parent, children, log, onClose }) => {
               h('span', { className: 'd' }, e.detail)))),
 
       a.summary && h('div', null, h('h4', null, 'What it returned'), h('pre', null, a.summary)),
-      a.prompt && h('div', null, h('h4', null, 'The prompt it was given'), h('pre', null, a.prompt)),
+      // WHY it was dispatched. The prompt is the only record of the worker's reasoning for
+      // spawning this agent at all, and it arrives with the on-demand detail rather than in
+      // the snapshot — so an agent that HAS one and has not loaded it yet says which it is,
+      // instead of looking identical to one that never had a prompt.
+      a.prompt
+        ? h('div', null, h('h4', null, 'Why it was dispatched — the prompt it was given'), h('pre', null, a.prompt))
+        : a.hasPrompt && h('div', null,
+            h('h4', null, 'Why it was dispatched'),
+            h('div', { className: 'mono', style: { fontSize: '0.7rem', color: 'var(--text-dim)' } },
+              'This agent was given a prompt. It is fetched with the detail rather than pushed with every frame — if this line persists, the detail request did not come back.')),
+      !a.hasPrompt && !a.prompt && a.kind === 'local_agent' && h('div', null,
+        h('h4', null, 'Why it was dispatched'),
+        h('div', { className: 'mono', style: { fontSize: '0.7rem', color: 'var(--text-dim)' } },
+          'The stream carried no prompt for this agent, so the room cannot say more than its description above.')),
       a.outputFile && h('div', null, h('h4', null, 'Full output on disk'), h('pre', null, a.outputFile))));
 };
 
-const WherePanel = ({ where }) => {
+/**
+ * WHERE WE ARE.
+ *
+ * The blockers arrive as `{ what, why }` pairs, and one shape of them puts a RAW SHELL
+ * COMMAND in `why`. Four of those, at 300 characters each, is what the founder was actually
+ * looking at when they said this tab needed the deck's treatment: the one line that needed a
+ * human — "3 specs awaiting your click: 005, 006, 007" — was underneath a wall of heredocs.
+ *
+ * So the blockers are SPLIT here. Anything a person has to act on stays prose and stays
+ * first. Anything whose `why` is a command goes through `commandIntent` and collapses by
+ * identical text into one row apiece, with the raw shell behind a disclosure. Nothing is
+ * dropped: every blocker the server sent is still on the panel, and every raw character is
+ * still one click away.
+ */
+const WherePanel = ({ where, onCopy }) => {
   if (!where) return h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } }, 'waiting for the first frame…');
+  const all = Array.isArray(where.blockers) ? where.blockers : [];
+  const shelly = (b) => /background command|command failed/i.test(String(b.what || '')) || looksLikeShell(b.why);
+  const human = all.filter((b) => !shelly(b));
+  const cmds = all.filter(shelly);
+  // The same collapse the history uses, fed the blocker's own `why` as the command text.
+  const cmdRows = historyRows(cmds.map((b, i) => ({
+    id: 'blocker-' + i, kind: 'local_bash', description: String(b.why || ''), status: 'failed',
+  })));
+
   return h('div', null,
     h('div', { className: 'where-head' }, where.headline),
     where.phase && h('div', { className: 'where-phase' }, where.phase),
     h('ul', { className: 'where-list' },
-      where.blockers.map((b, i) => h('li', { key: 'b' + i, className: 'block' },
+      human.map((b, i) => h('li', { key: 'b' + i, className: 'block' },
         h('strong', null, b.what), h('br'), h('span', { style: { fontSize: '0.8rem' } }, b.why))),
       where.sentences.map((t, i) => h('li', { key: 's' + i }, t))),
+
+    cmds.length > 0 && h('div', { className: 'cmdblock' },
+      h('div', { className: 'cmdblock-head' },
+        cmds.length === 1 ? 'One background command failed' : cmds.length + ' background commands failed',
+        cmdRows.length !== cmds.length &&
+          h('span', { className: 'dim' }, ' · ' + cmdRows.length + ' distinct, the rest are repeats')),
+      h('ul', { className: 'cmdlist' },
+        cmdRows.map((row) => h(CmdGroupRow, { key: row.key, row, onCopy }))),
+      h('div', { className: 'where-src' },
+        'A failed background command is not always a blocker — the worker often runs a probe it ' +
+        'expects to fail. Each row says what the command was FOR, read off its shape; the exact ' +
+        'text it ran is behind the disclosure, unedited.')),
+
     // Stated outright, because a summary that looks model-written invites more trust than
     // this one has earned — every line above is assembled from a recorded event.
     h('div', { className: 'where-src' }, 'Derived from ' + where.derivedFrom + '.'));
@@ -1985,10 +2446,77 @@ const clock = (ms) => (ms ? new Date(ms).toTimeString().slice(0, 5) : '—');
 const BAD = ['stalled', 'hung', 'timed-out', 'errored', 'no-progress', 'no-attempt', 'account-refused'];
 const WARN = ['rate-limited', 'aborted', 'awaiting-founder'];
 
+/* ── THE PANEL BOUNDARY ────────────────────────────────────────────
+   Twice now a single bad call took the WHOLE room to a blank page: metrics.burn()
+   read as a number when it returns a Fact, charts.sparkPath() called positionally
+   when it takes (values, opts) and returns an object. Both threw inside render,
+   nothing caught them, and React did the only thing it can with an uncaught render
+   error — it unmounted the entire tree. A page whose job is to report on an
+   unattended build has one duty above all others: it must never go dark.
+
+   So every panel and every deck zone renders inside this boundary. A throw now
+   costs the founder exactly the cell that threw. Its siblings keep drawing and
+   keep updating on the 4s state push, and the console keeps the stack.
+
+   A class, because an error boundary is the one thing React still has no hook for.
+   No JSX: h() all the way down, same as the rest of this page. In the healthy path
+   it renders a Fragment and therefore adds NO DOM node, so the deck's grid-area
+   layout is exactly what it was before the boundary existed.
+   ------------------------------------------------------------------ */
+class PanelBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { err: null };
+  }
+
+  /* React's contract: return the next state, and it renders the fallback in place of
+     the subtree it just unmounted. Everything OUTSIDE this component is untouched. */
+  static getDerivedStateFromError(err) {
+    return { err: err || new Error('a panel threw a value that was not an Error') };
+  }
+
+  componentDidCatch(err, info) {
+    // The card shows one line; the console keeps the stack. The founder reads the
+    // card, whoever fixes it reads the console, and neither has to guess the name.
+    try {
+      console.error(
+        '[room] panel failed: ' + (this.props.name || 'unnamed panel'),
+        err,
+        (info && info.componentStack) || '');
+    } catch (_) { /* a console that cannot log must not become a second failure */ }
+  }
+
+  render() {
+    const err = this.state.err;
+    if (!err) return h(React.Fragment, null, this.props.children);
+    const msg = err && err.message ? String(err.message) : String(err);
+    return h('section', { className: 'panel-failed ' + (this.props.zone || ''), role: 'alert' },
+      h('div', { className: 'pf-head' },
+        h('span', { className: 'pf-name' }, this.props.name || 'This panel'),
+        h('span', { className: 'pf-tag' }, 'failed to draw')),
+      h('div', { className: 'pf-msg' }, msg),
+      h('div', { className: 'pf-hint' },
+        'Only this panel is affected — every other panel in the room is still live and ' +
+        'still updating on the state push. The full stack is in the browser console; ' +
+        'reloading redraws this one.'));
+  }
+}
+
+/* Wrap one subtree so its failure cannot reach its siblings. `zone` carries the
+   layout class the fallback has to keep — a deck zone is placed by grid-area, so a
+   fallback without that class would land in the wrong cell and shove the deck. */
+function guard(name, node, zone) {
+  if (node === null || node === undefined || node === false) return node;
+  return h(PanelBoundary, { name: name, zone: zone || '' }, node);
+}
+
 function Panel({ title, sub, alert, children }) {
   return h('section', { className: 'panel' + (alert ? ' alert' : '') },
     title && h('div', { className: 'panel-title' }, h('span', null, title), sub && h('span', { className: 'sub' }, sub)),
-    children);
+    // The body renders inside the boundary, so a panel added tomorrow is covered
+    // without anyone remembering to wrap it. The chrome above is already drawn,
+    // hence the inline fallback rather than a second card inside this one.
+    h(PanelBoundary, { name: title || 'This panel', zone: 'inline' }, children));
 }
 
 function Stat({ n, l }) {
@@ -2326,6 +2854,566 @@ const sparkPathOf = (values, w, hgt) => {
   const span = hi - lo || 1;
   const step = w / (v.length - 1);
   return v.map((n, i) => (i === 0 ? 'M' : 'L') + (i * step).toFixed(1) + ' ' + (hgt - ((n - lo) / span) * hgt).toFixed(1)).join(' ');
+};
+
+/* ── COMMAND INTENT ────────────────────────────────────────────────
+   The founder's complaint, in one sentence: a failed background command
+   rendered as three hundred characters of raw shell — heredocs, jest shard
+   loops, grep pipelines — at 0.8rem, four times over, and the one line that
+   actually needed a human ("3 specs awaiting your click: 005, 006, 007") was
+   buried underneath it.
+
+   A shell command does not describe itself to a person at a glance, but its
+   SHAPE does. `pnpm exec jest --shard 2/8` is a test run whatever else shares
+   the line; `python - <<'PY'` is a script rewriting a file; `cat >> tasks.md
+   <<'EOF'` is an append. So: read the shape, say what the command was FOR,
+   and put the raw text one click away instead of in the founder's face.
+
+   The rule that keeps this honest, and the reason it is a pure function with
+   its own tests: WHEN THE SHAPE SAYS NOTHING, THE ROW SAYS SO. `known:false`
+   is a real answer, rendered as one, with the literal first step shown beside
+   it. A description invented for an unreadable command would be the same class
+   of lie as a chip that is always on.
+   ------------------------------------------------------------------ */
+
+/** A heredoc opener. Its BODY is data and must be cut out before anything splits on `;`. */
+const CMD_HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/;
+
+/** Steps a reader would count. `time`/`cd`/`set` are scaffolding, not intent. */
+const CMD_NOISE = /^(cd|set|export|unset|true|false|:|source|\.|then|else|fi|do|done|time|env|sudo|exec)$/;
+
+/** How much a classified step is worth when a chain has several. A test run beats an `ls`. */
+const CMD_WEIGHT = { test: 9, build: 8, script: 7, write: 6, git: 5, net: 5, search: 4, proc: 3, read: 2, shell: 1, unknown: 0 };
+
+/** Quotes off. Used on every token before it is shown, so a path never arrives wearing "". */
+const cmdQuoted = (v) => String(v == null ? '' : v).replace(/^["'`]|["'`]$/g, '').trim();
+
+/** Basename, both separators, quotes stripped: 'C:/x/jest.config.cts' → 'jest.config.cts'. */
+const cmdBase = (word) => cmdQuoted(word).replace(/^.*[\\/]/, '');
+
+/** …/two/trailing/segments — a path stays a path in a one-line row instead of a wall. */
+const cmdPath = (p) => {
+  const clean = cmdQuoted(p).replace(/\\/g, '/');
+  if (!clean) return null;
+  const parts = clean.split('/').filter(Boolean);
+  return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : clean;
+};
+
+/** Tokens of a step, quoted runs kept whole so `-t "a b"` is two tokens and not three. */
+const cmdTokens = (s) => (String(s == null ? '' : s).match(/"[^"]*"|'[^']*'|\S+/g) || []);
+
+/** Anything with a separator or an extension. Used to name the file a step was aimed at. */
+const CMD_PATHY = /[\\/]|\.[A-Za-z0-9]{1,6}$/;
+const lastPathIn = (s) => {
+  const toks = cmdTokens(s).map(cmdQuoted).filter((t) => t && t[0] !== '-' && t !== '.' && t !== '..');
+  for (let i = toks.length - 1; i >= 0; i -= 1) if (CMD_PATHY.test(toks[i])) return cmdPath(toks[i]);
+  return null;
+};
+
+/** Quoted path literals inside a heredoc body — the file an inline script names. */
+const pathsInText = (body) => {
+  const re = /["'`]([\w./\\@ -]{3,120}\.[A-Za-z0-9]{1,6})["'`]/g;
+  const out = [];
+  let m = re.exec(String(body == null ? '' : body));
+  while (m && out.length < 4) {
+    const p = cmdPath(m[1]);
+    if (p && out.indexOf(p) < 0) out.push(p);
+    m = re.exec(String(body == null ? '' : body));
+  }
+  return out;
+};
+
+/**
+ * Split a command into its steps. The heredoc body goes first: a Python script full of
+ * newlines and semicolons split into forty "steps" is how the first cut of this reported a
+ * two-step command as a forty-step one, which is a made-up number in a room that bans them.
+ */
+const cmdSegments = (raw) => {
+  const text = String(raw == null ? '' : raw);
+  const hd = text.match(CMD_HEREDOC);
+  const line = hd ? text.slice(0, hd.index + hd[0].length) : text;
+  return line.split(/&&|\|\||;|\n/).map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+};
+
+const GIT_VERBS = {
+  log: 'read the git log', status: 'check the working tree', diff: 'read a git diff',
+  show: 'read a commit', add: 'stage files', commit: 'commit', push: 'push a branch',
+  pull: 'pull', fetch: 'fetch', checkout: 'switch or restore files', switch: 'switch branch',
+  branch: 'read or move a branch', stash: 'stash changes', reset: 'reset the index',
+  'rev-parse': 'resolve a git ref', 'cat-file': 'read a git object', 'ls-files': 'list tracked files',
+  worktree: 'manage a worktree', tag: 'read or write a tag', config: 'read or write git config',
+  blame: 'blame a file', restore: 'restore files', revert: 'revert a commit', merge: 'merge',
+  rebase: 'rebase', clean: 'clean the tree', grep: 'search tracked files', apply: 'apply a patch',
+};
+
+/**
+ * One step → what it was for, or null when the shape carries no answer.
+ *
+ * Ordered by specificity, first match wins. A shard flag buried inside a `cd … && pnpm exec
+ * jest` chain is the single most useful word on the line, so the test rule is first and reads
+ * the whole step rather than only its head word.
+ */
+const classifyCommand = (segment) => {
+  const s = String(segment == null ? '' : segment).replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  let m;
+
+  if ((m = s.match(/\b(jest|vitest|pytest|mocha|playwright)\b/))) {
+    const shard = s.match(/--shard[= ]"?(\d+)\s*\/\s*(\d+)/);
+    const listing = /--listTests\b/.test(s);
+    const cfg = s.match(/--config[= ]?(\S+)/);
+    const pat = s.match(/--test(?:PathPatterns?|NamePattern|PathPattern|Path)[= ]?("[^"]{1,60}"|'[^']{1,60}'|\S{1,60})/);
+    return { tag: 'test', text:
+      (listing ? 'list which ' : 'run the ') + m[1] + ' tests'
+      + (cfg ? ' (' + cmdBase(cfg[1]) + ')' : '')
+      + (shard ? ' — shard ' + shard[1] + ' of ' + shard[2] : '')
+      + (pat ? ' — matching ' + cmdQuoted(pat[1]) : '') };
+  }
+  if (/\bnx\b/.test(s)) {
+    const many = s.match(/\bnx run-many\b.*?(?:-t|--targets?)[= ]([\w,-]+)/);
+    if (many) return { tag: 'build', text: 'run nx ' + many[1] + ' across the workspace' };
+    const run = s.match(/\bnx run ([\w@/.-]+):([\w-]+)/);
+    if (run) return { tag: 'build', text: 'run nx ' + run[2] + ' on ' + run[1] };
+    const two = s.match(/\bnx ([\w-]+) ([\w@/.-]+)/);
+    if (two && two[2][0] !== '-') return { tag: 'build', text: 'run nx ' + two[1] + ' on ' + two[2] };
+    return { tag: 'build', text: 'run an nx target' };
+  }
+  if (/\btsc\b|\btypecheck\b/.test(s)) return { tag: 'build', text: 'typecheck' };
+  if (/\beslint\b|\blint\b/.test(s)) return { tag: 'build', text: 'run the linter' };
+  if (/\b(?:pnpm|npm|yarn|bun)\b/.test(s)) {
+    const script = s.match(/\b(?:pnpm|npm|yarn|bun)(?: run| exec| dlx)? ([\w:@/.-]+)/);
+    return { tag: 'build', text: script ? 'run the package script ' + script[1] : 'run a package-manager command' };
+  }
+  if ((m = s.match(/\bgit ([a-z-]+)/))) {
+    return { tag: 'git', text: GIT_VERBS[m[1]] || ('run git ' + m[1]) };
+  }
+  if (/\b(?:grep|rg)\b/.test(s)) {
+    const after = s.split(/\b(?:grep|rg)\b/)[1] || '';
+    const toks = cmdTokens(after).filter((t) => t[0] !== '-').map(cmdQuoted);
+    const pat = toks.length ? toks[0] : null;
+    const where = toks.length > 1 ? cmdPath(toks[1]) : null;
+    return { tag: 'search', text: pat ? 'search for ' + pat + (where ? ' in ' + where : '') : 'search the tree' };
+  }
+  if (/\bfind\b/.test(s)) {
+    const nm = s.match(/-name\s+("[^"]*"|'[^']*'|\S+)/);
+    return { tag: 'search', text: 'find files' + (nm ? ' named ' + cmdQuoted(nm[1]) : '') };
+  }
+  if (/\bsed\b/.test(s)) {
+    const f = lastPathIn(s);
+    if (/\bsed\b[^|]*-i\b|--in-place/.test(s)) return { tag: 'write', text: 'rewrite ' + (f || 'a file') + ' in place with sed' };
+    const rng = s.match(/-n\s+["']?(\d+),?(\d*)p/);
+    if (rng) return { tag: 'read', text: 'read line' + (rng[2] ? 's ' + rng[1] + '–' + rng[2] : ' ' + rng[1]) + ' of ' + (f || 'a file') };
+    return { tag: 'read', text: 'filter text with sed' + (f ? ' from ' + f : '') };
+  }
+  if (/\bawk\b/.test(s)) return { tag: 'read', text: 'extract fields with awk' };
+  if (/\bwc\b/.test(s)) { const f = lastPathIn(s); return { tag: 'read', text: 'count lines' + (f ? ' in ' + f : '') }; }
+  if (/\b(?:cat|head|tail|less|more|bat)\b/.test(s)) {
+    const f = lastPathIn(s);
+    const n = s.match(/\b(?:head|tail)\s+-n?\s*(\d+)/);
+    return { tag: 'read', text: 'read ' + (f || 'a file') + (n ? ' (' + n[1] + ' lines)' : '') };
+  }
+  if (/\bnode\b/.test(s)) {
+    if (/\bnode -e\b/.test(s)) return { tag: 'script', text: 'run an inline Node script' };
+    const f = lastPathIn(s);
+    return { tag: 'script', text: 'run a Node script' + (f ? ' — ' + f : '') };
+  }
+  if (/\bpython3?\b/.test(s)) {
+    if (/\bpython3? -c\b/.test(s)) return { tag: 'script', text: 'run an inline Python script' };
+    const f = lastPathIn(s);
+    return { tag: 'script', text: 'run a Python script' + (f ? ' — ' + f : '') };
+  }
+  if (/\b(?:curl|wget)\b/.test(s)) {
+    const url = s.match(/https?:\/\/[^\s"']{1,60}/);
+    return { tag: 'net', text: 'fetch ' + (url ? url[0] : 'a URL') };
+  }
+  if (/\b(?:cp|copy)\b/.test(s)) return { tag: 'write', text: 'copy files' };
+  if (/\bmv\b/.test(s)) { const f = lastPathIn(s); return { tag: 'write', text: 'move or rename' + (f ? ' ' + f : ' a file') }; }
+  if (/\brm\b/.test(s)) { const f = lastPathIn(s); return { tag: 'write', text: 'delete' + (f ? ' ' + f : ' files') }; }
+  if (/\bmkdir\b/.test(s)) return { tag: 'write', text: 'make a directory' };
+  if (/\btouch\b/.test(s)) return { tag: 'write', text: 'create an empty file' };
+  if (/\b(?:ls|dir)\b/.test(s)) { const f = lastPathIn(s); return { tag: 'read', text: 'list ' + (f || 'a directory') }; }
+  if (/\b(?:ps|tasklist|kill|taskkill|pkill)\b/.test(s)) return { tag: 'proc', text: 'inspect or stop a process' };
+  if (/\bsleep\b/.test(s)) { const n = s.match(/\bsleep\s+([\d.]+)/); return { tag: 'proc', text: 'wait' + (n ? ' ' + n[1] + 's' : '') }; }
+  if (/\bdate\b/.test(s)) return { tag: 'shell', text: 'read the clock' };
+  if (/^(?:echo|printf)\b/.test(s)) return { tag: 'shell', text: 'print a marker' };
+  if (/>>?\s*\S/.test(s) && !/^\d?>&|2>/.test(s)) { const f = lastPathIn(s); return { tag: 'write', text: 'write to ' + (f || 'a file') }; }
+  return null;
+};
+
+/** A heredoc is a command WRITING A DOCUMENT, and the document is the point of the line. */
+const heredocIntent = (opener, body) => {
+  const firstLine = String(body == null ? '' : body).split('\n').map((l) => l.trim()).filter(Boolean)[0] || null;
+  if (/\bgit commit\b/.test(opener)) {
+    return { tag: 'git', text: 'commit' + (firstLine ? ' — "' + firstLine.slice(0, 72) + '"' : ' with a message written inline') };
+  }
+  if (/\b(?:cat|tee)\b/.test(opener)) {
+    const f = lastPathIn(opener.replace(/<<[\s\S]*$/, ''));
+    return { tag: 'write', text: (/>>/.test(opener) ? 'append to ' : 'write ') + (f || 'a file') + ' from an inline document' };
+  }
+  if (/\bpython3?\b/.test(opener)) {
+    const named = pathsInText(body);
+    return { tag: 'script', text: 'run an inline Python script' + (named.length ? ' — it names ' + named.join(', ') : '') };
+  }
+  if (/\bnode\b/.test(opener)) {
+    const named = pathsInText(body);
+    return { tag: 'script', text: 'run an inline Node script' + (named.length ? ' — it names ' + named.join(', ') : '') };
+  }
+  if (/\b(?:bash|sh|zsh)\b/.test(opener)) return { tag: 'script', text: 'run an inline shell script' };
+  return null;
+};
+
+/**
+ * What was this command FOR?
+ *
+ * Returns `{ known, tag, text, head, chars, steps, heredoc, raw }`. `text` is never a guess:
+ * on `known:false` it says the room could not tell, and `head` carries the literal first step
+ * so the founder still has the evidence rather than a shrug.
+ */
+/**
+ * The runner records a command's text capped at this many characters (session-log's
+ * task_started description). 264 of 1071 commands on record are EXACTLY this long and cut
+ * mid-word — so a length equal to the cap means "there was more", and every surface that
+ * shows the text must say so rather than implying it is the whole command.
+ */
+const RUNNER_DESC_CAP = 500;
+const cmdTruncated = (raw) => String(raw || '').length >= RUNNER_DESC_CAP;
+
+/** A step at or below this weight is bookkeeping (echo, cd, true) — it must never be the
+ * whole story for a command whose substantive half the room could not classify. */
+const CMD_TRIVIAL_WEIGHT = 2;
+
+const commandIntent = (raw) => {
+  const text = typeof raw === 'string' ? raw : '';
+  const chars = text.length;
+  const segs = cmdSegments(text);
+  const head = (segs.length ? segs[0] : text.replace(/\s+/g, ' ').trim()).slice(0, 96);
+  const hd = text.match(CMD_HEREDOC);
+  const base = { chars, steps: segs.length, heredoc: hd ? hd[2] : null, head, raw: text };
+
+  if (!text.trim()) {
+    return Object.assign({}, base, { known: false, tag: 'unknown', text: 'a command whose text was never recorded' });
+  }
+
+  if (hd) {
+    const got = heredocIntent(text.slice(0, hd.index).replace(/\s+/g, ' ').trim(), text.slice(hd.index + hd[0].length));
+    if (got) return Object.assign({}, base, { known: true, tag: got.tag, text: got.text });
+  }
+
+  // The heaviest classified step wins. `cd … && pnpm exec jest --shard 2/8` is a test run,
+  // not a directory change, and `cd` heads 244 of the 948 commands on record.
+  let best = null;
+  /** segments classifyCommand could not read — a gap the answer must not paper over */
+  const unread = [];
+  for (const seg of segs) {
+    const headWord = cmdBase((cmdTokens(seg)[0] || '').replace(/^[A-Za-z_][A-Za-z0-9_]*=.*$/, ''));
+    const noise = CMD_NOISE.test(headWord);
+    const got = classifyCommand(seg);
+    if (!got) { unread.push(seg); continue; }
+    const weight = (CMD_WEIGHT[got.tag] || 0) - (noise ? 0.5 : 0);
+    if (!best || weight > best.weight) best = { weight, got };
+  }
+  // A segment the room could not read is not nothing. Skipping it and then answering
+  // known:true on the strength of whatever DID classify let a trailing `echo "EXIT=$?"`
+  // speak for a command whose real work was unreadable: `bash verify-specs.sh; echo …`
+  // reported "print a marker" — a confident sentence about the wrong half. If the unread
+  // part outweighs the part we read, say so; never let a weight-1 step win by default.
+  if (best && unread.length && best.weight <= CMD_TRIVIAL_WEIGHT) {
+    return Object.assign({}, base, {
+      known: false,
+      unsure: true,
+      tag: 'unknown',
+      text: 'the room could only read part of this command — it also ' + best.got.text,
+    });
+  }
+  if (best) return Object.assign({}, base, { known: true, tag: best.got.tag, text: best.got.text });
+
+  return Object.assign({}, base, {
+    known: false, tag: 'unknown',
+    text: 'the room could not tell what this command was for',
+  });
+};
+
+/**
+ * Does this text look like a shell command rather than a sentence?
+ *
+ * Needed because the "where we are" blockers arrive as `{ what, why }` prose pairs and one
+ * shape of them puts a raw command in `why`. Deliberately strict: a program word followed by
+ * a flag or a path, or an operator no English sentence carries. An over-eager version turned
+ * the founder-journey blocker — the ONE line on that panel that needs a human — into a
+ * command card, which is the failure this whole rebuild is fixing, inverted.
+ */
+const looksLikeShell = (text) => {
+  const s = String(text == null ? '' : text).trim();
+  if (!s) return false;
+  if (/(?:&&|\|\||<<-?\s*['"]?\w+|\$\(|\s\|\s|`)/.test(s)) return true;
+  return /^[a-z][\w.-]*\s+(?:-{1,2}[\w-]+|\S*[\\/]\S*)/.test(s);
+};
+
+/** The middle value. A single 40-second outlier must not become "typical" for a group. */
+const medianOf = (nums) => {
+  const v = (Array.isArray(nums) ? nums : []).filter((n) => typeof n === 'number' && isFinite(n)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+};
+
+/**
+ * Finished work as rows a founder can scan.
+ *
+ * Identical commands with the same outcome COLLAPSE into one row carrying a count — four
+ * copies of the same failed jest shard is one fact repeated, not four facts, and printing it
+ * four times is what pushed the founder's actual to-do off the panel. Agents never collapse:
+ * two agents with the same description are two different pieces of work with two prompts.
+ *
+ * `durationMs` is the MEDIAN of the durations the group actually carried, and `timed` says
+ * how many of `count` that was — an average over an unstated denominator is the quiet half
+ * of a lie.
+ */
+const historyRows = (list) => {
+  const rows = [];
+  const byKey = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    const isCmd = a.kind === 'local_bash';
+    const raw = typeof a.description === 'string' ? a.description : '';
+    const status = a.status || 'unknown';
+    const key = isCmd ? 'c\u0000' + raw.replace(/\s+/g, ' ').trim() + '\u0000' + status : 'a\u0000' + a.id;
+    let row = byKey.get(key);
+    if (!row) {
+      const intent = isCmd ? commandIntent(raw) : null;
+      row = {
+        key, kind: a.kind, status, intent,
+        label: isCmd ? intent.text : (a.name || 'agent'),
+        detail: isCmd ? '' : raw,
+        raw, count: 0, ids: [], durations: [], tokens: 0, toolUses: 0,
+        firstAt: null, lastAt: null, depth: a.depth || 0, parentId: a.parentId || null,
+      };
+      byKey.set(key, row);
+      rows.push(row);
+    }
+    row.count += 1;
+    row.ids.push(a.id);
+    if (typeof a.durationMs === 'number' && isFinite(a.durationMs)) row.durations.push(a.durationMs);
+    if (typeof a.tokens === 'number') row.tokens += a.tokens;
+    if (typeof a.toolUses === 'number') row.toolUses += a.toolUses;
+    const st = a.startedAt ? Date.parse(a.startedAt) : NaN;
+    const en = a.endedAt ? Date.parse(a.endedAt) : NaN;
+    if (isFinite(st) && (row.firstAt == null || st < row.firstAt)) row.firstAt = st;
+    if (isFinite(en) && (row.lastAt == null || en > row.lastAt)) row.lastAt = en;
+  }
+  for (const r of rows) {
+    r.durationMs = medianOf(r.durations);
+    r.timed = r.durations.length;
+  }
+  return rows;
+};
+
+/** The separator room-server.ts puts between a lane and an agent's own id (`008·toolu_01…`). */
+const AGENT_NS = '·';
+
+/**
+ * Re-join the parentage the feed sends half-namespaced.
+ *
+ * The SSE `agents` frame namespaces each agent's `id` per lane (room-server.ts:2303 —
+ * `id: laneId(base, lane)`) but leaves `parentId` and `children` as the runtime's bare ids, so
+ * `byId.get(a.parentId)` misses on EVERY row. The old flat grid never noticed, because it only
+ * looked a parent up at depth > 1 and nothing here goes that deep; a tree notices immediately —
+ * 130 commands all rendered at the root reading "parent not seen".
+ *
+ * This is a reconstruction, not a guess: it applies the same `lane + '·' + id` rule the server
+ * itself applies when it re-namespaces a detail response (room-server.ts:2380), and it only
+ * rewrites an id when the namespaced form actually names a row that is present. Anything that
+ * still does not resolve is left exactly as it arrived and shows up flagged in the tree.
+ */
+const namespaceParents = (agents) => {
+  const list = Array.isArray(agents) ? agents : [];
+  const ids = new Set(list.map((a) => a.id));
+  return list.map((a) => {
+    const lane = a.lane != null ? String(a.lane)
+      : (typeof a.id === 'string' && a.id.indexOf(AGENT_NS) > 0 ? a.id.slice(0, a.id.indexOf(AGENT_NS)) : null);
+    const fix = (id) => {
+      if (id == null) return null;
+      const s = String(id);
+      if (ids.has(s)) return s;
+      const joined = lane ? lane + AGENT_NS + s : null;
+      return joined && ids.has(joined) ? joined : s;
+    };
+    const parentId = fix(a.parentId);
+    const kids = Array.isArray(a.children) ? a.children.map(fix) : null;
+    const kidsChanged = kids != null && kids.some((c, i) => c !== a.children[i]);
+    if (parentId === a.parentId && !kidsChanged) return a;
+    return Object.assign({}, a, { parentId, children: kids == null ? a.children : kids });
+  });
+};
+
+/**
+ * The tree, flattened into document order so a flat map() can render it: a node is followed
+ * immediately by its descendants, each carrying its own depth and the "is last child" trail
+ * the guides are drawn from.
+ *
+ * A node whose parent id names an agent this page has never seen is APPENDED, never dropped.
+ * Dropping it would silently delete work from a view whose whole claim is that it shows all
+ * of it — and a parent arrives over SSE in its own frame, so a child can legitimately land
+ * first. `seen` also breaks a cycle rather than hanging the room on one.
+ */
+const agentTree = (agents) => {
+  const list = Array.isArray(agents) ? agents : [];
+  const byId = new Map(list.map((a) => [a.id, a]));
+  const kids = new Map();
+  const roots = [];
+  for (const a of list) {
+    const pid = a.parentId && a.parentId !== a.id ? a.parentId : null;
+    // NO parent id at all is a real root — the worker. A parent id naming an agent this page
+    // has never seen is NOT: it is a row whose lineage is missing, and calling it a root would
+    // quietly assert it was dispatched by nobody.
+    if (!pid) roots.push(a);
+    else if (byId.has(pid)) { const arr = kids.get(pid) || []; arr.push(a); kids.set(pid, arr); }
+  }
+  const out = [];
+  const seen = new Set();
+  const walk = (node, depth, trail, orphan) => {
+    if (seen.has(node.id)) return;
+    seen.add(node.id);
+    const children = kids.get(node.id) || [];
+    out.push({
+      a: node, depth, trail: trail.slice(),
+      childCount: children.length,
+      liveKids: children.filter((c) => c.status === 'running').length,
+      orphan: Boolean(orphan),
+    });
+    children.forEach((c, i) => walk(c, depth + 1, trail.concat([i === children.length - 1]), false));
+  };
+  for (const r of roots) walk(r, 0, [], false);
+  // Whatever is left names a parent that never arrived, or sits in a parent cycle. Both are
+  // APPENDED at the root and flagged — a dropped row is information deleted from the one view
+  // whose whole claim is that it shows all of it, and a parent lands in its own SSE frame, so
+  // a child arriving first is normal rather than exceptional.
+  for (const a of list) walk(a, 0, [], true);
+  return out;
+};
+
+/**
+ * When did this row start and stop?
+ *
+ * Written as its own function because the answer is NOT simply `startedAt`. This runner's
+ * stream carries no `timestamp` on its task events, so `startedAt` is null for every row while
+ * `task_updated.patch.end_time` gives a real end — 0 of 103 rows had a start on the tick this
+ * was built against. A start is therefore ALSO accepted as arithmetic: end time minus the
+ * duration the runtime reported, which is a derivation and is counted as one, so the panel can
+ * say how much of its own picture is measured and how much is subtracted.
+ *
+ * `startDerived` is the flag that keeps that visible. Nothing here guesses: a row with neither
+ * a start nor an end-plus-duration comes back with NaN and is excluded from every curve.
+ */
+const agentStamps = (a, now) => {
+  const t = typeof now === 'number' && isFinite(now) ? now : Date.now();
+  const dur = typeof a.durationMs === 'number' && isFinite(a.durationMs) && a.durationMs >= 0 ? a.durationMs : NaN;
+  let start = a && a.startedAt ? Date.parse(a.startedAt) : NaN;
+  let end = a && a.endedAt ? Date.parse(a.endedAt) : NaN;
+  let startDerived = false;
+  if (!isFinite(start) && isFinite(end) && isFinite(dur)) { start = end - dur; startDerived = true; }
+  if (!isFinite(end)) {
+    if (a && a.status === 'running' && isFinite(start)) end = t;
+    else if (isFinite(start) && isFinite(dur)) end = start + dur;
+  }
+  return { start, end, startDerived, running: Boolean(a && a.status === 'running') };
+};
+
+/**
+ * The tick's fan-out over time, measured from the rows' OWN stamps rather than from what this
+ * page happened to watch — so a browser opened a minute ago still sees the whole tick.
+ *
+ * Three curves, and each one reports its OWN knowability rather than sharing one flag. On the
+ * tick this was built against, no row carried a start and 102 carried an end: one `known` for
+ * all three would have thrown away a real completion curve to protect a concurrency curve that
+ * could not be drawn. So `concurrencyKnown`, `dispatchedKnown` and `returnedKnown` are separate
+ * answers, and the panel draws what it has and hatches what it does not.
+ */
+const agentSeries = (agents, now, buckets) => {
+  const n = typeof buckets === 'number' && buckets > 1 ? Math.floor(buckets) : 40;
+  const list = Array.isArray(agents) ? agents : [];
+  const t = typeof now === 'number' && isFinite(now) ? now : Date.now();
+  const rows = list.map((a) => agentStamps(a, t));
+  const withStart = rows.filter((r) => isFinite(r.start));
+  const withEnd = rows.filter((r) => isFinite(r.end) && !r.running);
+  const derived = withStart.filter((r) => r.startDerived).length;
+
+  const stamps = [];
+  for (const r of rows) {
+    if (isFinite(r.start)) stamps.push(r.start);
+    if (isFinite(r.end)) stamps.push(r.end);
+  }
+  const empty = {
+    known: false, concurrencyKnown: false, dispatchedKnown: false, returnedKnown: false,
+    dispatched: [], returned: [], concurrency: [],
+    starts: withStart.length, ends: withEnd.length, derivedStarts: derived, total: rows.length,
+    from: null, to: null, bucketMs: null, spanMs: null, peak: null,
+  };
+  if (stamps.length < 2) return empty;
+
+  const from = stamps.reduce((mn, v) => (v < mn ? v : mn), Infinity);
+  const to = Math.max(t, stamps.reduce((mx, v) => (v > mx ? v : mx), -Infinity));
+  const spanMs = Math.max(1, to - from);
+  const bucketMs = spanMs / n;
+  const dispatched = new Array(n).fill(0);
+  const returned = new Array(n).fill(0);
+  const concurrency = new Array(n).fill(0);
+  const idx = (ts) => Math.min(n - 1, Math.max(0, Math.floor((ts - from) / bucketMs)));
+  for (const r of rows) {
+    if (isFinite(r.start)) {
+      dispatched[idx(r.start)] += 1;
+      const last = idx(isFinite(r.end) ? r.end : (r.running ? to : r.start));
+      for (let i = idx(r.start); i <= last; i += 1) concurrency[i] += 1;
+    }
+    if (isFinite(r.end) && !r.running) returned[idx(r.end)] += 1;
+  }
+  // The bar for a curve is COMPLETE COVERAGE of the rows it claims to describe, not "two
+  // samples". Three starts out of 126 rows drew an in-flight curve peaking at 2 while three
+  // things were in flight at that moment — a picture that contradicted the number printed
+  // above it. A curve that can only see 2% of the population understates by construction, so
+  // it is not drawn at all. Returns are judged against FINISHED rows only: a row still out
+  // has no end and is not missing one.
+  const finished = rows.filter((r) => !r.running);
+  return {
+    known: true,
+    concurrencyKnown: rows.length >= 2 && withStart.length === rows.length,
+    dispatchedKnown: rows.length >= 2 && withStart.length === rows.length,
+    returnedKnown: finished.length >= 2 && withEnd.length === finished.length,
+    dispatched, returned, concurrency,
+    starts: withStart.length, ends: withEnd.length, derivedStarts: derived, total: rows.length,
+    from, to, bucketMs, spanMs,
+    // A peak read off a curve nobody may draw is the same claim in a smaller font.
+    peak: withStart.length === rows.length ? concurrency.reduce((mx, v) => (v > mx ? v : mx), 0) : null,
+  };
+};
+
+/** Where one row's life sits inside the tick, as a 0..1 track. Unknown stays unknown. */
+const agentSpan = (a, series, now) => {
+  if (!a || !series || !series.known) return { known: false, left: 0, width: 0, derived: false };
+  const st = agentStamps(a, now);
+  if (!isFinite(st.start)) return { known: false, left: 0, width: 0, derived: false };
+  const span = Math.max(1, series.to - series.from);
+  const left = Math.min(1, Math.max(0, (st.start - series.from) / span));
+  const right = Math.min(1, Math.max(left, ((isFinite(st.end) ? st.end : st.start) - series.from) / span));
+  return { known: true, left, width: Math.max(0.004, right - left), derived: st.startDerived };
+};
+
+/**
+ * Shares that sum to one, for a stacked band. The same shape `charts.stackBands` returns, so
+ * the page draws the same picture whether or not the module loaded — an instrument that
+ * disappears with its module is an instrument the founder learns not to rely on.
+ */
+const bandsOf = (buckets) => {
+  const rows = (Array.isArray(buckets) ? buckets : []).filter((b) => b && typeof b.value === 'number' && b.value > 0);
+  const total = rows.reduce((acc, b) => acc + b.value, 0);
+  if (total <= 0) return { bands: [], total: 0, known: false };
+  let x = 0;
+  const bands = rows.map((b) => {
+    const width = (b.value / total) * 100;
+    const band = { key: b.key, label: b.label == null ? b.key : b.label, value: b.value, share: b.value / total, x, width, tone: b.tone == null ? null : b.tone };
+    x += width;
+    return band;
+  });
+  return { bands, total, known: true };
 };
 
 /* ── end pure helpers ─────────────────────────────────────────────── */
@@ -2802,6 +3890,159 @@ function Spark({ values, inst, label }) {
   }
   return h('svg', { className: 'spark', viewBox: '0 0 ' + w + ' ' + hh, preserveAspectRatio: 'none', role: 'img', 'aria-label': label || 'trend' },
     h('path', { d: path }));
+}
+
+/* ── PROPORTION BANDS ──────────────────────────────────────────────
+   A stacked band, widths summing to one. Four bare counts side by side make the
+   reader do the division; a band shows the shape and keeps the counts.
+
+   `charts.stackBands(buckets, opts)` is verified in charts.mjs:200 — it takes
+   `[{ key, label, value, tone }]` plus `{ width }` and returns
+   `{ bands:[{ key, label, value, share, x, width, tone }], total, known }`,
+   with zero-value buckets DROPPED rather than drawn as slivers. `bandsOf` in
+   the pure block returns the identical shape, so the picture survives the
+   module failing to load. No width transition: the deck's animation rule is
+   transform and opacity only.
+   ------------------------------------------------------------------ */
+function Bands({ buckets, inst, label, note }) {
+  const fromMod = callMod(inst, 'stackBands', [buckets, { width: 100 }], undefined);
+  const res = fromMod && typeof fromMod === 'object' && Array.isArray(fromMod.bands) ? fromMod : bandsOf(buckets);
+  if (!res.known) {
+    return h('div', { className: 'bands unknown', role: 'img',
+      'aria-label': (label || 'mix') + ' — nothing has been counted yet, so there is no proportion to draw' });
+  }
+  const say = res.bands.map((b) => b.label + ' ' + b.value + ' (' + Math.round(b.share * 100) + '%)').join(', ');
+  return h('div', null,
+    h('div', { className: 'bands', role: 'img', 'aria-label': (label || 'mix') + ': ' + say },
+      res.bands.map((b) => h('i', {
+        key: b.key, className: 'band ' + (b.tone || ''),
+        style: { width: b.width.toFixed(3) + '%' },
+        title: b.label + ' — ' + b.value + ' of ' + res.total + ' (' + Math.round(b.share * 100) + '%)',
+      }))),
+    h('div', { className: 'bandlegend' },
+      res.bands.map((b) => h('span', { key: b.key },
+        h('i', { className: 'band ' + (b.tone || '') }),
+        b.label, ' ', h('b', null, b.value))),
+      note && h('span', { className: 'dim' }, note)));
+}
+
+/* ── FAN-OUT, AS INSTRUMENTATION ───────────────────────────────────
+   Four numbers in a narrow column answered "how many", which is never the
+   question. The question is "is this tick normal?", and that needs a shape: how
+   many were in flight over time against the peak, what the tick is made of,
+   how it is coming out, and what it is costing.
+
+   Every series here is measured from the agents' OWN start and end stamps
+   (`agentSeries`), not from what this page happened to watch — so a browser
+   opened a minute ago still sees the whole tick. Rows with no start stamp are
+   EXCLUDED and the exclusion is printed under the cells.
+   ------------------------------------------------------------------ */
+function FanOut({ worker, realAgents, counts, series, inst, deepest }) {
+  const agents = realAgents.filter((a) => a.kind === 'local_agent');
+  const cmds = realAgents.filter((a) => a.kind === 'local_bash');
+  const live = realAgents.filter((a) => a.status === 'running');
+  const failed = realAgents.filter((a) => a.status === 'failed');
+  const stopped = realAgents.filter((a) => a.status === 'stopped');
+  const done = realAgents.filter((a) => a.status === 'completed');
+  const tokens = realAgents.reduce((n, a) => n + (a.tokens || 0), 0);
+  const perMin = series.known && series.spanMs > 20000 ? realAgents.length / (series.spanMs / 60000) : null;
+
+  return h('div', null,
+    h('div', { className: 'fanout' },
+      /* A — IN FLIGHT. The only figure here that can change in the next second.
+         The curve under it is concurrency when starts are known, and the rate work
+         CAME BACK at when they are not — never a concurrency curve reconstructed
+         from ends, which would be a shape drawn out of the missing half. */
+      h('div', { className: 'pfd-cell' },
+        h('span', { className: 'pfd-label', title: 'agents AND background commands still out — the tab badge counts agents only' }, 'in flight'),
+        h('div', { className: 'fan-n' + (live.length ? ' hot' : '') }, live.length),
+        h(Spark, {
+          values: series.concurrencyKnown ? series.concurrency : (series.returnedKnown ? series.returned : []),
+          inst,
+          label: series.concurrencyKnown
+            ? 'agents and commands in flight across this tick'
+            : 'work returning per slice of this tick',
+        }),
+        h('div', { className: 'fan-sub' },
+          series.concurrencyKnown
+            ? 'in flight over the tick · peak ' + series.peak + ' · window ' + spanShort(series.spanMs)
+            : series.returnedKnown
+              ? 'work returning per slice · in-flight over time needs a start on every row and this stream carries ' +
+                series.starts + ' of ' + series.total + ' · window ' + spanShort(series.spanMs)
+              : 'fewer than two stamps on record — there is no shape to draw yet')),
+
+      /* B — WHAT THIS TICK IS MADE OF. A tick of 58 commands and 1 agent is a
+         different animal from one of 30 agents, and the counts alone hid that. */
+      h('div', { className: 'pfd-cell' },
+        h('span', { className: 'pfd-label' }, 'dispatched'),
+        h('div', { className: 'fan-n' }, realAgents.length),
+        h(Bands, {
+          inst, label: 'what this tick dispatched',
+          buckets: [
+            { key: 'agents', label: 'agents', value: agents.length, tone: 'agents' },
+            { key: 'cmds', label: 'commands', value: cmds.length, tone: 'cmds' },
+          ],
+        }),
+        h(Spark, {
+          values: series.dispatchedKnown ? series.dispatched : [],
+          inst, label: 'dispatches per slice of this tick',
+        }),
+        h('div', { className: 'fan-sub' },
+          perMin == null
+            ? 'a rate needs a window of at least 20 seconds on the clock'
+            : perMin.toFixed(1) + ' dispatched per minute',
+          series.dispatchedKnown ? '' : ' · the dispatch curve needs start stamps this stream did not carry')),
+
+      /* C — HOW IT IS COMING OUT. A cancelled command is not a failure: the
+         worker stopped waiting on it deliberately (agents.mjs normaliseStatus). */
+      h('div', { className: 'pfd-cell' },
+        h('span', { className: 'pfd-label' }, 'outcome'),
+        h('div', { className: 'fan-n' + (failed.length ? ' bad' : '') }, failed.length),
+        h(Bands, {
+          inst, label: 'outcomes so far',
+          buckets: [
+            { key: 'done', label: 'returned', value: done.length, tone: 'done' },
+            { key: 'stopped', label: 'cancelled', value: stopped.length, tone: 'cold' },
+            { key: 'failed', label: 'failed', value: failed.length, tone: 'bad' },
+            { key: 'running', label: 'out', value: live.length, tone: 'live' },
+          ],
+        }),
+        h('div', { className: 'fan-sub' },
+          failed.length === 0
+            ? 'nothing has failed this tick'
+            : Math.round((failed.length / Math.max(1, realAgents.length)) * 100) + '% of everything dispatched')),
+
+      /* D — WHAT IT COSTS. Two different measurements, never added together:
+         the runtime reports a token total per SUBAGENT and none for the worker,
+         whose governing quantity is the size of its own context. */
+      h('div', { className: 'pfd-cell' },
+        h('span', { className: 'pfd-label' }, 'weight'),
+        h('div', { className: 'fan-n' }, Math.round(tokens / 1000) + 'k'),
+        h('div', { className: 'fan-pairs' },
+          h('span', null, h('b', null, worker ? worker.toolUses : '—'), ' worker tools'),
+          h('span', null, h('b', null, worker && worker.contextTokens ? Math.round(worker.contextTokens / 1000) + 'k' : '—'), ' worker context'),
+          h('span', null, h('b', null, deepest), ' deepest'),
+          h('span', null, h('b', null, counts.completed || 0), ' returned')),
+        h('div', { className: 'fan-sub' }, 'subagent tokens; the worker reports context, not consumption'))),
+
+    h('div', { className: 'where-src' },
+      series.known
+        ? series.starts + ' of ' + series.total + ' rows carry a start' +
+          (series.derivedStarts ? ' (' + series.derivedStarts + ' of them subtracted from end time minus reported duration, not measured)' : '') +
+          ' and ' + series.ends + ' carry an end. ' +
+          (series.concurrencyKnown
+            ? 'Every row is stamped, so the in-flight and dispatch curves cover all of them.'
+            : 'A curve is only drawn where it covers EVERY row it would describe: the in-flight and dispatch curves are withheld and hatched, ' +
+              (series.returnedKnown
+                ? 'and the curve above is returns per slice, from the ' + series.ends + ' ends.'
+                : 'and no return curve is drawn either.'))
+        : 'Timing is unknown for this tick: ' + series.starts + ' rows carry a start and ' + series.ends + ' an end, and a window needs two stamps.',
+      ' ',
+      realAgents.length === 0
+        ? 'Nothing dispatched yet this tick — the worker is doing the job itself, which is normal for a shape stage.'
+        : agents.length === 0
+          ? 'No subagent out: the worker is running background commands itself, not delegating.'
+          : 'A cancelled command is not a failure — the worker stopped waiting on it deliberately.'));
 }
 
 /* ── C1 — THE CADENCE STRIP ────────────────────────────────────────
@@ -3866,6 +5107,11 @@ function App() {
   const [openId, setOpenId] = useState(null);
   const [openDetail, setOpenDetail] = useState(null);
   const [histFilter, setHistFilter] = useState('all');
+  // The Agents tab's own controls. `treeScope` defaults to what is IN FLIGHT, because the
+  // tick that prompted this rebuild had 59 rows and 2 of them could still change.
+  const [treeScope, setTreeScope] = useState('live');
+  const [histOutcome, setHistOutcome] = useState('all');
+  const [histQuery, setHistQuery] = useState('');
   const [histLimit, setHistLimit] = useState(25);
   const [owed, setOwed] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -4128,6 +5374,25 @@ function App() {
     el.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
   }, []);
 
+  /**
+   * Copy one command's exact text.
+   *
+   * The clipboard API is unavailable on an insecure origin in some browsers, and it rejects
+   * when the document is not focused. Both are reported: a copy button that silently does
+   * nothing teaches the founder that the button is broken, which is worse than saying so.
+   */
+  const copyText = useCallback((text) => {
+    const value = String(text == null ? '' : text);
+    if (!value) { setToast('there is no recorded text to copy'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value)
+        .then(() => setToast('copied ' + value.length + ' characters'))
+        .catch((e) => setToast('the browser refused the clipboard (' + (e && e.message ? e.message : 'no reason given') + ') — the text is open below the row'));
+    } else {
+      setToast('this browser exposes no clipboard here — the full text is open below the row');
+    }
+  }, []);
+
   const copyRestart = useCallback(() => {
     const cmd = 'node "C:/Users/ASUS/Desktop/claude work/spicyspec/packages/runner/dist/bin.js" dashboard --config ' +
       ((s && s.driver && s.driver.config) ? s.driver.config : '<your runner config>') + ' --port ' + window.location.port;
@@ -4236,16 +5501,19 @@ function App() {
   // an unwatched loop and a watched one look identical on a page that shows only the loop.
   const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting);
 
-  const byId = new Map(live.agents.map((a) => [a.id, a]));
+  // The feed namespaces an agent's own id per lane but not its parentId, so parentage is
+  // repaired here, once, before anything reads it — see namespaceParents.
+  const feedAgents = namespaceParents(live.agents);
+  const byId = new Map(feedAgents.map((a) => [a.id, a]));
   // Dispatched work only, for every count and statistic: the worker is not its own subagent,
   // and including it would inflate "agents" by one forever.
-  const realAgents = live.agents.filter((a) => a.kind !== 'session');
+  const realAgents = feedAgents.filter((a) => a.kind !== 'session');
   const liveCount = realAgents.filter((a) => a.status === 'running').length;
   // The grid does show it, first and always. It is agent zero — the thing that dispatched
   // everything else — and leaving it out made the one agent that is always working the only
   // one you could not open.
-  const gridAgents = live.agents.filter((a) => a.kind === 'session').concat(realAgents);
-  const worker = live.agents.find((a) => a.kind === 'session') || null;
+  const gridAgents = feedAgents.filter((a) => a.kind === 'session').concat(realAgents);
+  const worker = feedAgents.find((a) => a.kind === 'session') || null;
   const workerBusy = Boolean(worker && worker.status === 'running');
 
   // The split the whole tab hinges on. A tick dispatched 24 background commands and had 2
@@ -4255,11 +5523,70 @@ function App() {
   const liveNow = gridAgents.filter((a) => a.status === 'running');
   const liveDispatched = liveNow.filter((a) => a.kind !== 'session').length;
   const pastAll = gridAgents.filter((a) => a.status !== 'running').slice().reverse();
-  const pastFiltered = pastAll.filter((a) =>
+
+  /* ── the Agents tab's derivations ────────────────────────────────
+     Every one is a pure helper called with explicit arguments, and each helper's
+     shape was read out of its own source before it was used here. This file has
+     been blanked twice by a call written from memory. */
+  const agentsNow = Date.now();
+  // The tick's fan-out over time, from the agents' own stamps rather than from what this
+  // page watched — a browser opened a minute ago still sees the whole tick.
+  const fanSeries = agentSeries(realAgents, agentsNow, 40);
+  // Ancestry, flattened into document order. The worker is the root; nothing is dropped.
+  const treeAll = agentTree(gridAgents);
+  // "In flight" means the row is running OR is on the path to something running: a finished
+  // parent whose child is still out must stay on screen, or the live row loses its lineage.
+  const liveIds = new Set(gridAgents.filter((a) => a.status === 'running').map((a) => a.id));
+  for (let pass = 0; pass < 8; pass += 1) {
+    let grew = false;
+    for (const a of gridAgents) {
+      if (liveIds.has(a.id) && a.parentId && byId.has(a.parentId) && !liveIds.has(a.parentId)) {
+        liveIds.add(a.parentId); grew = true;
+      }
+    }
+    if (!grew) break;
+  }
+  const treeLive = treeAll.filter((n) => liveIds.has(n.a.id));
+  const treeRows = treeScope === 'all' ? treeAll : treeLive;
+  const spawnOrder = gridAgents.map((a) => a.id);
+  const subagentTokens = realAgents.reduce((n, a) => n + (a.tokens || 0), 0);
+  const deepestDepth = feedAgents.reduce((d, a) => Math.max(d, a.depth || 0), 0);
+  // The failures, collapsed. Four copies of one failed command is one fact repeated.
+  const failedRows = historyRows(realAgents.filter((a) => a.status === 'failed'));
+
+  /* ── history: kind + outcome + text, then collapse ───────────────
+     Filters run BEFORE the collapse so a count on a row always describes rows that are
+     actually in view — a "×4" beside a filter that hid three of them is a lie with a number
+     on it. */
+  const pastByKind = pastAll.filter((a) =>
     histFilter === 'agents' ? a.kind === 'local_agent'
       : histFilter === 'commands' ? a.kind === 'local_bash'
         : true);
-  const pastShown = pastFiltered.slice(0, histLimit);
+  const pastByOutcome = pastByKind.filter((a) =>
+    histOutcome === 'all' ? true
+      : histOutcome === 'failed' ? a.status === 'failed'
+        : histOutcome === 'stopped' ? a.status === 'stopped'
+          : a.status === 'completed');
+  const histAllRows = historyRows(pastByOutcome);
+  // search.mjs:83 — search(items, query, { fields: [[field, weight], …] }) -> [{ item, … }],
+  // and an empty query returns the list by `priority`, which these rows do not carry, so the
+  // no-query path is kept out of the module entirely and order is preserved.
+  const histRanked = histQuery.trim()
+    ? callMod(mods.inst, 'search', [histAllRows, histQuery, {
+        fields: [['label', 1], ['raw', 0.5], ['detail', 0.6], ['kind', 0.3]], limit: 400,
+      }], null)
+    : null;
+  // A module that did not load must not read as "no results". The fallback is a plain
+  // substring pass over the same fields, and the panel says which one answered.
+  const histFuzzy = Boolean(histRanked);
+  const histRows = !histQuery.trim()
+    ? histAllRows
+    : histFuzzy
+      ? histRanked.map((r) => r.item)
+      : histAllRows.filter((r) => (r.label + ' ' + r.raw + ' ' + r.detail + ' ' + r.kind)
+          .toLowerCase().includes(histQuery.trim().toLowerCase()));
+  const histShown = histRows.slice(0, histLimit);
+
   const openAgent = openDetail || byId.get(openId) || null;
   const openLog = (live.trace.get(openId) || []);
 
@@ -4291,7 +5618,7 @@ function App() {
     // Eight slots in a fixed order, then the console's own controls. It is the
     // only element on the page that is drag-region in a Window Controls Overlay
     // install, which is what makes the deck a window rather than a tab.
-    h('div', { className: 'annbar z-bar' },
+    guard('Annunciator bar', h('div', { className: 'annbar z-bar' },
       h(Annunciators, {
         s, ctx: annCtx, inst: mods.inst, acks,
         onAck: ackOne,
@@ -4320,12 +5647,12 @@ function App() {
         h('span', { className: 'ann nominal', title: shell === 'deck' ? 'the fixed instrument deck' : 'the viewport is too small for the deck — the watch rail and the ticker are withdrawn rather than squeezed' },
           shell === 'deck' ? 'DECK' : 'DOC'),
         h('button', { type: 'button', className: 'ann nominal', onClick: () => setPaletteOpen(true), title: 'command palette' },
-          h('span', { className: 'keycap' }, isMac ? '⌘K' : 'Ctrl K')))),
+          h('span', { className: 'keycap' }, isMac ? '⌘K' : 'Ctrl K')))), 'z-bar'),
 
     // ── Z0b — THE DOCK ──────────────────────────────────────────────
     // DEVIATION, stated: the eight-slot bar has no room for the tab strip or the
     // five control actions, and neither may be deleted, so they get 34px of their own.
-    h('div', { className: 'deckdock z-dock' },
+    guard('Dock', h('div', { className: 'deckdock z-dock' },
       h('span', { className: 'docktitle' }, 'LOOP'),
       h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
         h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
@@ -4346,13 +5673,13 @@ function App() {
         h('button', { className: 'warn', disabled: busy || !s.running, onClick: () => act('stop') }, 'Pause after tick'),
         h('button', { className: 'danger', disabled: busy || !s.running, onClick: () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.') }, 'Kill now'),
         (s.stopArmed || s.killArmed) && h('button', { disabled: busy, onClick: () => act('resume') }, 'Clear stop'),
-        h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))),
+        h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))), 'z-dock'),
 
     // ── Z1 — THE PFD ────────────────────────────────────────────────
     // Always drawn, on every tab. The glance must not depend on which view the
     // founder happened to leave open, and switching to Agents must not cost them
     // the answer to "is it stuck".
-    h('div', { className: 'z-pfd', id: 'deck-pfd' },
+    guard('Flight display', h('div', { className: 'z-pfd', id: 'deck-pfd' },
       !navigator.onLine && h('div', { className: 'offline-bar' },
         'showing the shell only — this browser is offline, so nothing below is newer than ' +
         (live.lastAt ? new Date(live.lastAt).toTimeString().slice(0, 8) : 'the last frame it saw')),
@@ -4367,98 +5694,124 @@ function App() {
         h('button', { type: 'button', className: 'go', onClick: () => setDigestOpen(true) }, 'What happened'),
         h('button', { type: 'button', onClick: lastSeen.clear }, 'Dismiss')),
       h('div', { className: 'pfd' },
-        h(PfdState, { s, top, samples: ring, inst: mods.inst }),
-        h(PfdLane, { s, samples: ring, inst: mods.inst }),
-        h(PfdBurn, { s, inst: mods.inst }),
-        h(PfdRunway, { s, inst: mods.inst }))),
+        guard('State', h(PfdState, { s, top, samples: ring, inst: mods.inst }), 'pfd-cell'),
+        guard('Lane', h(PfdLane, { s, samples: ring, inst: mods.inst }), 'pfd-cell'),
+        guard('Burn', h(PfdBurn, { s, inst: mods.inst }), 'pfd-cell'),
+        guard('Runway', h(PfdRunway, { s, inst: mods.inst }), 'pfd-cell'))), 'z-pfd'),
 
     // ── Z2 — ALARMS. Zero height when there is nothing wrong. ───────
-    h('div', { className: 'z-alarm' },
-      h(Alarms, { s, inst: mods.inst, onWire: () => { setWireFilter('all'); jumpTo('deck-record'); } })),
+    guard('Alarms', h('div', { className: 'z-alarm' },
+      h(Alarms, { s, inst: mods.inst, onWire: () => { setWireFilter('all'); jumpTo('deck-record'); } })), 'z-alarm'),
 
     // ── Z3 — THE CONSOLE GRID ───────────────────────────────────────
-    h('div', { className: 'z-grid' },
-      tab === 'overview' && h('div', { className: 'deckgrid' },
-        h(ActColumn, { s, owedItems, inst: mods.inst, onOpen: setBriefOpen }),
-        h(MachineColumn, { s, inst: mods.inst, onSpec: (id) => setBriefOpen({ kind: 'spec', id }) }),
-        h(RecordColumn, {
+    guard('Console grid', h('div', { className: 'z-grid' },
+      tab === 'overview' && guard('Overview', h('div', { className: 'deckgrid' },
+        guard('Act column', h(ActColumn, { s, owedItems, inst: mods.inst, onOpen: setBriefOpen }), 'deckcol act'),
+        guard('Machine column', h(MachineColumn, { s, inst: mods.inst, onSpec: (id) => setBriefOpen({ kind: 'spec', id }) }), 'deckcol machine'),
+        guard('Record column', h(RecordColumn, {
           s, inst: mods.inst, journal: jr.journal, seenAt: lastSeen.seenAt,
           wireFilter, onWireFilter: setWireFilter, wireOpen, onWireOpen: setWireOpen,
         },
           // Everything the previous build showed, kept and ranked below the record
           // rather than deleted. A disclosure moves a panel down the page; it never
           // removes a field, and every one of these is still in the DOM for ctrl-F.
-          h('div', { className: 'pane' },
-            h(Health, { health: s.health, open: healthOpen, onToggle: () => setHealthOpen((v) => !v) })),
-          h('div', { className: 'pane' },
-            h(TreeStrip, { git: s.git, open: treeOpen, onToggle: () => setTreeOpen((v) => !v) })),
-          h('div', { className: 'pane' },
-            h(Accounts, { accounts: s.accounts, events: s.accountEvents })),
-          h('details', { className: 'morebox pane' },
+          guard('Self-healing', h('div', { className: 'pane' },
+            h(Health, { health: s.health, open: healthOpen, onToggle: () => setHealthOpen((v) => !v) })), 'pane'),
+          guard('Tree', h('div', { className: 'pane' },
+            h(TreeStrip, { git: s.git, open: treeOpen, onToggle: () => setTreeOpen((v) => !v) })), 'pane'),
+          guard('Accounts', h('div', { className: 'pane' },
+            h(Accounts, { accounts: s.accounts, events: s.accountEvents })), 'pane'),
+          guard('Raw ledger', h('details', { className: 'morebox pane' },
             h('summary', null, 'open the raw ledger — all ' + (s.ticks || []).length + ' runs the state feed carries'),
-            h(Ticks, { ticks: s.ticks })),
-          h('footer', { style: { marginTop: '0.6rem' } },
+            h(Ticks, { ticks: s.ticks })), 'pane'),
+          guard('Footer', h('footer', { style: { marginTop: '0.6rem' } },
             'Reads the driver\'s state files and signals it back through files — closing this page never stops a build. ',
             'Loopback bind + host allowlist + cross-site rejection + a per-start control token. Terminal equivalent: ', h('code', null, 'pnpm my-spec'),
-            ' · updated ', ago(s.at)))),
+            ' · updated ', ago(s.at)), 'pane')), 'deckcol record')), 'deckgrid'),
 
-      tab === 'agents' && h('div', { className: 'tabpane' },
-        h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem', marginTop: '0.6rem' } },
-          h(Panel, { title: 'Where we are', sub: live.meta ? 'tick ' + live.meta.number + ' · ' + live.meta.spec + '/' + live.meta.stage : 'no tick' },
-            h(WherePanel, { where: live.where })),
-          h(Panel, { title: 'Fan-out', sub: 'this tick' },
-            // The worker's own tool count leads, because it is the only figure here that is
-            // never zero while a tick is alive. All four columns read zero on a running loop
-            // during a shape stage, which is precisely when nothing gets dispatched.
-            h('div', { className: 'statrow' },
-              h(Stat, { n: worker ? worker.toolUses : 0, l: 'worker tools' }),
-              h(Stat, { n: realAgents.filter((a) => a.kind === 'local_agent').length, l: 'agents' }),
-              h(Stat, { n: liveCount, l: 'working now' }),
-              h(Stat, { n: realAgents.filter((a) => a.kind === 'local_bash').length, l: 'commands' })),
-            h('div', { className: 'agent-meta', style: { marginTop: '0.9rem' } },
-              worker && worker.contextTokens > 0 &&
-                h('span', null, 'worker context ' + Math.round(worker.contextTokens / 1000) + 'k'),
-              h('span', null, 'depth ' + live.agents.reduce((d, a) => Math.max(d, a.depth), 0)),
-              h('span', null, (live.counts.completed || 0) + ' returned'),
-              (live.counts.stopped || 0) > 0 && h('span', null, live.counts.stopped + ' cancelled'),
-              (live.counts.failed || 0) > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, live.counts.failed + ' failed'),
-              // SUBAGENT tokens by name: the runtime reports a total per subagent and none for
-              // the worker, so one combined number would be two different measurements added
-              // together and presented as one.
-              h('span', null, Math.round(realAgents.reduce((n, a) => n + (a.tokens || 0), 0) / 1000) + 'k subagent tokens')),
-            // A zero always gets a sentence. "0 agents" next to "5 commands" is accurate and
-            // still looks broken, so each shape of emptiness says why it is empty.
-            h('div', { className: 'where-src' },
-              realAgents.length === 0
-                ? 'Nothing dispatched yet this tick — the worker is doing the job itself, which is normal for a shape stage.'
-                : realAgents.filter((a) => a.kind === 'local_agent').length === 0
-                  ? 'No subagent out: the worker is running background commands itself, not delegating.'
-                  : 'A cancelled command is not a failure — the worker stopped waiting on it deliberately.'))),
-
-        h(Panel, {
-          title: 'Working now',
-          // Counts DISPATCHED agents, matching the tab badge exactly. The first version counted
-          // the cards on screen, which includes the worker, so the badge said "1 live" beside a
-          // panel saying "2 live" — two numbers for one fact, which is the bug I keep fixing.
+      /* ── THE AGENTS TAB ─────────────────────────────────────────
+         Order is the argument. THE TREE first, because the founder's question
+         is "what is happening right now and who is doing it". FAN-OUT second,
+         as instruments, because the next question is "is this normal". WHERE
+         WE ARE third — its prose is a summary of the two panels above it, and
+         it is the panel that was drowning in raw shell. FAILURES last, and
+         collapsed, because on a healthy tick that panel is not there at all. */
+      tab === 'agents' && guard('Agents view', h('div', { className: 'tabpane' },
+        guard('Live tree', h(Panel, {
+          title: 'The tree, right now',
+          // Counts DISPATCHED agents, matching the tab badge exactly. An earlier version
+          // counted the cards on screen, which includes the worker, so the badge said "1 live"
+          // beside a panel saying "2 live" — two numbers for one fact.
           sub: liveNow.length === 0
             ? 'nothing running'
-            : (liveDispatched === 0 ? 'the worker alone' : liveDispatched + ' live') +
-              ' · ' + pastAll.length + ' returned, in History',
+            : (liveDispatched === 0 ? 'the worker alone' : liveDispatched + ' out') +
+              ' · depth ' + deepestDepth + ' · ' + pastAll.length + ' returned',
         },
-          liveNow.length === 0
+          h('div', { className: 'treebar' },
+            h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Tree scope' },
+              [['live', 'In flight'], ['all', 'Everything this tick']].map(([id, label]) =>
+                h('button', {
+                  key: id, type: 'button',
+                  'aria-pressed': treeScope === id ? 'true' : 'false',
+                  onClick: () => setTreeScope(id),
+                }, label))),
+            h('span', { className: 'mono dim', style: { fontSize: '0.66rem' } },
+              treeScope === 'live'
+                ? treeLive.length + ' of ' + treeAll.length + ' rows — running, plus the parents they hang off'
+                : treeAll.length + ' rows — every agent and command this tick, in dispatch order')),
+
+          treeRows.length === 0
             ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
                 live.link === 'live'
-                  ? 'Nothing is running. The tick has ended, or the loop is between ticks — everything it did is in History.'
+                  ? 'Nothing is running. The tick has ended, or the loop is between ticks — everything it did is under "Everything this tick".'
                   : 'Waiting for the feed…')
-            : h('div', { className: 'agentgrid' },
-                // Index is the agent's position in the tick's spawn order, not its position in
-                // this list, so a card keeps the same number as things finish around it.
-                liveNow.map((a) => h(AgentCard, {
-                  key: a.id, a, index: gridAgents.indexOf(a), parent: byId.get(a.parentId),
-                  selected: a.id === openId, onOpen: setOpenId,
-                }))))),
+            : h(AgentTreeView, {
+                rows: treeRows, tokenTotal: subagentTokens, openId,
+                onOpen: setOpenId, order: spawnOrder, now: agentsNow,
+              }),
+          h('div', { className: 'where-src' },
+            'Indentation is real parentage, reconstructed from each event\'s parent_tool_use_id — ' +
+            'not display order. A row whose parent has not reached this page yet is shown at the ' +
+            'root and says so rather than being hidden.')), 'panel'),
 
-      tab === 'management' && h('div', { className: 'tabpane' },
+        guard('Fan-out', h(Panel, {
+          title: 'Fan-out',
+          sub: fanSeries.known ? 'this tick · ' + spanShort(fanSeries.spanMs) + ' of it measured' : 'this tick',
+        },
+          h(FanOut, {
+            worker, realAgents, counts: live.counts, series: fanSeries,
+            inst: mods.inst, deepest: deepestDepth,
+          })), 'panel'),
+
+        guard('Where we are', h(Panel, {
+          title: 'Where we are',
+          sub: live.meta ? 'tick ' + live.meta.number + ' · ' + live.meta.spec + '/' + live.meta.stage : 'no tick',
+        },
+          h(WherePanel, { where: live.where, onCopy: copyText })), 'panel'),
+
+        // Only drawn when there is something to draw. An always-present "0 failures" card is
+        // a chip that is always on, and this room exists because of one of those.
+        failedRows.length > 0 && guard('Failures', h(Panel, {
+          title: 'What failed',
+          sub: failedRows.reduce((n, r) => n + r.count, 0) + ' failed · ' + failedRows.length + ' distinct',
+        },
+          h('ul', { className: 'cmdlist' },
+            failedRows.map((row) => row.kind === 'local_bash'
+              ? h(CmdGroupRow, { key: row.key, row, onCopy: copyText, onOpen: setOpenId })
+              : h('li', { key: row.key, className: 'cmdrow failed' },
+                  h('div', { className: 'cmdrow-top' },
+                    h('i', { className: 'sdot failed' }),
+                    h('span', { className: 'cmdwhat' }, row.label + ' — ' + row.detail),
+                    h('span', { className: 'cmdout failed' }, 'failed')),
+                  h('div', { className: 'cmdrow-meta' },
+                    row.durationMs != null && h('span', null, spanShort(row.durationMs)),
+                    h('button', { type: 'button', className: 'linkish', onClick: () => setOpenId(row.ids[0]) }, 'open'))))),
+          h('div', { className: 'where-src' },
+            'Cancelled work is not here: a command the worker deliberately stopped waiting on ' +
+            'reports as cancelled, and painting that red is how a warning light stops meaning ' +
+            'anything.')), 'panel')), 'tabpane'),
+
+      tab === 'management' && guard('Management view', h('div', { className: 'tabpane' },
         h(Panel, {
           title: 'Management',
           sub: 'three sessions you can talk to · click one to open its chat',
@@ -4479,81 +5832,109 @@ function App() {
           h('div', { className: 'where-src', style: { marginTop: '0.9rem' } },
             'Each message is a real Claude Code session turn against this repo — same tooling as the ' +
             'workers, and it costs quota. Supervisor and manager are read-only on purpose: an auditor ' +
-            'that can edit what it audits is not an auditor.'))),
+            'that can edit what it audits is not an auditor.'))), 'tabpane'),
 
-      tab === 'history' && h('div', { className: 'tabpane' }, h(Panel, {
+      tab === 'history' && guard('History view', h('div', { className: 'tabpane' }, h(Panel, {
         title: 'History',
         sub: pastAll.length + ' returned this tick' + (live.meta ? ' (tick ' + live.meta.number + ')' : ''),
       },
-        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginBottom: '0.7rem' } },
-          h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history' },
+        h('div', { className: 'histbar' },
+          h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history by kind' },
             [['all', 'All'], ['agents', 'Agents'], ['commands', 'Commands']].map(([id, label]) =>
               h('button', {
                 key: id, type: 'button',
                 'aria-pressed': histFilter === id ? 'true' : 'false',
                 onClick: () => { setHistFilter(id); setHistLimit(25); },
               }, label))),
-          // Three numbers because there are three: rendered, matching the filter, and total.
-          // "28 shown of 28" was printed while 25 rows were on screen — a silent cap is the one
-          // thing a history view must never do, since it reads as "this is everything".
+          h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history by outcome' },
+            [['all', 'Any outcome'], ['completed', 'Returned'], ['stopped', 'Cancelled'], ['failed', 'Failed']].map(([id, label]) =>
+              h('button', {
+                key: id, type: 'button',
+                'aria-pressed': histOutcome === id ? 'true' : 'false',
+                onClick: () => { setHistOutcome(id); setHistLimit(25); },
+              }, label))),
+          h('input', {
+            type: 'search', className: 'histsearch', value: histQuery,
+            placeholder: 'search what it was for, or the raw text…',
+            'aria-label': 'Search finished work',
+            onChange: (e) => { setHistQuery(e.target.value); setHistLimit(25); },
+          }),
+          // Four numbers because there are four: rendered, rows after the collapse, entries
+          // behind those rows, and the tick's total. "28 shown of 28" was once printed while
+          // 25 rows were on screen — a silent cap reads as "this is everything".
           h('span', { className: 'mono', style: { fontSize: '0.66rem', color: 'var(--text-dim)' } },
-            pastShown.length + ' shown' +
-            (pastFiltered.length !== pastShown.length ? ' of ' + pastFiltered.length + ' matching' : '') +
-            (pastFiltered.length !== pastAll.length ? ' · ' + pastAll.length + ' total' : ''))),
+            histShown.length + ' shown' +
+            (histRows.length !== histShown.length ? ' of ' + histRows.length + ' rows' : '') +
+            ' · ' + histRows.reduce((n, r) => n + r.count, 0) + ' entries' +
+            (pastAll.length !== histRows.reduce((n, r) => n + r.count, 0) ? ' of ' + pastAll.length + ' this tick' : '')),
+          histQuery.trim() && !histFuzzy && h('span', { className: 'mono warnish', style: { fontSize: '0.62rem' } },
+            'ranking module did not load — this is a plain substring match')),
 
-        pastFiltered.length === 0
+        histRows.length === 0
           ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
               pastAll.length === 0
                 ? 'Nothing has returned yet this tick.'
-                : 'Nothing of that kind this tick — ' + pastAll.length + ' other entries are under All.')
+                : histQuery.trim()
+                  ? 'Nothing matches "' + histQuery.trim() + '" — ' + pastAll.length + ' entries this tick, and the search reads what a row was FOR as well as its raw text.'
+                  : 'Nothing of that kind and outcome this tick — ' + pastAll.length + ' entries are under All / Any outcome.')
           : h(React.Fragment, null,
-              h('ul', { className: 'hist' }, pastShown.map((a) => h('li', { key: a.id },
+              h('ul', { className: 'hist' }, histShown.map((row) => h('li', { key: row.key },
                 h('button', {
-                  className: 'histrow ' + a.status,
-                  'aria-current': a.id === openId ? 'true' : 'false',
-                  onClick: () => setOpenId(a.id),
+                  className: 'histrow ' + row.status,
+                  'aria-current': row.ids.indexOf(openId) >= 0 ? 'true' : 'false',
+                  onClick: () => setOpenId(row.ids[0]),
                 },
-                  h('i', { className: 'sdot ' + a.status }),
-                  h('span', { className: 'hname' }, agentLabel(a)),
-                  h('span', { className: 'hdesc' }, a.description),
-                  h('span', { className: 'hstat' }, AGENT_STAT(a).join(' · ') || a.status))))),
+                  h('i', { className: 'sdot ' + row.status }),
+                  h('span', { className: 'hname' }, row.kind === 'local_bash' ? 'command' : row.label),
+                  row.intent && h('span', { className: 'cmdtag ' + row.intent.tag }, CMD_TAG_LABEL[row.intent.tag] || '?'),
+                  h('span', { className: 'hdesc' }, row.kind === 'local_bash' ? row.label : row.detail),
+                  row.count > 1 && h('span', { className: 'cmdcount', title: 'the same command with the same outcome, ' + row.count + ' times' }, '×' + row.count),
+                  h('span', { className: 'hstat' },
+                    (row.durationMs != null ? (row.count > 1 ? 'median ' : '') + spanShort(row.durationMs) + ' · ' : '') +
+                    (row.tokens ? Math.round(row.tokens / 1000) + 'k tok · ' : '') +
+                    row.status))))),
               // Never silently truncate: say what is hidden and offer it.
-              pastFiltered.length > pastShown.length && h('button', {
+              histRows.length > histShown.length && h('button', {
                 className: 'linkish', style: { marginTop: '0.6rem' },
-                onClick: () => setHistLimit(pastFiltered.length),
-              }, 'show ' + (pastFiltered.length - pastShown.length) + ' older'))))),
+                onClick: () => setHistLimit(histRows.length),
+              }, 'show ' + (histRows.length - histShown.length) + ' older')),
+
+        h('div', { className: 'where-src' },
+          'Identical commands with the same outcome are one row with a count; two agents are ' +
+          'never merged, because two agents with the same description are two different pieces ' +
+          'of work with two different prompts. Open any row for its exact text and timing.'))), 'tabpane')), 'z-grid'),
 
     // ── Z4 — THE WATCH RAIL ─────────────────────────────────────────
-    h(WatchRail, {
+    guard('Watch rail', h(WatchRail, {
       range: jr.range,
       onMark: (m) => { setWireFilter('all'); setWireOpen(m.wireId || null); jumpTo('deck-record'); },
-    }),
+    }), 'z-watch'),
 
     // ── Z5 — THE TICKER ─────────────────────────────────────────────
-    h(Ticker, { lanes: (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []), reason: top.reason }),
+    guard('Ticker', h(Ticker, { lanes: (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []), reason: top.reason }), 'z-ticker'),
 
     // ── Z6 — THE TELEMETRY BUS ──────────────────────────────────────
-    h(Bus, {
+    guard('Telemetry bus', h(Bus, {
       s, link: live.link, lastFrameAt: live.lastAt, bell: bell.perm,
       modErrors: mods.errors, offline: !navigator.onLine,
-    }),
+    }), 'z-bus'),
 
     // ── OVERLAYS ────────────────────────────────────────────────────
-    paletteOpen && h(Palette, { items: paletteItems, onClose: () => setPaletteOpen(false) }),
-    shortcutsOpen && h(Shortcuts, { onClose: () => setShortcutsOpen(false) }),
-    bellOpen && h(BellSheet, {
+    guard('Command palette', paletteOpen && h(Palette, { items: paletteItems, onClose: () => setPaletteOpen(false) })),
+    guard('Shortcuts', shortcutsOpen && h(Shortcuts, { onClose: () => setShortcutsOpen(false) })),
+    guard('Bell rules', bellOpen && h(BellSheet, {
       perm: bell.perm, enabled: bell.enabled, quiet: bell.quiet, journalReady: Boolean(jr.journal),
       onToggle: bell.toggle, onQuiet: bell.setQuietHours, onAsk: bell.ask,
       onTest: (rule) => { const ok = bell.test(rule); setToast(ok ? 'test notification sent — if nothing appeared, the OS is suppressing it' : 'the bell could not fire: ' + (bell.perm === 'granted' ? 'quiet hours are on and this rule is not critical' : 'permission is ' + bell.perm)); },
       onClose: () => setBellOpen(false),
-    }),
-    digestOpen && h(Digest, {
+    })),
+    guard('Digest', digestOpen && h(Digest, {
       digest, sinceAt: lastSeen.seenAt,
       onClose: () => { setDigestOpen(false); lastSeen.clear(); },
       onWire: (id) => { setWireFilter('all'); setWireOpen(id); jumpTo('deck-record'); },
-    }),
+    })),
 
-    roleOpen && h(ChatSheet, {
+    guard('Chat', roleOpen && h(ChatSheet, {
       role: roles.find((r) => r.id === roleOpen) || null,
       detail: roleDetail,
       liveSteps: roleSteps[roleOpen] || [],
@@ -4562,23 +5943,26 @@ function App() {
       onSend: sendToRole, onTask: queueRoleTask, onMandate: saveMandate,
       onClose: () => setRoleOpen(null),
       busy,
-    }),
+    })),
 
-    briefOpen && h(BriefSheet, {
+    guard('Sign-off sheet', briefOpen && h(BriefSheet, {
       brief, busy,
       onToggle: toggleCheck, onNote: saveNote, onSignoff: signOff,
       onClose: () => setBriefOpen(null),
-    }),
+    })),
 
-    openAgent && h(AgentSheet, {
+    guard('Agent sheet', openAgent && h(AgentSheet, {
       a: openAgent,
       parent: byId.get(openAgent.parentId),
       children: (openAgent.children || []).map((id) => byId.get(id)).filter(Boolean),
       log: openLog,
+      series: fanSeries,
+      now: agentsNow,
+      onCopy: copyText,
       onClose: () => setOpenId(null),
-    }),
+    })),
 
-    toast && h('div', { className: 'toast', role: 'status' }, toast));
+    guard('Toast', toast && h('div', { className: 'toast', role: 'status' }, toast)));
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(h(App));

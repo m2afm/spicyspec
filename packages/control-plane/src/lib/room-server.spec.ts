@@ -619,22 +619,49 @@ describe('supervisor report', () => {
  */
 type Node = { type: unknown; props: Record<string, unknown> | null; children: unknown[] };
 
-function loadHealthPanel(): (props: { health: unknown }) => Node {
+/** Cut a named block out of the vendored page. Fails loudly if the block is renamed away. */
+function pageSlicer(): (from: string, to: string) => string {
   const page = readFileSync(join(ROOM_DIR, 'app.html'), 'utf8');
-  const slice = (from: string, to: string): string => {
+  return (from: string, to: string): string => {
     const a = page.indexOf(from);
     const b = page.indexOf(to, a + from.length);
     if (a < 0 || b < 0) throw new Error(`app.html no longer contains ${from}`);
     return page.slice(a, b);
   };
+}
+
+/**
+ * The page's OWN React, loaded out of the vendored UMD bundle. There is no `react` package in
+ * this workspace and no npm install is allowed here, so the only real React available to a test
+ * is the same file the browser gets — which is the point: the error boundary below is exercised
+ * against the actual `React.Component` the room runs on, not a stand-in.
+ */
+type VendoredReact = {
+  version: string;
+  Fragment: unknown;
+  Component: new (props: unknown) => unknown;
+  createElement: (type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]) => Node;
+};
+
+function loadVendoredReact(): VendoredReact {
+  const src = readFileSync(join(ROOM_DIR, 'react.production.min.js'), 'utf8');
+  const mod = { exports: {} as Record<string, unknown> };
+  new Function('module', 'exports', src)(mod, mod.exports);
+  return mod.exports as unknown as VendoredReact;
+}
+
+function loadHealthPanel(): (props: { health: unknown }) => Node {
+  const slice = pageSlicer();
   const src = [
     slice('const ago = (iso) => {', '\nconst clock'),
+    // Panel hands its body to the boundary, so the boundary has to come with it.
+    slice('class PanelBoundary extends React.Component {', '\nfunction Panel'),
     slice('function Panel({ title, sub, alert, children }) {', '\nfunction Stat'),
     slice('const HEALTH_TAG = {', '\n/* The body of one lane:'),
     'return Health;',
   ].join('\n');
   const h = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ type, props, children });
-  return new Function('h', 'React', src)(h, { Fragment: 'Fragment' }) as (props: { health: unknown }) => Node;
+  return new Function('h', 'React', src)(h, loadVendoredReact()) as (props: { health: unknown }) => Node;
 }
 
 /** Every string anywhere in the tree — what the founder would read off the panel. */
@@ -708,6 +735,141 @@ describe('health panel', () => {
     // A failed check wears the page's red, the same class Accounts uses for a cold account.
     expect(said).toContain('tag hot');
     expect(said).not.toContain('spicyspec-runner install-autostart');
+  });
+});
+
+/* ------------------------------------------------------------- panel boundary ---- */
+
+/**
+ * THE GUARANTEE THIS SECTION DEFENDS: one bad call may cost the founder one panel, and may
+ * never cost them the page.
+ *
+ * It has cost them the page twice — `metrics.burn()` read as a number when it returns a Fact,
+ * `charts.sparkPath()` called positionally when it takes (values, opts) and returns an object.
+ * Both threw inside render; nothing caught them; React unmounted the whole tree and the room
+ * went blank while an unattended build kept running behind it.
+ *
+ * `react-dom` cannot run in this suite — there is no DOM and no npm install — so the rule React
+ * applies is modelled by `renderTree` below in the smallest honest form: a throw travels up to
+ * the nearest ancestor declaring `getDerivedStateFromError`, that ancestor renders its fallback,
+ * and NOTHING outside it is touched. The half of the contract that is actually ours, and that
+ * these tests pin, is the tree shape: that such an ancestor sits between every panel and its
+ * siblings, and that the fallback names the panel and says the rest of the room is still live.
+ * The empirical half was measured against the running room and is recorded in the commit.
+ */
+type Boundary = {
+  PanelBoundary: (new (props: Record<string, unknown>) => { state: unknown; render: () => Node; componentDidCatch?: (e: unknown, i: unknown) => void }) & {
+    getDerivedStateFromError: (err: unknown) => unknown;
+  };
+  guard: (name: string, node: unknown, zone?: string) => unknown;
+  Panel: (props: Record<string, unknown>) => Node;
+};
+
+function loadBoundary(React: VendoredReact): Boundary {
+  const slice = pageSlicer();
+  const src = [
+    slice('class PanelBoundary extends React.Component {', '\nfunction Panel'),
+    slice('function Panel({ title, sub, alert, children }) {', '\nfunction Stat'),
+    'return { PanelBoundary, guard, Panel };',
+  ].join('\n');
+  return new Function('h', 'React', src)(React.createElement, React) as Boundary;
+}
+
+/** The reconciler's one rule, in the smallest form that can be checked without a DOM. */
+function renderTree(node: unknown): unknown {
+  if (node == null || node === false || typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(renderTree);
+  const el = node as Node & { props: Record<string, unknown> };
+  const type = el.type as (new (p: unknown) => { state: unknown; render: () => Node; componentDidCatch?: (e: unknown, i: unknown) => void }) &
+    ((p: unknown) => Node) & { getDerivedStateFromError?: (err: unknown) => unknown; prototype?: { isReactComponent?: unknown } };
+
+  if (typeof type === 'function') {
+    if (typeof type.getDerivedStateFromError === 'function') {
+      const inst = new type(el.props);
+      try {
+        return renderTree(inst.render());
+      } catch (err) {
+        inst.state = type.getDerivedStateFromError(err);
+        inst.componentDidCatch?.(err, { componentStack: '(test)' });
+        return renderTree(inst.render());
+      }
+    }
+    if (type.prototype && type.prototype.isReactComponent) return renderTree(new type(el.props).render());
+    return renderTree(type(el.props));
+  }
+  const kids = el.props ? el.props['children'] : undefined;
+  return { type: el.type, props: el.props, children: renderTree(kids === undefined ? [] : Array.isArray(kids) ? kids : [kids]) };
+}
+
+describe('panel boundary', () => {
+  const React = loadVendoredReact();
+  const { PanelBoundary, guard, Panel } = loadBoundary(React);
+  const h = React.createElement;
+  const Good = (p: Record<string, unknown>) => h('p', null, p['label']);
+  /** The exact shape of both blankings: a module return read as something it is not. */
+  const Burn = () => {
+    const fromModule = undefined as unknown as { perTask: string };
+    return h('p', null, fromModule.perTask);
+  };
+
+  it('a throwing panel does not take its siblings down with it', () => {
+    const deck = h('div', { className: 'deckwrap' },
+      guard('Act column', h(Good, { label: 'owed by you' }), 'deckcol act'),
+      guard('Burn', h(Burn, {}), 'pfd-cell'),
+      guard('Record column', h(Good, { label: 'the wire' }), 'deckcol record'));
+
+    const said = text(renderTree(deck)).join(' | ');
+    // The two that did not throw are still on the page — this is the whole point.
+    expect(said).toContain('owed by you');
+    expect(said).toContain('the wire');
+    // And the one that did threw into a card rather than into the void.
+    expect(said).toContain('failed to draw');
+    expect(said).toContain("Cannot read properties of undefined (reading 'perTask')");
+  });
+
+  it('names the panel that failed and says the rest of the room is unaffected', () => {
+    // A red box with no name sends the founder reading source to find out what broke, and a
+    // red box with no reassurance makes them distrust every other number on the page.
+    const said = text(renderTree(guard('Burn', h(Burn, {}), 'pfd-cell'))).join(' | ');
+    expect(said).toContain('Burn');
+    expect(said).toContain('Only this panel is affected');
+  });
+
+  it('keeps the failed cell in its own grid slot rather than shoving the deck', () => {
+    // Deck zones are placed by grid-area off their class. A fallback that dropped the class
+    // would land in the wrong cell, so the layout would break in a SECOND way at the moment
+    // it is least readable.
+    const out = renderTree(guard('Flight display', h(Burn, {}), 'z-pfd')) as Node;
+    expect(String((out.props as Record<string, unknown>)['className'])).toContain('z-pfd');
+    expect(String((out.props as Record<string, unknown>)['role'])).toBe('alert');
+  });
+
+  it('adds no node of its own while everything is healthy', () => {
+    // In the healthy path it renders a Fragment. If it rendered a wrapper element instead,
+    // every `.deckwrap > .z-*` grid placement on the page would silently stop matching.
+    const inst = new PanelBoundary({ name: 'Ticker', children: h('i', null, 'x') });
+    expect(inst.render().type).toBe(React.Fragment);
+  });
+
+  it('every Panel puts its body behind the boundary, so a new panel is covered by default', () => {
+    const said = text(renderTree(h(Panel, { title: 'Fan-out', sub: 'this tick' }, h(Burn, {})))).join(' | ');
+    expect(said).toContain('Fan-out');        // the panel's own chrome still drew
+    expect(said).toContain('this tick');
+    expect(said).toContain('failed to draw'); // only the body was replaced
+  });
+
+  it('leaves no zone unguarded: every top-level child of the deck wrapper goes through one', () => {
+    // The guarantee, not the widget list. Zones get added and renamed; what must hold is that
+    // NOTHING is a direct child of the deck wrapper without a boundary in front of it, on any
+    // tab. Written as a shape check so a zone added tomorrow fails this test if it is bare.
+    const page = readFileSync(join(ROOM_DIR, 'app.html'), 'utf8');
+    const start = page.indexOf("return h('div', { className: 'deckwrap' },");
+    const end = page.indexOf('\nReactDOM.createRoot', start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const zones = page.slice(start, end).split('\n').slice(1).filter((l) => /^ {4}[A-Za-z]/.test(l));
+    expect(zones.length).toBeGreaterThanOrEqual(8);
+    expect(zones.filter((l) => !l.trimStart().startsWith('guard('))).toEqual([]);
   });
 });
 
@@ -1496,5 +1658,380 @@ describe('the deck over the wire', () => {
     const res = await fetch(base + '/api/action/resume', { method: 'POST', headers: { 'x-loop-token': 'from-a-cached-shell' } });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ ok: false, code: 'stale-token' });
+  });
+});
+
+/* ------------------------------------------------------- the agents deck ---- */
+
+/**
+ * The Agents tab's derivations, sliced out of the vendored page the same way the overview
+ * helpers are. They exist as pure functions precisely so they can be tested here: the founder's
+ * complaint was that a failed background command rendered as three hundred characters of raw
+ * shell, four times over, and the fix is a classifier — which is worth nothing if nobody has
+ * ever run it against a command it has not seen.
+ */
+type AgentRow = {
+  id: string; kind: string; description: string; status: string;
+  parentId?: string | null; depth?: number; durationMs?: number | null;
+  startedAt?: string | null; endedAt?: string | null; tokens?: number; name?: string;
+  /** The feed stamps every row with the lane it came from; the parentage repair reads it. */
+  lane?: string;
+  children?: string[];
+};
+type CommandIntent = {
+  known: boolean; tag: string; text: string; head: string;
+  chars: number; steps: number; heredoc: string | null; raw: string;
+};
+type HistoryRow = {
+  key: string; kind: string; status: string; label: string; raw: string;
+  count: number; ids: string[]; durationMs: number | null; timed: number;
+  intent: CommandIntent | null; tokens: number;
+};
+type TreeRow = { a: AgentRow; depth: number; trail: boolean[]; childCount: number; liveKids: number; orphan: boolean };
+type Series = {
+  known: boolean; concurrencyKnown: boolean; dispatchedKnown: boolean; returnedKnown: boolean;
+  concurrency: number[]; dispatched: number[]; returned: number[];
+  starts: number; ends: number; derivedStarts: number; total: number;
+  from: number | null; to: number | null; spanMs: number | null; peak: number | null;
+};
+type AgentHelpers = {
+  commandIntent: (raw: unknown) => CommandIntent;
+  looksLikeShell: (text: unknown) => boolean;
+  historyRows: (list: AgentRow[]) => HistoryRow[];
+  agentTree: (agents: AgentRow[]) => TreeRow[];
+  agentSeries: (agents: AgentRow[], now: number, buckets?: number) => Series;
+  agentSpan: (a: AgentRow, series: Series, now: number) => { known: boolean; left: number; width: number; derived: boolean };
+  namespaceParents: (agents: AgentRow[]) => AgentRow[];
+};
+
+function loadAgentHelpers(): AgentHelpers {
+  const slice = pageSlicer();
+  const src = `${slice('/* ── pure helpers', '/* ── end pure helpers')}
+return { commandIntent, looksLikeShell, historyRows, agentTree, agentSeries, agentSpan, namespaceParents };`;
+  return new Function(src)() as AgentHelpers;
+}
+
+/** The command row and the panel it lives on, rendered with the stub `h` and the page's React. */
+type CommandPanels = {
+  WherePanel: (props: Record<string, unknown>) => Node;
+  CmdGroupRow: (props: Record<string, unknown>) => Node;
+  historyRows: (list: AgentRow[]) => HistoryRow[];
+};
+
+function loadCommandPanels(): CommandPanels {
+  const slice = pageSlicer();
+  const src = [
+    slice('/* ── pure helpers', '/* ── end pure helpers'),
+    slice('const CMD_TAG_LABEL = {', '/* ── THE LIVE TREE'),
+    slice('const WherePanel = ({ where, onCopy }) => {', '\nconst pct ='),
+    'return { WherePanel, CmdGroupRow, historyRows };',
+  ].join('\n');
+  // The page's OWN React, not the stub `h`: these panels are walked by `renderTree`, which
+  // follows React's rule that children live in props. The stub hangs them off the node, so a
+  // stubbed tree renders as its own root element and every assertion below would pass on an
+  // empty panel — which is exactly how the first run of this suite "passed" nothing.
+  const React = loadVendoredReact();
+  return new Function('h', 'React', src)(React.createElement, React) as CommandPanels;
+}
+
+describe('command intent', () => {
+  const { commandIntent, looksLikeShell } = loadAgentHelpers();
+
+  it('reads a jest shard run out of a chain that starts with cd', () => {
+    // `cd` heads 244 of the 948 commands on record, so the head word is never the answer.
+    const i = commandIntent('cd /c/repo/apps/api && pnpm exec jest --config jest.integration.config.cts --shard 2/8 --testPathPatterns "audit"');
+    expect(i.known).toBe(true);
+    expect(i.tag).toBe('test');
+    expect(i.text).toContain('run the jest tests');
+    expect(i.text).toContain('shard 2 of 8');
+  });
+
+  it('names the file an inline python heredoc rewrites, without splitting the script into steps', () => {
+    const raw = "python - <<'PY'\nimport io\np='apps/web/src/app/core/api/pilot-api.ts'\ns=io.open(p).read()\nPY";
+    const i = commandIntent(raw);
+    expect(i.tag).toBe('script');
+    expect(i.heredoc).toBe('PY');
+    expect(i.text).toContain('inline Python script');
+    expect(i.text).toContain('api/pilot-api.ts');
+    // The body is DATA. Splitting on its newlines made a one-step command report as five.
+    expect(i.steps).toBe(1);
+  });
+
+  it('quotes a commit subject rather than the whole message body', () => {
+    const i = commandIntent("git add x.ts && git commit -q -F - <<'EOF'\nfix(api): the upload response was typed as the read shape\n\nbody line\nEOF");
+    expect(i.tag).toBe('git');
+    expect(i.text).toContain('fix(api): the upload response was typed as the read shape');
+    expect(i.text).not.toContain('body line');
+  });
+
+  it('says it cannot tell, and shows the literal first step, rather than inventing a description', () => {
+    // THE RULE. An invented description for an unreadable command is the same class of lie as
+    // a chip that is always on, and worse here, because it looks like an answer.
+    const i = commandIntent('zzzq --frobnicate');
+    expect(i.known).toBe(false);
+    expect(i.tag).toBe('unknown');
+    expect(i.text).toContain('could not tell');
+    expect(i.head).toBe('zzzq --frobnicate');
+  });
+
+  it('reports an absent command as absent, not as an empty one', () => {
+    expect(commandIntent(null).text).toContain('never recorded');
+    expect(commandIntent('').known).toBe(false);
+  });
+
+  it('counts the shape off the literal text and never estimates it', () => {
+    const raw = 'git status && grep -n foo app.html && wc -l app.html';
+    const i = commandIntent(raw);
+    expect(i.steps).toBe(3);
+    expect(i.chars).toBe(raw.length);
+  });
+
+  it('keeps prose out of the command lane — the founder-journey blocker must stay a sentence', () => {
+    // The inverse of the bug being fixed: an over-eager shell detector would turn the one line
+    // on that panel that needs a human into a command card.
+    expect(looksLikeShell('The founder journey is the only exit-bar item the loop cannot perform.')).toBe(false);
+    expect(looksLikeShell('Last seen: no progress reported')).toBe(false);
+    expect(looksLikeShell('cd apps/api && pnpm exec jest')).toBe(true);
+    expect(looksLikeShell('grep -n foo app.html')).toBe(true);
+  });
+});
+
+describe('history rows', () => {
+  const { historyRows } = loadAgentHelpers();
+  const cmd = (id: string, description: string, status = 'failed', durationMs: number | null = null): AgentRow =>
+    ({ id, kind: 'local_bash', description, status, durationMs });
+
+  it('collapses identical failed commands into one row with a count', () => {
+    // The founder's screenshot: four of these stacked, each 300 characters of shell, pushing
+    // the only line that needed a human off the panel.
+    const rows = historyRows([cmd('1', 'ls -la'), cmd('2', 'ls -la'), cmd('3', 'ls -la'), cmd('4', 'ls -la')]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].count).toBe(4);
+    expect(rows[0].ids).toHaveLength(4);
+  });
+
+  it('does not collapse the same command across different outcomes', () => {
+    // "it failed four times" and "it failed once and passed three times" are different facts.
+    const rows = historyRows([cmd('1', 'ls -la', 'failed'), cmd('2', 'ls -la', 'completed')]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it('never merges two agents, however alike their descriptions', () => {
+    const rows = historyRows([
+      { id: 'a1', kind: 'local_agent', name: 'appsec-engineer', description: 'Gate review', status: 'completed' },
+      { id: 'a2', kind: 'local_agent', name: 'appsec-engineer', description: 'Gate review', status: 'completed' },
+    ]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it('reports the median duration and how many of the group actually carried one', () => {
+    const rows = historyRows([cmd('1', 'ls', 'failed', 1000), cmd('2', 'ls', 'failed', 9000), cmd('3', 'ls', 'failed', null)]);
+    expect(rows[0].count).toBe(3);
+    expect(rows[0].timed).toBe(2);            // the denominator is stated, never implied
+    expect(rows[0].durationMs).toBe(5000);
+  });
+
+  it('says nothing rather than zero when no member of the group was timed', () => {
+    expect(historyRows([cmd('1', 'ls')])[0].durationMs).toBeNull();
+  });
+});
+
+describe('agent tree', () => {
+  const { agentTree } = loadAgentHelpers();
+  const node = (id: string, parentId: string | null, status = 'completed'): AgentRow =>
+    ({ id, parentId, kind: id === 'root' ? 'session' : 'local_agent', description: id, status });
+
+  it('puts every descendant directly after its parent, carrying its depth', () => {
+    const out = agentTree([node('root', null), node('a', 'root'), node('a1', 'a'), node('b', 'root')]);
+    expect(out.map((r) => r.a.id)).toEqual(['root', 'a', 'a1', 'b']);
+    expect(out.map((r) => r.depth)).toEqual([0, 1, 2, 1]);
+    expect(out[1].childCount).toBe(1);
+  });
+
+  it('keeps a row whose parent has not arrived yet, flagged, rather than dropping it', () => {
+    // A parent lands in its own SSE frame, so a child can legitimately arrive first. Hiding it
+    // would silently delete work from the one view whose claim is that it shows all of it.
+    const out = agentTree([node('root', null), node('orphan', 'never-seen')]);
+    expect(out.map((r) => r.a.id)).toContain('orphan');
+    expect(out.find((r) => r.a.id === 'orphan')?.orphan).toBe(true);
+  });
+
+  it('does not hang on a parent cycle', () => {
+    const out = agentTree([node('x', 'y'), node('y', 'x')]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('counts how many of a node children are still out', () => {
+    const out = agentTree([node('root', null), node('a', 'root', 'running'), node('b', 'root', 'completed')]);
+    expect(out[0].liveKids).toBe(1);
+  });
+});
+
+describe('fan-out series', () => {
+  const { agentSeries, agentSpan } = loadAgentHelpers();
+  const T = Date.parse('2026-08-25T04:00:00.000Z');
+  const at = (secs: number) => new Date(T + secs * 1000).toISOString();
+
+  it('withholds the in-flight curve unless every row it would describe is stamped', () => {
+    // THE BAR. Three starts out of a hundred rows drew an in-flight curve peaking at 2
+    // directly above a number reading 3 — a picture contradicting the figure it sat under.
+    const rows: AgentRow[] = [{ id: 'a', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(0), endedAt: at(10) }];
+    for (let i = 0; i < 20; i += 1) rows.push({ id: `x${i}`, kind: 'local_bash', description: 'ls', status: 'completed', endedAt: at(20 + i) });
+    const s = agentSeries(rows, T + 60_000, 10);
+    expect(s.known).toBe(true);
+    expect(s.concurrencyKnown).toBe(false);
+    expect(s.peak).toBeNull();
+    // The returns curve still draws: every finished row carries an end, so it hides nothing.
+    expect(s.returnedKnown).toBe(true);
+    expect(s.returned.reduce((n, v) => n + v, 0)).toBe(21);
+  });
+
+  it('draws in-flight when every row is stamped, and reports the real peak', () => {
+    const s = agentSeries([
+      { id: 'a', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(0), endedAt: at(60) },
+      { id: 'b', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(10), endedAt: at(50) },
+      { id: 'c', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(20), endedAt: at(40) },
+    ], T + 60_000, 10);
+    expect(s.concurrencyKnown).toBe(true);
+    expect(s.peak).toBe(3);
+    expect(s.dispatched.reduce((n, v) => n + v, 0)).toBe(3);
+  });
+
+  it('derives a missing start from end minus duration, and counts the derivation as one', () => {
+    // This runner's task events carry no timestamp, so `startedAt` is null on every row while
+    // `end_time` is real. Subtracting the reported duration is arithmetic, not a measurement,
+    // and the panel prints how much of its own picture came from it.
+    const s = agentSeries([
+      { id: 'a', kind: 'local_bash', description: 'ls', status: 'completed', endedAt: at(60), durationMs: 10_000 },
+      { id: 'b', kind: 'local_bash', description: 'ls', status: 'completed', endedAt: at(90), durationMs: 30_000 },
+    ], T + 120_000, 10);
+    expect(s.starts).toBe(2);
+    expect(s.derivedStarts).toBe(2);
+    expect(s.concurrencyKnown).toBe(true);
+  });
+
+  it('says unknown for a row it cannot place, instead of pinning it to the left edge', () => {
+    const s = agentSeries([
+      { id: 'a', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(0), endedAt: at(60) },
+      { id: 'b', kind: 'local_bash', description: 'ls', status: 'completed', startedAt: at(10), endedAt: at(50) },
+    ], T + 60_000, 10);
+    const span = agentSpan({ id: 'z', kind: 'local_bash', description: 'ls', status: 'completed' }, s, T + 60_000);
+    expect(span.known).toBe(false);
+  });
+
+  it('reports no window at all when fewer than two stamps exist anywhere', () => {
+    expect(agentSeries([{ id: 'a', kind: 'local_bash', description: 'ls', status: 'running' }], T, 10).known).toBe(false);
+  });
+});
+
+describe('what a failed command renders as', () => {
+  const { WherePanel, CmdGroupRow, historyRows } = loadCommandPanels();
+
+  it('shows what the command was FOR, and keeps the raw shell behind a disclosure', () => {
+    const raw = 'cd /c/XIII/share/Work/airvia/apps/api && PAT=$(sed -n "1p" "$TEMP/int-chunks.txt"); pnpm exec jest --config jest.integration.config.cts --shard 2/8 --testPathPatterns "$PAT" 2>/dev/null | wc -l';
+    const rows = historyRows([{ id: '1', kind: 'local_bash', description: raw, status: 'failed', durationMs: 42_000 }]);
+    const said = text(renderTree(CmdGroupRow({ row: rows[0], onCopy: () => undefined, onOpen: () => undefined }))).join(' | ');
+    expect(said).toContain('run the jest tests');
+    expect(said).toContain('shard 2 of 8');
+    expect(said).toContain('TEST');
+    // The raw text is PRESENT — no information is lost — but it is behind a summary.
+    expect(said).toContain(raw);
+    expect(said).toContain('copy command');
+    expect(said).toMatch(/show the \d+ characters it actually ran/);
+  });
+
+  it('collapses four identical failures into one row carrying a count', () => {
+    const raw = "python - <<'PY'\nimport io\np='apps/web/src/app/core/api/pilot-api.ts'\nPY";
+    const rows = historyRows([1, 2, 3, 4].map((n) => ({
+      id: String(n), kind: 'local_bash', description: raw, status: 'failed', durationMs: null,
+    })));
+    expect(rows).toHaveLength(1);
+    const said = text(renderTree(CmdGroupRow({ row: rows[0], onCopy: () => undefined }))).join(' | ');
+    expect(said).toContain('×4');
+    expect(said).toContain('inline Python script');
+    expect(said).toContain('api/pilot-api.ts');
+  });
+
+  it('leaves the founder to-do above the failures, in prose, not in a command row', () => {
+    // THE COMPLAINT, as a test. Four identical "a background command failed" blocks, each
+    // dumping raw shell, buried the one item only a person can clear.
+    const said = text(renderTree(WherePanel({
+      onCopy: () => undefined,
+      where: {
+        headline: '1 agent working right now on spec 008',
+        phase: 'CONVERGING',
+        derivedFrom: 'the tick transcript, the queue and git — no model was asked',
+        sentences: ['Tick 3 has been running 20 minutes on spec 008.'],
+        blockers: [
+          {
+            what: '3 specs awaiting your click: 005, 006, 007',
+            why: 'The founder journey is the only exit-bar item the loop cannot perform.',
+          },
+          { what: 'a background command failed', why: 'cd apps/api && pnpm exec jest --shard 1/4' },
+          { what: 'a background command failed', why: 'cd apps/api && pnpm exec jest --shard 1/4' },
+          { what: 'a background command failed', why: 'grep -rn "FR-111" specs/008' },
+        ],
+      },
+    }))).join(' | ');
+
+    const owed = said.indexOf('3 specs awaiting your click');
+    const failures = said.indexOf('background commands failed');
+    expect(owed).toBeGreaterThanOrEqual(0);
+    expect(failures).toBeGreaterThan(owed);          // the to-do is ABOVE the noise
+    expect(said).toContain('3 background commands failed');
+    expect(said).toContain('2 distinct');            // two of them were the same command
+    expect(said).toContain('run the jest tests');
+    expect(said).toContain('search for FR-111');
+    // Nothing is lost: every raw character is still on the panel.
+    expect(said).toContain('cd apps/api && pnpm exec jest --shard 1/4');
+    expect(said).toContain('grep -rn "FR-111" specs/008');
+  });
+
+  it('draws no failure block at all when nothing failed', () => {
+    const said = text(renderTree(WherePanel({
+      onCopy: () => undefined,
+      where: { headline: 'idle', phase: null, derivedFrom: 'git', sentences: ['nothing to report'], blockers: [] },
+    }))).join(' | ');
+    expect(said).not.toContain('background command');
+  });
+});
+
+describe('agent parentage across the lane namespace', () => {
+  const { namespaceParents, agentTree } = loadAgentHelpers();
+
+  it('re-joins a namespaced id to the bare parentId the feed sends', () => {
+    // room-server.ts:2303 namespaces `id` per lane and leaves `parentId` as the runtime's bare
+    // id, so `byId.get(a.parentId)` missed on every row. The flat grid never noticed because it
+    // only looked a parent up below depth 1; a tree noticed at once — 130 commands all drawn at
+    // the root. This applies the same rule the server uses when it re-namespaces a detail.
+    const fixed = namespaceParents([
+      { id: '008·root', lane: '008', parentId: null, kind: 'session', description: 'worker', status: 'running' },
+      { id: '008·t1', lane: '008', parentId: 'root', kind: 'local_bash', description: 'ls', status: 'completed' },
+    ]);
+    expect(fixed[1].parentId).toBe('008·root');
+    const tree = agentTree(fixed);
+    expect(tree.map((r) => r.depth)).toEqual([0, 1]);
+    expect(tree[1].orphan).toBe(false);
+  });
+
+  it('leaves an id it cannot resolve exactly as it arrived, so the tree can flag it', () => {
+    // Repairing is only legitimate where the namespaced form names a row that is PRESENT.
+    // Anything else stays untouched and surfaces as "parent not seen" rather than as a guess.
+    const fixed = namespaceParents([
+      { id: '008·root', lane: '008', parentId: null, kind: 'session', description: 'worker', status: 'running' },
+      { id: '008·t1', lane: '008', parentId: 'nobody', kind: 'local_agent', description: 'x', status: 'running' },
+    ]);
+    expect(fixed[1].parentId).toBe('nobody');
+    expect(agentTree(fixed).find((r) => r.a.id === '008·t1')?.orphan).toBe(true);
+  });
+
+  it('does not rewrite an id that already resolves, and never mutates its input', () => {
+    const input = [
+      { id: 'root', parentId: null, kind: 'session', description: 'worker', status: 'running' },
+      { id: 't1', parentId: 'root', kind: 'local_bash', description: 'ls', status: 'completed' },
+    ];
+    const fixed = namespaceParents(input);
+    expect(fixed[1]).toBe(input[1]);       // untouched rows keep their identity
+    expect(input[1].parentId).toBe('root');
   });
 });
