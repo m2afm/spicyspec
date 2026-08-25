@@ -423,6 +423,29 @@ export function createRunnerActivities(deps: RunnerDeps): SpecRunActivities {
       // Readers use `?? null`, so the row stays backward compatible with rows written before
       // these existed — absence means unknown there, never clean.
       const durationMinutes = durationMinutesFor(cls.turns);
+      // R15: A CONVERGE PASS MAY NOT RUN TWICE IN A ROW.
+      //
+      // Converge finds work; it does not build it. Because a `clean` exit leaves the queue
+      // stage untouched, converge re-ran itself: passes 7, 8 and 9 landed back to back on one
+      // spec with ZERO completions between them while the list grew 87 -> 95 -> 100 and `done`
+      // sat at 54 for two and a half hours — discovery outran delivery 18-to-5 over ten hours,
+      // and the founder's word for it was "infinity loop". The settle hook cannot fix this: it
+      // fires once per CHILD WORKFLOW, while the repeats happen inside that workflow's own run
+      // loop. This is the per-run hook, so it is the one that can. If a converge run leaves
+      // open work, the next run BUILDS it.
+      if (cls.progressed || cls.exit === 'clean' || cls.exit === 'spec-complete') {
+        try {
+          const q = await deps.store.loadQueue();
+          const row = q.entries.find((e) => e.id === input.specId);
+          if (row && row.stage === 'converge' && cls.tasksOpen > 0) {
+            row.stage = 'execute';
+            await deps.store.saveQueue(q);
+          }
+        } catch {
+          // Stage steering is bookkeeping; never let it cost the run its record.
+        }
+      }
+
       await deps.store.appendRun({
         tick: input.run,
         attempt,

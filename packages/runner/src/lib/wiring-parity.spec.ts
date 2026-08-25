@@ -317,3 +317,47 @@ describe('the review decision survives a crash between crediting and spending', 
     expect(q.entries.find((e) => e.id === '007')?.status).toBe('done');
   });
 });
+
+describe('R15 — a converge pass may not run twice in a row', () => {
+  /** A run that does real work and moves the tree — the only shape R15 acts on. */
+  const forwardProvider = (): ProviderAdapter =>
+    ({
+      id: 'fake',
+      createSession: () => ({
+        events: async function* (): AsyncGenerator<WorkerEvent> {
+          yield { type: 'tool_use', id: '1', name: 'Bash', input: {}, parentToolUseId: null };
+          yield { type: 'result', envelope: { total_cost_usd: 1, num_turns: 6, result: '' } };
+        },
+        interrupt: async () => undefined,
+      }),
+    }) as ProviderAdapter;
+
+  const movingTree = (deps: RunnerDeps) => {
+    let n = 0;
+    deps.snapshotFn = async () => ({
+      // buildPacket takes a snapshot too, so the run's BEFORE is the second call, not the first.
+      git: { head: n++ < 2 ? 'before' : 'after', dirty: false, branch: 'main', headSubject: 's', dirtyPaths: [] },
+      tasks: { exists: true, done: 1, open: 2, nextTaskIds: ['T002'] },
+      handoff: { mtimeMs: 1 },
+    });
+    return deps;
+  };
+
+  it('a converge run that leaves open work flips the stage to execute', async () => {
+    // Passes 7, 8 and 9 landed back to back on one spec: the list grew 87 -> 95 -> 100 while
+    // `done` sat at 54 for two and a half hours. A `clean` exit leaves the stage untouched, so
+    // converge kept re-running itself — finding work instead of building what it had found.
+    const deps = movingTree(makeDeps({ provider: forwardProvider() }));
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'active' as const, stage: 'converge' }] });
+    const outcome = await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect(outcome.exit).toBe('clean');
+    expect((await deps.store.loadQueue()).entries[0].stage).toBe('execute');
+  });
+
+  it('leaves every other stage alone — repeating `execute` is correct, only converge is not', async () => {
+    const deps = movingTree(makeDeps({ provider: forwardProvider() }));
+    await deps.store.saveQueue({ entries: [{ id: '006', status: 'active' as const, stage: 'execute' }] });
+    await createRunnerActivities(deps).runWorkerSession({ specId: '006', run: 1 });
+    expect((await deps.store.loadQueue()).entries[0].stage).toBe('execute');
+  });
+});
