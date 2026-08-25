@@ -119,38 +119,92 @@ function readFirstBlock(rows: ReadFirstRow[]): string {
   ].join('\n');
 }
 
+/**
+ * The review economics, measured rather than assumed.
+ *
+ * A forensic audit of five delivered features (65 runs, $1,617, 273 tasks) found 57.7% of
+ * spend going to review ceremony against 11.6% editing source, cost per task getting 1.8x
+ * WORSE after an earlier round of cuts, and 17.6% of 664 findings changing any code. The
+ * rules below are the ones that survived that audit with a defect behind them; the cadence
+ * numbers are the ones the cheap feature used and the expensive one did not.
+ */
 function qualityBlock(ctx: PacketContext): string {
   return [
-    'These are not ceremony. Each one has a recorded live-defect catch behind it.',
+    'These are not ceremony. Each one has a measured defect catch, or a measured waste, behind it.',
     '',
     `- **Record every gate verdict as one machine-readable JSON line** appended to`,
-    `  \`${ctx.gateRecordPath}\` — \`{"at","spec","stage","gate","verdict","confidence",`,
-    '  `"seat","frozen"}` — gate ∈ specify|design|wave|closing|terminal, verdict ∈',
-    '  APPROVE|REVISE|BLOCK. The last line for a spec is its current state. Machines read',
-    '  this line, humans read your prose — a verdict only in prose will be misread.',
+    `  \`${ctx.gateRecordPath}\` — \`{"at","spec","stage","gate","verdict","seat","frozen"}\` —`,
+    '  gate ∈ specify|design|wave|closing|terminal, verdict ∈ APPROVE|REVISE. The last line for',
+    '  a spec is its current state. Machines read this line, humans read your prose — a verdict',
+    '  only in prose will be misread. **No confidence score, and no BLOCK rung:** across 114',
+    '  recorded verdicts confidence separated APPROVE from REVISE by 0.06 inside a 0.17 span,',
+    '  never once discriminating an outcome, and BLOCK was used zero times.',
     '- **A gate verdict is written by the seat that reached it, not relayed by you.** Your',
     '  summary of a review is not the review. The orchestrator harvests your transcript for',
     '  the dispatch and the record write; an APPROVE it cannot corroborate is treated as',
     '  fabricated and the unit is re-dispatched.',
-    '- **Gate at the wave, not at the end.** After every wave touching money, auth, or a',
-    '  public surface: a two-seat review (path owner + adversarial critic), one round, told',
-    '  to OPEN THE FILES, not weigh options. More than 12 findings means the wave was too big.',
+    '- **One review per WAVE of 5–6 tasks, never per task.** Two seats, and the owner of the',
+    '  changed paths is MANDATORY — a lone critic is a missing reviewer, not compliance. A wave',
+    '  closes in at most two rounds; a third only for a genuinely new defect class, never a',
+    '  re-fix of the previous round in a new guise. MEASURED: the feature that reviewed 5.5',
+    '  tasks per round minted no extra work, cost $4.46/task and shipped; the one that reviewed',
+    '  1.1 per round ran 55 rounds to close 53 tasks, cost $8.99/task and did not. Batched',
+    '  reviews also found 24% cross-task defects against 8% — the hollowed-harness and',
+    '  dead-unwired-code classes are only visible when several tasks are seen together.',
+    '- **Every finding names a falsifiable probe** — a mutation that stayed green, a red-first',
+    '  test, or an executed command with its output pasted. A numbered item concluding PASS is',
+    '  not a finding and is not written down. A round with no probe-backed finding is one line,',
+    '  not a section. MEASURED: 57.5% of findings changed only prose and 19.7% were refuted by',
+    '  the seat that raised them; every high-yield catch came from the probe form.',
+    '- **Never review the process\'s own records.** Task lists, plans, review logs and handoffs',
+    '  are corrected in place by their author and never carry a verdict. MEASURED: nine such',
+    '  rounds produced nineteen findings and zero code changes, one of them a seat retracting',
+    '  itself, and a third of one feature\'s review rounds froze on commits containing no',
+    '  application code at all.',
+    '- **A converge pass may mint work; a review may not.** A finding needing new work is fixed',
+    '  inside the wave that found it, or filed as a converge input. MEASURED: review-minted',
+    '  tasks are what drove one feature from 52 rows to 87 and its cadence to 1.1 tasks/round.',
     '- **Fix per finding, re-review the diff.** Batching findings into one commit injected',
     '  ~1 live defect per 6–9 fixes in measurement.',
     '- **Prove it can fail.** Any assertion guarding an invariant must be shown to go red',
     '  when the invariant is broken, before it goes green.',
+    '- **Verification has three tiers and no others:** scoped and cached on the affected project',
+    '  at every commit; a full uncached sweep at exactly two moments — end of wave, and the',
+    '  terminal gate; and never a command byte-identical to one already run this session on the',
+    '  same tree. MEASURED: 79% of verify calls ran with no source edit since the previous one,',
+    '  and 73 full uncached suite runs landed inside one 5.4-hour window.',
   ].join('\n');
 }
 
+/**
+ * TWO journeys, and the audit that separated them.
+ *
+ * The previous wording — "the human review journey is the one thing you may not do" — was
+ * read as a ban on automating any clicking. Measured consequence across five delivered
+ * features: ZERO browser tool calls in 8,855 tool calls and 22MB of session logs, three
+ * runnable e2e projects excluded from every "full sweep", and a static route-reachability
+ * parser built as a substitute that cost five review rounds and ten commits perfecting its
+ * own regex while changing no product behaviour. Both defects that escaped to a human were
+ * exactly the class clicking catches: a checkout page unreachable because the server
+ * returned `url` where the client declared `redirectUrl` (15.5h in tree), and a published
+ * listing whose PATCH re-validated nothing (25h to discovery). One real journey costs about
+ * 70 seconds of wall clock.
+ */
 function reviewBlock(ctx: PacketContext): string {
   return [
-    '**The human review journey is the one thing you may not do.** The exit bar requires a',
-    'human to reach the feature by clicking and complete its primary action. A step',
-    'performed by you or a script is a step the journey did not test — simulated journeys',
-    'have "completed" purchases on unreachable pages while every suite stayed green.',
+    '**You owe an EXECUTED browser journey. It is not optional and no static check replaces it.**',
+    'Write one end-to-end spec per feature in the repo\'s own browser-test project, reaching the',
+    'feature **by navigation — no typed URL** — and completing its primary action. Discover the',
+    'command from the repo\'s tooling, run it UNCACHED at the terminal gate, and paste the command',
+    'with its pass/fail output into the gate record. A route-reachability parser, an architecture',
+    'test, or an argument about reachability does NOT satisfy this: reasoning about whether a',
+    'screen can be reached is exactly what has failed here before, twice, while every suite',
+    'stayed green.',
     '',
-    'Build up to it, make it *possible*, then hand it over: write the journey as a numbered',
-    `click path (exact start URL, exact expected outcome) into \`${ctx.parkedPath}\`, set`,
+    '**The FOUNDER journey is separate, and still theirs.** Your executed journey proves the path',
+    'exists; their click proves the product is worth reaching. Never claim their journey as done,',
+    'never simulate it, and never let yours stand in for it — write it as a numbered click path',
+    `(exact start URL, exact expected outcome) into \`${ctx.parkedPath}\`, set`,
     '`RUN_STATUS: awaiting-review`, and exit.',
   ].join('\n');
 }

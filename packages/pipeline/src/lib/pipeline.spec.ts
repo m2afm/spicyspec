@@ -171,3 +171,47 @@ describe('renderHandoffPackage — the output contract', () => {
     expect(md).toContain('(empty — no gate verdicts were recorded)');
   });
 });
+
+describe('the packet carries the 2026-08-25 review economics', () => {
+  const packet = () => buildPacket(ctx());
+
+  it('requires an EXECUTED browser journey and forbids a static substitute', () => {
+    // Five features shipped with ZERO browser tool calls because the old wording read as a
+    // ban on automating clicks; a route-reachability parser was built instead and cost five
+    // review rounds while changing no behaviour. Both escaped defects were this class.
+    const p = packet();
+    expect(p).toMatch(/EXECUTED browser journey/);
+    expect(p).toMatch(/no typed URL/);
+    expect(p).toMatch(/UNCACHED at the terminal gate/);
+    expect(p).toMatch(/does NOT satisfy this/);
+    // and the founder's own journey survives as a separate, un-substitutable thing
+    expect(p).toMatch(/FOUNDER journey is separate/);
+  });
+
+  it('sets the review cadence at a wave of 5-6 tasks with the path owner mandatory', () => {
+    const p = packet();
+    expect(p).toMatch(/One review per WAVE of 5–6 tasks, never per task/);
+    expect(p).toMatch(/owner of the\s+changed paths is MANDATORY/);
+    expect(p).toMatch(/at most two rounds/);
+  });
+
+  it('drops confidence scores and the BLOCK rung, and demands a probe per finding', () => {
+    const p = packet();
+    expect(p).toMatch(/No confidence score, and no BLOCK rung/);
+    expect(p).toMatch(/verdict ∈\s+APPROVE\|REVISE/);
+    expect(p).toMatch(/Every finding names a falsifiable probe/);
+    expect(p).toMatch(/concluding PASS is\s+not a finding/);
+  });
+
+  it('forbids reviewing the process own records, and gate-minted work', () => {
+    const p = packet();
+    expect(p).toMatch(/Never review the process's own records/);
+    expect(p).toMatch(/A converge pass may mint work; a review may not/);
+  });
+
+  it('pins verification to three tiers with no byte-identical repeats', () => {
+    const p = packet();
+    expect(p).toMatch(/three tiers and no others/);
+    expect(p).toMatch(/byte-identical to one already run/);
+  });
+});
