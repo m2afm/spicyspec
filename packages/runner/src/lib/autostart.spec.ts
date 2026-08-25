@@ -205,7 +205,19 @@ describe('applyAutostart', () => {
     const { tmpdir } = await import('node:os');
     const dir = await mkdtemp(join(tmpdir(), 'spicyspec-autostart-'));
     const plan = planAutostart(req({ stateDir: join(dir, '.spicyspec') }));
-    const result = await applyAutostart(plan, 'install');
+    // INJECTED runner — never the machine's. This spec used to execute the real vectors,
+    // and because the plan carries the real task name with a TEMP stateDir, every run of
+    // the suite re-registered the founder's live scheduled task against a path under
+    // %TEMP% that vanishes moments later. Windows reports result=0 for a missing script,
+    // so supervision died silently for three hours while the scheduler claimed success.
+    const vectors: string[] = [];
+    const result = await applyAutostart(plan, 'install', {
+      run: async (bin, args) => {
+        vectors.push([bin, ...args].join(' '));
+      },
+      toolExists: async () => true,
+    });
+    expect(vectors.some((v) => v.includes('/Create'))).toBe(true);
     expect(result.written).toContain(plan.files[0].path);
     expect(await readFile(plan.files[0].path, 'utf8')).toContain('supervise --once');
     // Appending to a log inside a missing directory fails silently at 3am.

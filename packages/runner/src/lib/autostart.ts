@@ -349,8 +349,26 @@ async function toolExists(bin: string): Promise<boolean> {
   }
 }
 
+export interface ApplyDeps {
+  /**
+   * Runs one registration vector. INJECTABLE because the test suite must never touch the
+   * machine's real scheduler: a spec called applyAutostart with a temp stateDir but the real
+   * task name, so every `nx test runner` re-registered the founder's live task against a
+   * path under %TEMP% that is deleted moments later. Windows then reported result=0 for the
+   * missing script, so supervision was silently dead for three hours while the scheduler
+   * insisted every run had succeeded.
+   */
+  run?(command: string, args: readonly string[]): Promise<void>;
+  /** injectable so a test can assert the vectors without needing the tool present */
+  toolExists?(tool: string): Promise<boolean>;
+}
+
 /** Writes the plan's files, then runs its vectors. Never throws for an `optional` vector. */
-export async function applyAutostart(plan: AutostartPlan, mode: 'install' | 'uninstall'): Promise<ApplyResult> {
+export async function applyAutostart(
+  plan: AutostartPlan,
+  mode: 'install' | 'uninstall',
+  deps: ApplyDeps = {},
+): Promise<ApplyResult> {
   const written: string[] = [];
   const ran: string[] = [];
   const failures: string[] = [];
@@ -366,13 +384,15 @@ export async function applyAutostart(plan: AutostartPlan, mode: 'install' | 'uni
     written.push(plan.logDir);
   }
 
-  if (!(await toolExists(plan.requiresTool))) {
+  const toolCheck = deps.toolExists ?? toolExists;
+  if (!(await toolCheck(plan.requiresTool))) {
     return { written, ran, toolMissing: true, failures };
   }
 
   for (const vector of mode === 'install' ? plan.install : plan.uninstall) {
     try {
-      await run(vector.bin, [...vector.args], { windowsHide: true });
+      if (deps.run) await deps.run(vector.bin, vector.args);
+      else await run(vector.bin, [...vector.args], { windowsHide: true });
       ran.push(`${vector.bin} ${vector.args.join(' ')}`);
     } catch (err) {
       if (vector.optional) continue;
