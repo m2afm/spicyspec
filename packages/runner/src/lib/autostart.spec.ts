@@ -117,7 +117,15 @@ describe('planAutostart — windows vectors', () => {
     // — an overlapping sweep, a tail — made the launcher exit 1 BEFORE node started: no
     // checks, no repairs, zero bytes written, no diagnosis. Reproduced by holding the file
     // open and running the launcher. The supervisor appends the log itself, per line.
-    expect(script).not.toContain('>>');
+    // The SWEEP's own line must carry no redirect — cmd's `>>` opens the file for the whole
+    // process, so any other holder made the launcher exit 1 before node started, running no
+    // checks and writing nothing. A failure breadcrumb to a SEPARATE file is allowed and
+    // wanted: a scheduled task that fails silently is indistinguishable from one that never
+    // ran, which cost an hour of blind diagnosis.
+    const sweepLine = script.split(String.fromCharCode(13, 10)).find((l) => l.includes('supervise --once')) ?? '';
+    expect(sweepLine).not.toContain('>');
+    expect(script).toContain('launcher.log');
+    expect(script).toMatch(/cd \/d "/);
     // .cmd files are parsed line-by-line by cmd.exe; a lone LF corrupts the last line.
     expect(script).toContain('\r\n');
   });
