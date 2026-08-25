@@ -22,6 +22,7 @@ import {
   parseHealthEvents,
   recentHealthEvents,
   reviewCapOf,
+  dirtyPathsFrom,
   specProgress,
   startControlRoom,
   STOP_KEY,
@@ -682,6 +683,168 @@ describe('health panel', () => {
   });
 });
 
+/* ------------------------------------------------------------- overview helpers ---- */
+
+/**
+ * The Overview rebuild's derivations, sliced out of the same vendored page and evaluated the
+ * same way `loadHealthPanel` does. They decide what the founder reads FIRST — the elapsed
+ * clock in the marquee, the order of the owed grid, and the one sentence a collapsed
+ * self-healing strip is allowed to show — so a formatter that is only ever exercised through
+ * a screenshot is a formatter nobody has tested.
+ */
+type OverviewHelpers = {
+  laneElapsed: (startedAt: number | null, now?: number) => string;
+  sortOwed: (items: unknown[]) => Array<Record<string, unknown>>;
+  healthWorst: (rows: unknown[]) => string;
+};
+
+function loadOverviewHelpers(): OverviewHelpers {
+  const page = readFileSync(join(ROOM_DIR, 'app.html'), 'utf8');
+  const from = '/* ── pure helpers';
+  const to = '/* ── end pure helpers';
+  const a = page.indexOf(from);
+  const b = page.indexOf(to, a + from.length);
+  if (a < 0 || b < 0) throw new Error('app.html no longer carries the pure-helper block');
+  const src = `${page.slice(a, b)}\nreturn { laneElapsed, sortOwed, healthWorst };`;
+  return new Function(src)() as OverviewHelpers;
+}
+
+describe('overview helpers', () => {
+  const { laneElapsed, sortOwed, healthWorst } = loadOverviewHelpers();
+
+  describe('laneElapsed', () => {
+    it('counts in seconds, because a figure frozen for a minute is a frozen page', () => {
+      const now = 1_000_000_000;
+      expect(laneElapsed(now - 65_000, now)).toBe('01:05');
+      expect(laneElapsed(now - 9_000, now)).toBe('00:09');
+    });
+
+    it('grows an hours field rather than running past 60 minutes', () => {
+      const now = 1_000_000_000;
+      expect(laneElapsed(now - 3_725_000, now)).toBe('1:02:05');
+    });
+
+    it('says nothing rather than zero when the lane has no start stamp', () => {
+      // A lane whose start was never recorded has an UNKNOWN elapsed, and '00:00' would
+      // claim it just started — the same class of lie as a heartbeat read as progress.
+      expect(laneElapsed(null, 1_000)).toBe('—');
+    });
+
+    it('never counts backwards from a clock that has drifted', () => {
+      expect(laneElapsed(2_000, 1_000)).toBe('00:00');
+    });
+  });
+
+  describe('sortOwed', () => {
+    const item = (key: string, extra: Record<string, unknown> = {}) => ({ key, kind: 'spec', id: key, ...extra });
+
+    it('puts what one click would finish at the front', () => {
+      const out = sortOwed([
+        item('a', { progress: { done: 1, total: 4, complete: false } }),
+        item('b', { progress: { done: 3, total: 3, complete: true } }),
+      ]);
+      expect(out.map((o) => o.key)).toEqual(['b', 'a']);
+    });
+
+    it('then the most-progressed, which is the shortest walk to the next sign-off', () => {
+      const out = sortOwed([
+        item('low', { progress: { done: 1, total: 10, complete: false } }),
+        item('high', { progress: { done: 8, total: 10, complete: false } }),
+      ]);
+      expect(out.map((o) => o.key)).toEqual(['high', 'low']);
+    });
+
+    it('breaks a tie on the oldest recorded date, and sorts an undated item after a dated one', () => {
+      const out = sortOwed([
+        item('undated'),
+        item('new', { recordedOn: '2026-08-22' }),
+        item('old', { recordedOn: '2026-08-01' }),
+      ]);
+      expect(out.map((o) => o.key)).toEqual(['old', 'new', 'undated']);
+    });
+
+    it('keeps a signed-off item, last — a debt that vanishes when paid cannot be checked', () => {
+      const out = sortOwed([
+        item('done', { signedOff: true, progress: { done: 2, total: 2, complete: true } }),
+        item('open', { progress: { done: 0, total: 5, complete: false } }),
+      ]);
+      expect(out.map((o) => o.key)).toEqual(['open', 'done']);
+      expect(out).toHaveLength(2);
+    });
+
+    it('does not mutate the list it was handed', () => {
+      const input = [item('a', { recordedOn: '2026-08-30' }), item('b', { recordedOn: '2026-08-01' })];
+      sortOwed(input);
+      expect(input.map((o) => o.key)).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('healthWorst', () => {
+    const row = (check: string, status: string, reported = status) => ({ check, label: check.toUpperCase(), status, reported });
+
+    it('names the failing checks rather than averaging them away', () => {
+      // "5 of 6 ok" is the RUNNING / LIVE FEED header wearing a new font.
+      const said = healthWorst([row('temporal', 'ok'), row('rotation', 'failed'), row('worker', 'ok')]);
+      expect(said).toContain('FAILING');
+      expect(said).toContain('ROTATION');
+      expect(said).not.toContain('ok');
+    });
+
+    it('reports a caution when nothing is failing but something was repaired', () => {
+      expect(healthWorst([row('worker', 'repaired'), row('temporal', 'ok')])).toContain('repaired');
+    });
+
+    it('says nothing has reported when nothing has, rather than calling silence ok', () => {
+      const said = healthWorst([row('a', 'unknown', ''), row('b', 'unknown', '')]);
+      expect(said).toContain('nothing reported yet');
+    });
+
+    it('counts the partially silent instead of claiming the whole roster is ok', () => {
+      expect(healthWorst([row('a', 'ok'), row('b', 'unknown', '')])).toBe('1 of 2 checks have never reported');
+    });
+
+    it('only says everything is ok when everything is', () => {
+      expect(healthWorst([row('a', 'ok'), row('b', 'ok')])).toBe('all 2 checks ok');
+      expect(healthWorst([])).toBe('no checks on the roster');
+    });
+  });
+});
+
+/**
+ * The rebuild moved panels; it removed no field. These are the load-bearing structural
+ * claims, asserted against the served page rather than a screenshot.
+ */
+describe('overview structure', () => {
+  it('keeps every Run-totals figure after the panel itself is folded into the marquee', async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).not.toContain("h(Panel, { title: 'Run totals' }");
+    for (const field of ['t.notional', 't.ticks', 't.closed', 't.billable', 'fmtMin(t.minutes)']) {
+      expect(page).toContain(field);
+    }
+    expect(page).toContain('Notional is list-price token value, not money.');
+  });
+
+  it('renders the dirty paths the state has always carried and the page never showed', async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).toContain('git.dirtyPaths');
+  });
+
+  it('collapses self-healing visually, never conditionally — a break may not be unrendered', async () => {
+    const page = await (await fetch(base + '/')).text();
+    // The roster and the feed sit inside a `.disclose` wrapper whose only job is 0fr → 1fr.
+    expect(page).toContain("'disclose' + (open ? ' open' : '')");
+    // and the panel re-opens itself when a NEW break appears, keyed to a signature so an
+    // identical 4-second push does not fight a founder who collapsed a known failure.
+    expect(page).toContain('healthSig');
+  });
+
+  it('never animates from a render — the state word is keyed to the value that changed', async () => {
+    const page = await (await fetch(base + '/')).text();
+    expect(page).toContain('if (prev.current === state) return undefined;');
+    expect(page).toContain("node.addEventListener('animationend', done, { once: true });");
+  });
+});
+
 /* ------------------------------------------------------------------- top line ---- */
 
 /**
@@ -817,5 +980,18 @@ describe('which tasks.md the progress bar believes', () => {
     utimesSync(join(root, rel, 'tasks.md'), stale, stale);
 
     expect(specProgress(root, rel, '009')).toMatchObject({ done: 2, open: 1, total: 3 });
+  });
+});
+
+describe('dirty paths survive git porcelain padding', () => {
+  it('keeps the first character of a worktree-modified path', () => {
+    // stdout.trim() eats the leading space of ' M path' on the FIRST line only, and a fixed
+    // slice(3) then ate a real character with it: the tree strip read 'picyspec.runner.json'.
+    const porcelain = 'M spicyspec.runner.json\n?? .specify/loop/ship-pr-body.md\n M apps/web/src/main.ts';
+    expect(dirtyPathsFrom(porcelain)).toEqual([
+      'spicyspec.runner.json',
+      '.specify/loop/ship-pr-body.md',
+      'apps/web/src/main.ts',
+    ]);
   });
 });

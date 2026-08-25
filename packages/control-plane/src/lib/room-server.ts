@@ -295,6 +295,20 @@ export function recentHealthEvents(events: HealthEvent[]): HealthEvent[] {
  * check with no report at all is still a ROW — "not reported yet" is the most important thing
  * this panel can say, and a missing row says nothing at all.
  */
+/**
+ * `git status --porcelain` pads its status field to two columns, so a worktree-modified entry
+ * begins with a SPACE (' M path'). git() trims the whole stdout, which ate that space on the
+ * FIRST line only — and a fixed slice(3) then ate a real character with it, so the tree strip
+ * read 'picyspec.runner.json'. Match the status field instead of counting characters that are
+ * not always there.
+ */
+export function dirtyPathsFrom(porcelain: string): string[] {
+  return porcelain
+    .split('\n')
+    .map((line) => line.replace(/^\s*[A-Z?!ADMRCU ]{1,2}\s+/, '').trim())
+    .filter((line) => line.length > 0);
+}
+
 export function healthRows(events: HealthEvent[]): HealthRow[] {
   const key = (raw: unknown): string => {
     const id = String(raw ?? '').toLowerCase().trim();
@@ -743,7 +757,7 @@ async function buildRoomState(options: RoomOptions, brief: BriefModule, lanes: L
     git(repoCwd, ['branch', '--show-current']),
     git(repoCwd, ['status', '--porcelain']),
   ]);
-  const dirtyPaths = porcelain.split('\n').filter((l) => l.length > 3).map((l) => l.slice(3));
+  const dirtyPaths = dirtyPathsFrom(porcelain);
 
   // The header's one-look answer. Derived here rather than in the page so that the SSE
   // frames, the 15s poll backstop and the tests all read the same sentence.

@@ -316,7 +316,8 @@ button:focus-visible { outline: var(--ink-thick) solid var(--flame); outline-off
 table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.74rem; }
 th, td { text-align: left; padding: 0.32rem 0.5rem; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
 th { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); border-bottom: var(--ink-medium) solid var(--line); }
-td.note { white-space: normal; min-width: 16rem; color: var(--text-soft); }
+/* td.note is declared in the command-centre layer below — it is now clamped to one line
+   with the full text behind a per-row expand, which is what took 1261px off the record. */
 tr.bad td { background: var(--row-bad); }
 tr.warnrow td { background: var(--row-warn); }
 .pill { border: 1px solid var(--line); padding: 0 0.3rem; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; }
@@ -633,6 +634,239 @@ footer { margin-top: 1.4rem; padding-top: 0.7rem; border-top: var(--ink-medium) 
 .theme-seg button:active:not(:disabled) { transform: none; box-shadow: none; }
 .theme-seg button:hover[aria-pressed="false"] { background: var(--surface); color: var(--text); }
 .theme-seg button[aria-pressed="true"] { background: var(--fill-solid); color: var(--page); }
+
+/* ══════════════════════════════════════════════════════════════════
+   THE COMMAND-CENTRE LAYER — added in the Overview rebuild.
+
+   The system above is LOCKED and nothing below redefines it: every rule here
+   addresses a ROLE token, so paper / night / auto keep working with zero new
+   declarations, and no thirteenth colour is introduced. What is new is a MOTION
+   SCALE and a HIERARCHY — the page had nine co-equal panels and no answer.
+
+   Motion law, because this page repaints every 4 seconds:
+     · animate transform and opacity only, never width / height / top in a hot path;
+     · one-shot animations are triggered from a VALUE change, never from a render,
+       and are removed on animationend so a mid-flight re-render cannot restart them;
+     · infinite ambient animations live only on elements React never unmounts, so
+       their CSS clock is never reset.
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  /* four steps plus one event step. Nothing on this page may invent a sixth. */
+  --dur-fast:  120ms;
+  --dur-base:  220ms;
+  --dur-state: 420ms;
+  --dur-slow:  640ms;
+  --dur-event: 900ms;
+  --ease-snap: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  /* the one scale addition: the single state word, and nothing else, ever */
+  --display-mega: clamp(2.4rem, 5.6vw, 4.6rem);
+  /* a list that grows past this scrolls inside itself rather than growing the page */
+  --list-cap: 21rem;
+}
+
+/* ── ZONE 0+1 — the dock ───────────────────────────────────────────
+   Header and tabs are ONE sticky element rather than two stacked ones. Two
+   stickies need the second to know the first's height, which is a magic number
+   that breaks the moment the hero wraps at a narrow width. */
+.topdock {
+  position: sticky; top: 0; z-index: 6;
+  background: var(--page);
+  margin: calc(var(--gutter) * -1) calc(var(--gutter) * -1) 1.1rem;
+  padding: 0.5rem var(--gutter) 0;
+  border-bottom: var(--ink-bold) solid var(--line);
+}
+.topdock .tabs { margin-bottom: 0.5rem; }
+/* On a phone the hero wraps to five rows, and a sticky dock would eat a quarter of the
+   screen forever. Below the two-column breakpoint it scrolls away like any other block. */
+@media (max-width: 759px) { .topdock { position: static; } }
+header.hero { border-bottom: 0; padding-bottom: 0.45rem; margin-bottom: 0; gap: 0.45rem 0.8rem; }
+header.hero h1 { font-size: clamp(1.15rem, 2.4vw, 1.6rem); }
+header.hero .pulse { font-size: 0.68rem; padding: 0.18rem 0.45rem; }
+header.hero button { font-size: 0.88rem; padding: 0.28rem 0.7rem; }
+header.hero .theme-seg button { font-size: 0.55rem; padding: 0.26rem 0.45rem; }
+header.hero .controls { gap: 0.4rem; }
+/* The reason line has LEFT the header for the marquee, where it is read at 3x the
+   size. It keeps its class because it keeps its meaning. */
+@media (min-width: 1200px) {
+  header.hero { flex-wrap: nowrap; }
+  header.hero .controls { flex-wrap: nowrap; }
+  header.hero h1 { flex: 0 0 auto; white-space: nowrap; }
+}
+
+/* ── ZONE 2 — the marquee ──────────────────────────────────────────
+   One dominant readout answering the founder's four questions in one glance:
+   is it working (cell A), on what (B), for how long (B), at what cost (C). */
+.marquee { display: grid; gap: 1rem; grid-template-columns: 1fr; align-items: start; min-width: 0; }
+@media (min-width: 1080px) {
+  .marquee { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.85fr); gap: 1.4rem; }
+}
+.mq-cell { min-width: 0; }
+.mq-cell + .mq-cell { border-top: var(--ink-thin) dashed var(--line-soft); padding-top: 0.9rem; }
+@media (min-width: 1080px) {
+  .mq-cell + .mq-cell { border-top: 0; padding-top: 0; border-left: var(--ink-thin) dashed var(--line-soft); padding-left: 1.3rem; }
+}
+.mq-label {
+  font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim);
+  margin-bottom: 0.45rem;
+}
+.mq-head { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+
+/* M2 / M3 live here. The dot is a stable DOM node — React never unmounts it — so its
+   animation clock survives every 4-second state push untouched. */
+.marquee-dot {
+  width: 18px; height: 18px; flex: 0 0 auto; position: relative;
+  border: var(--ink-medium) solid var(--line); background: var(--inert);
+}
+.marquee-dot.on { background: var(--shatta); animation: beat 1.4s var(--ease-hover) infinite; }
+.marquee-dot.warn { background: var(--flame); }
+/* M3: an idle dashboard that is perfectly still is indistinguishable from a crashed tab. */
+.marquee-dot.off { animation: breathe 6s ease-in-out infinite; }
+.marquee-dot.on::after {
+  content: ''; position: absolute; inset: -3px; border: var(--ink-medium) solid var(--shatta);
+  opacity: 0.5; will-change: transform; pointer-events: none;
+  animation: ring 2.6s var(--ease-out) infinite;
+}
+@keyframes ring { from { transform: scale(1); opacity: 0.5; } to { transform: scale(2.2); opacity: 0; } }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* M1: the only fact on this page that changes MEANING rather than magnitude. Transform and
+   opacity only — letter-spacing or font-size would reflow a Bangers word at 4.6rem. */
+.marquee-state {
+  font-family: var(--font-display); font-weight: 400;
+  font-size: var(--display-mega); line-height: 0.85; letter-spacing: 0.03em;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.marquee-state.swap { animation: stateSwap var(--dur-state) var(--ease-snap); }
+@keyframes stateSwap {
+  0%   { transform: translateY(0);        opacity: 1; }
+  45%  { transform: translateY(-0.12em);  opacity: 0; }
+  100% { transform: translateY(0);        opacity: 1; }
+}
+
+.marquee-rule { position: relative; height: 3px; background: var(--line); margin: 0.6rem 0 0.7rem; overflow: hidden; }
+.marquee-rule.idle::after {
+  content: ''; position: absolute; top: 0; left: 0; height: 2px; width: 45%;
+  background: var(--flame-soft); opacity: 0.4;
+  animation: sweep 4.5s ease-in-out infinite;
+}
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(322%); } }
+
+.marquee-lane {
+  border-left: var(--ink-bold) solid var(--shatta); background: var(--surface-alt);
+  padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; min-width: 0;
+}
+.marquee-lane:last-child { margin-bottom: 0; }
+.mq-lane-top { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+.mq-lane-name {
+  font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.03em;
+  min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* M4 earns its place by NOT animating: a digit that fades in is a digit you cannot read at
+   the moment it changes, and this surface is watched for hours. */
+.mq-clock {
+  font-family: var(--font-mono); font-size: 0.82rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; flex: 0 0 auto;
+}
+.chipbtn {
+  font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; border: 1px solid var(--line); padding: 0.05rem 0.35rem;
+  box-shadow: none; cursor: pointer; line-height: 1.5;
+  transition: transform var(--dur-fast) var(--ease-snap);
+}
+.chipbtn:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 0 var(--offset); }
+.chipbtn:active:not(:disabled) { transform: translate(1px, 1px); box-shadow: none; }
+.statrow.two { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem 0.9rem; }
+.statrow.two .stat .n { font-size: 1.7rem; }
+
+/* M6: a bar that ADVANCES rather than teleports. scaleX, not width — width relayouts the
+   panel, transform does not, and this repaints every four seconds. */
+.gauge > i, .minibar > i {
+  width: 100%; transform-origin: left center; transform: scaleX(0);
+  transition: transform var(--dur-slow) var(--ease-snap);
+}
+
+/* ── ZONE 4 — obligations ──────────────────────────────────────────
+   Owed was 1579px of single-column list. The same items, three across, are 168px. */
+.owedgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+  gap: 0.5rem; margin: 0; padding: 0; align-items: start;
+}
+.owedgrid li { margin-bottom: 0; min-width: 0; }
+.owedgrid.capped { max-height: var(--list-cap); overflow-y: auto; padding-right: 0.3rem; }
+/* Two lines, then a title attribute, then the whole thing on click — the same escalation the
+   feed's `.hint` already uses. One tile carrying a 180-character `affects` sentence made the
+   grid 333px tall per row, which is the single-column list wearing a grid. */
+.owedtitle {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+}
+.owedaffects { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 6rem; }
+.acctgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.6rem; align-items: start; }
+.acctgrid .acct { margin-bottom: 0; }
+
+/* ── ZONE 5 — the status rail ──────────────────────────────────────
+   These collapse VISUALLY, never conditionally: the content is always in the DOM, so a
+   test that reads the rendered tree — and a founder using ctrl-F — still finds every row.
+   grid-template-rows 0fr → 1fr is the only height transition that animates to `auto`. */
+.disclose { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-slow) var(--ease-snap); }
+.disclose > div { overflow: hidden; min-height: 0; }
+.disclose.open { grid-template-rows: 1fr; }
+
+.striphead { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; min-width: 0; }
+.stripone {
+  font-family: var(--font-mono); font-size: 0.74rem; flex: 1 1 8rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.strip-dots { display: flex; gap: 4px; flex: 0 0 auto; }
+.strip-dots i { display: block; width: 10px; height: 10px; border: 1px solid var(--line); background: var(--inert); }
+.strip-dots i.ok   { background: var(--fill-solid); }
+.strip-dots i.warm { background: var(--flame-soft); }
+.strip-dots i.hot  { background: var(--shatta); animation: beat 1.4s var(--ease-hover) infinite; }
+.strip-dots i.mute { background: var(--inert); }
+.stripline { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-soft); margin-top: 0.45rem; line-height: 1.35; }
+.chev { display: inline-block; transition: transform var(--dur-base) var(--ease-snap); }
+.chev.open { transform: rotate(90deg); }
+.scrollcap { max-height: var(--list-cap); overflow-y: auto; padding-right: 0.3rem; }
+.morebox > summary {
+  font-family: var(--font-mono); font-size: 0.68rem; color: var(--hot);
+  cursor: pointer; padding: 0.25rem 0; text-decoration: underline;
+}
+
+/* ── ZONE 6 — records ──────────────────────────────────────────────
+   `td.note { white-space: normal; min-width: 16rem }` was the actual height killer: it let
+   40 notes wrap to three lines each. The note is not deleted, it is clamped and expandable. */
+.tickscroll { max-height: 30rem; overflow: auto; }
+.tickscroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+td.note { white-space: nowrap; max-width: 24rem; overflow: hidden; text-overflow: ellipsis; color: var(--text-soft); }
+tr.detail td { white-space: normal; background: var(--surface-alt); font-size: 0.7rem; line-height: 1.5; }
+tr.detail b { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+.notebtn {
+  background: none; border: 0; box-shadow: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; display: flex; gap: 0.35rem; align-items: baseline; min-width: 0; width: 100%; text-align: left;
+}
+.notebtn:hover:not(:disabled), .notebtn:active:not(:disabled) { transform: none; box-shadow: none; }
+.notebtn .nt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+
+/* progressive disclosure inside the live panel: the tail is already bounded by the pump, so
+   a virtualizer here would be a lie about the cost. */
+.quote.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.showall { margin-top: 0.45rem; font-family: var(--font-mono); font-size: 0.68rem; }
+
+/* Directive 3 is linework and hard offsets — neither needs motion to read, and the founder
+   watches this page for hours. Everything ambient stops; nothing moves or disappears. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-dot.on, .marquee-dot.off, .marquee-dot.on::after,
+  .marquee-rule.idle::after, .strip-dots i.hot, .runbar.live > i { animation: none !important; }
+  .marquee-dot.on::after { opacity: 0.35; }
+  .marquee-rule.idle::after { opacity: 0.25; transform: translateX(0); }
+  .runbar.live > i { background: repeating-linear-gradient(45deg, var(--flame-soft) 0 5px, transparent 5px 10px); }
+  .marquee-state.swap { animation: none !important; }
+  .disclose { transition: none; }
+  .gauge > i, .minibar > i, .chev { transition: none; }
+  * { will-change: auto !important; }
+}
 
 /* Directive 3 is linework and hard offsets — neither needs motion to read. */
 @media (prefers-reduced-motion: reduce) {
@@ -1238,8 +1472,12 @@ function Progress({ done, built, total }) {
 }
 
 function Accounts({ accounts, events }) {
+  const feed = events || [];
+  const line = (e, i) => h('li', { key: String(e) + '#' + i }, h('span', { className: 'hint' }, e));
   return h(Panel, { title: 'Accounts', sub: 'the API reports a % only past ~90%' },
-    accounts.map((a) => {
+    // auto-fit rather than a stack: two or three accounts side by side are one 128px row
+    // instead of a 549px column, and the cards themselves are unchanged.
+    h('div', { className: 'acctgrid' }, accounts.map((a) => {
       const u = a.utilization;
       const cls = u == null ? '' : u >= 0.9 ? 'crit' : u >= 0.7 ? 'warn' : '';
       return h('div', { key: a.id, className: 'acct' + (a.cold ? ' cold' : '') },
@@ -1249,7 +1487,7 @@ function Accounts({ accounts, events }) {
             : a.cold ? h('span', { className: 'tag hot' }, 'cold ' + a.coldMinutes + 'm')
             : h('span', { className: 'tag' + (u != null && u >= 0.9 ? ' warm' : '') }, a.rateStatus || 'warm')),
         h('div', { className: 'gauge', title: u == null ? 'under the reporting threshold' : pct(u) + '% used' },
-          h('i', { className: cls, style: { width: (u == null ? 8 : Math.max(4, pct(u))) + '%' } })),
+          h('i', { className: cls, style: { transform: 'scaleX(' + (u == null ? 0.08 : Math.max(0.04, u)) + ')' } })),
         h('div', { className: 'acct-meta' },
           h('span', null, u == null ? '<90%' : pct(u) + '% used'),
           h('span', null, a.ticks + ' ticks'),
@@ -1257,16 +1495,89 @@ function Accounts({ accounts, events }) {
           a.windowEndsAt && h('span', null, 'window ' + clock(a.windowEndsAt)),
           a.overageStatus === 'allowed' && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'OVERAGE ON')),
         a.refusedReason && a.cold && h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, a.refusedReason.slice(0, 110)));
-    }),
+    })),
     // The switch narration the prototype logged on every tick start: "account X is cold —
     // leased Y". Derived from the run rows, so it is the same fact the tick table shows.
-    events && events.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } },
-      events.map((e, i) => h('li', { key: i }, h('span', { className: 'hint' }, e)))));
+    // Four lines, then the rest behind a disclosure — the whole list is still in the DOM.
+    feed.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } }, feed.slice(0, 4).map(line)),
+    feed.length > 4 && h('details', { className: 'morebox' },
+      h('summary', null, 'show all ' + feed.length + ' account events'),
+      h('ul', { className: 'feed' }, feed.slice(4).map(line))));
 }
 
 /* Supervisor status word → the tag class that colours it. Base tag is neutral (ok), warm is
    an amber caution (repaired / blocked), hot is the red the page reserves for a real break. */
 const HEALTH_TAG = { ok: '', repaired: ' warm', failed: ' hot', blocked: ' warm', unknown: ' mute' };
+
+/* ── pure helpers ──────────────────────────────────────────────────────
+   Derivations with no hooks, no DOM and no closure over anything outside this
+   block, so room-server.spec.ts can slice them out of this file and test them
+   directly. A formatter that is only exercised through a screenshot is a
+   formatter nobody has tested.
+   -------------------------------------------------------------------- */
+
+/**
+ * A live elapsed clock: mm:ss under an hour, h:mm:ss over it.
+ *
+ * Seconds rather than the old whole-minute `fmtMin`, because the marquee's whole claim is
+ * that the loop is moving RIGHT NOW — a figure that sits on "7m" for sixty seconds is
+ * indistinguishable from a frozen page, which is the exact lie this room exists to stop.
+ */
+const laneElapsed = (startedAt, now) => {
+  if (!startedAt) return '—';
+  const total = Math.max(0, Math.floor((((now == null) ? Date.now() : now) - startedAt) / 1000));
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return hh > 0 ? hh + ':' + p2(mm) + ':' + p2(ss) : p2(mm) + ':' + p2(ss);
+};
+
+/**
+ * Owed items in the order a founder can actually clear them.
+ *
+ * Ready-to-sign-off first (one click finishes it), then most-progressed (the shortest walk
+ * to the next sign-off), then oldest by the day it was recorded, and already-signed-off last
+ * — those are receipts, not debts, and they are kept because a debt that vanishes the moment
+ * it is paid gives the founder no way to check that it was. An item with no recorded date
+ * sorts after ones that have one rather than pretending to be the oldest.
+ */
+const sortOwed = (items) => {
+  const rank = (it) => (it && it.signedOff ? 3 : (it && it.progress && it.progress.complete) ? 0 : 1);
+  const frac = (it) => (it && it.progress && it.progress.total ? it.progress.done / it.progress.total : 0);
+  const when = (it) => String((it && it.recordedOn) || '￿');
+  return (items || []).slice().sort((a, b) => {
+    const r = rank(a) - rank(b);
+    if (r !== 0) return r;
+    const f = frac(b) - frac(a);
+    if (f !== 0) return f;
+    return when(a).localeCompare(when(b));
+  });
+};
+
+/**
+ * The one sentence the COLLAPSED self-healing strip shows.
+ *
+ * It has to be the worst thing on the roster, never a summary that averages a break away:
+ * this panel exists because of the night the loop was dead for eight hours behind a header
+ * that said RUNNING. "5 of 6 ok" is that header wearing a new font.
+ */
+const healthWorst = (rows) => {
+  const list = rows || [];
+  if (!list.length) return 'no checks on the roster';
+  const failed = list.filter((r) => r.status === 'failed');
+  if (failed.length) {
+    return failed.length + ' check' + (failed.length > 1 ? 's' : '') + ' FAILING — ' +
+      failed.map((r) => r.label).join(', ');
+  }
+  const warm = list.filter((r) => r.status === 'repaired' || r.status === 'blocked');
+  if (warm.length) return warm.map((r) => r.label + ' ' + r.status).join(' · ');
+  const quiet = list.filter((r) => r.status === 'unknown' || !r.reported);
+  if (quiet.length === list.length) return 'nothing reported yet — ' + list.length + ' checks on the roster';
+  if (quiet.length) return quiet.length + ' of ' + list.length + ' checks have never reported';
+  return 'all ' + list.length + ' checks ok';
+};
+/* ── end pure helpers ─────────────────────────────────────────────── */
 
 /**
  * One row per supervised check — what was checked, when, and the last repair with its time.
@@ -1276,8 +1587,13 @@ const HEALTH_TAG = { ok: '', repaired: ' warm', failed: ' hot', blocked: ' warm'
  * the page could have said so. A self-healer nobody can see is the same class of lie as a
  * frozen feed, so an absent or silent supervisor is stated in the panel's loudest words —
  * together with the one command that installs it.
+ *
+ * It collapses VISUALLY, never conditionally. The roster and the event feed are always
+ * rendered and always in the DOM; `open` only changes whether the wrapper is 0fr or 1fr.
+ * Hiding a break behind a conditional would be this panel telling the original lie itself.
+ * `open` / `onToggle` are optional, so the component stays a pure function of props.
  */
-function Health({ health }) {
+function Health({ health, open, onToggle }) {
   if (!health || !health.supervisor) {
     return h(Panel, { title: 'Self-healing', alert: true },
       h('p', { className: 'mono', style: { margin: 0, fontSize: '0.76rem' } },
@@ -1287,33 +1603,98 @@ function Health({ health }) {
   const rows = health.rows || [];
   const events = health.events || [];
   const broken = rows.filter((r) => r.status === 'failed').length;
+  const ordered = events.slice().reverse();
+  const eventLine = (e, i) => h('li', { key: e.check + '@' + e.at + '#' + i },
+    h('span', { className: 'tool' }, e.check),
+    h('span', { className: 'hint' }, e.status + (e.detail ? ' — ' + e.detail : '') + ' · ' + ago(e.at)));
+
   return h(Panel, {
       title: 'Self-healing',
       alert: !sup.reporting || broken > 0,
       sub: sup.reporting ? 'supervisor beat ' + ago(sup.lastAt) : 'nobody is watching',
     },
+    // The always-visible head: one square per check, coloured by the same status vocabulary
+    // the roster uses, each titled with its label and its reported word.
+    h('div', { className: 'striphead' },
+      h('div', { className: 'strip-dots' }, rows.map((r) => h('i', {
+        key: r.check,
+        className: (HEALTH_TAG[r.status] || ' mute').trim() || 'ok',
+        title: r.label + ' — ' + (r.reported || 'not reported'),
+      }))),
+      h('span', { style: { flex: 1 } }),
+      h('button', {
+        className: 'linkish', type: 'button',
+        onClick: () => { if (onToggle) onToggle(); },
+      }, h('span', { className: 'chev' + (open ? ' open' : '') }, '▸'), ' ',
+         open ? 'hide the roster' : 'the roster and ' + events.length + ' events')),
+    h('div', { className: 'stripline', style: broken > 0 ? { color: 'var(--hot)', fontWeight: 700 } : null },
+      healthWorst(rows)),
     !sup.reporting && h('p', {
       className: 'mono',
-      style: { margin: '0 0 0.7rem', fontSize: '0.74rem', fontWeight: 700, color: 'var(--hot)' },
+      style: { margin: '0.5rem 0 0', fontSize: '0.74rem', fontWeight: 700, color: 'var(--hot)' },
     }, sup.advice || 'supervisor not reporting'),
-    rows.map((r) => h('div', { key: r.check, className: 'acct' + (r.status === 'failed' ? ' cold' : '') },
-      h('div', { className: 'acct-top' },
-        h('span', { className: 'acct-name' }, r.label),
-        h('span', { className: 'tag' + (HEALTH_TAG[r.status] || '') }, r.reported || 'not reported')),
-      h('div', { className: 'acct-meta' },
-        h('span', null, r.checkedAt ? 'checked ' + ago(r.checkedAt) : 'never checked'),
-        r.lastRepairAt
-          ? h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'repaired ' + ago(r.lastRepairAt))
-          : h('span', null, 'no repair on record')),
-      r.detail && h('div', { className: 'acct-meta', style: { color: 'var(--text-soft)' } }, r.detail.slice(0, 140)),
-      // The repair line is only worth its own row when it is not simply the latest report
-      // repeating itself — a healed check says "repaired" once, not twice.
-      r.lastRepairDetail && r.lastRepairAt !== r.checkedAt &&
-        h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, 'last repair: ' + r.lastRepairDetail.slice(0, 120)))),
-    events.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } },
-      events.slice().reverse().map((e, i) => h('li', { key: i },
-        h('span', { className: 'tool' }, e.check),
-        h('span', { className: 'hint' }, e.status + (e.detail ? ' — ' + e.detail : '') + ' · ' + ago(e.at))))));
+
+    h('div', { className: 'disclose' + (open ? ' open' : '') }, h('div', null,
+      // Bounded, not truncated: six roster cards plus a full event log is ~980px, which is
+      // the monstrous panel back again wearing a chevron. It scrolls inside itself instead.
+      h('div', { className: 'scrollcap', style: { paddingTop: '0.7rem' } },
+        rows.map((r) => h('div', { key: r.check, className: 'acct' + (r.status === 'failed' ? ' cold' : '') },
+          h('div', { className: 'acct-top' },
+            h('span', { className: 'acct-name' }, r.label),
+            h('span', { className: 'tag' + (HEALTH_TAG[r.status] || '') }, r.reported || 'not reported')),
+          h('div', { className: 'acct-meta' },
+            h('span', null, r.checkedAt ? 'checked ' + ago(r.checkedAt) : 'never checked'),
+            r.lastRepairAt
+              ? h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, 'repaired ' + ago(r.lastRepairAt))
+              : h('span', null, 'no repair on record')),
+          r.detail && h('div', { className: 'acct-meta', style: { color: 'var(--text-soft)' } }, r.detail.slice(0, 140)),
+          // The repair line is only worth its own row when it is not simply the latest report
+          // repeating itself — a healed check says "repaired" once, not twice.
+          r.lastRepairDetail && r.lastRepairAt !== r.checkedAt &&
+            h('div', { className: 'acct-meta', style: { color: 'var(--hot-deep)' } }, 'last repair: ' + r.lastRepairDetail.slice(0, 120)))),
+        // 12 lines, then the rest behind a native disclosure. `details` rather than React
+        // state because this component must stay callable as a plain function of props.
+        events.length > 0 && h('ul', { className: 'feed', style: { marginTop: '0.7rem' } },
+          ordered.slice(0, 12).map(eventLine)),
+        ordered.length > 12 && h('details', { className: 'morebox' },
+          h('summary', null, 'show all ' + ordered.length + ' events'),
+          h('ul', { className: 'feed' }, ordered.slice(12).map(eventLine)))))));
+}
+
+/* ── progressive disclosure primitives ─────────────────────────────────
+   Every list on this page was uncapped, which is how the Overview reached 4105px.
+   None of them may DROP anything, so each caps at a readable default and says, in
+   the count, exactly what it is holding back. "show all n" is not decoration: a
+   silent cap reads as "this is everything", which is the one thing a record must
+   never claim.
+   -------------------------------------------------------------------- */
+
+/** The action feed of one lane. Keys are content-derived, or every row would look new
+    on every 4-second push and any enter animation would fire on all of them forever. */
+function FeedList({ items, cap, prefix }) {
+  const [all, setAll] = useState(false);
+  const list = items || [];
+  const start = all ? 0 : Math.max(0, list.length - cap);
+  return h('div', null,
+    h('ul', { className: 'feed' }, list.slice(start).map((a, i) =>
+      h('li', { key: prefix + '|' + a.tool + '|' + a.hint + '#' + (start + i) },
+        h('span', { className: 'tool' }, a.tool),
+        h('span', { className: 'hint' }, a.hint)))),
+    !all && list.length > cap && h('button', {
+      className: 'linkish showall', type: 'button', onClick: () => setAll(true),
+    }, 'show all ' + list.length + ' actions'));
+}
+
+/** The worker's last say-line. Three lines, then the rest in place — a quote that runs to
+    fourteen lines pushes everything under it off the screen for one sentence of prose. */
+function Say({ text }) {
+  const [all, setAll] = useState(false);
+  const long = String(text).length > 220;
+  return h('div', null,
+    h('div', { className: 'quote' + (all || !long ? '' : ' clamp') }, '“' + text + '”'),
+    long && h('button', {
+      className: 'linkish showall', type: 'button', onClick: () => setAll(!all),
+    }, all ? 'clamp it' : 'show all of it'));
 }
 
 /* The body of one lane: the four figures, the action feed, the last thing it said. Shared so
@@ -1327,9 +1708,8 @@ function laneBody(lane) {
       h(Stat, { n: lane.tools ?? 0, l: 'tool calls' }),
       h(Stat, { n: lane.verification ?? 0, l: 'verify cmds' }),
       h(Stat, { n: lane.subagents ?? 0, l: 'subagents' })),
-    h('ul', { key: 'feed', className: 'feed' }, (lane.actions || []).map((a, i) =>
-      h('li', { key: i }, h('span', { className: 'tool' }, a.tool), h('span', { className: 'hint' }, a.hint)))),
-    lane.say && h('div', { key: 'say', className: 'quote' }, '“' + lane.say + '”'),
+    h(FeedList, { key: 'feed', items: lane.actions || [], cap: 8, prefix: String(lane.id || lane.spec || 'lane') }),
+    lane.say && h(Say, { key: 'say', text: lane.say }),
   ];
 }
 
@@ -1354,6 +1734,290 @@ function Live({ live, lanes, running }) {
     all.map((lane, i) => h(LaneBlock, { key: lane.spec || i, lane, divider: i > 0 })));
 }
 
+/* ── ZONE 2: the marquee ───────────────────────────────────────────────
+   The founder's four questions — is it working, on what, for how long, at what cost —
+   were spread across a 9px header dot, the Current tick panel, a statrow, and Run totals
+   2055px down the page. Nothing here is new data; every field already existed in
+   buildRoomState. What is new is that they are read together, at a size that survives a
+   glance up from a terminal.
+   -------------------------------------------------------------------- */
+
+/**
+ * M4 — the elapsed clock. A leaf that owns its own 1s interval, so the tick re-renders
+ * roughly forty characters and never the page. It deliberately does not animate: a digit
+ * that fades in is a digit you cannot read at the moment it changes, and the motion that
+ * carries "time is passing" is the crawl bar beside it.
+ */
+function Elapsed({ since }) {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => bump((n) => (n + 1) % 60), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return h('span', { className: 'mq-clock', title: 'since this lane started' }, laneElapsed(since, Date.now()));
+}
+
+/**
+ * M7 — a figure that ADVANCES to its new value rather than teleporting.
+ *
+ * Keyed to the VALUE, never to a render: an identical 4-second push finds `target ===
+ * from.current` and does nothing at all. The rAF lives in a leaf so the ~38 frames it
+ * produces re-render one number, not the marquee.
+ */
+function Counter({ value, prefix, digits }) {
+  const target = Number(value) || 0;
+  const [shown, setShown] = useState(target);
+  const from = useRef(target);
+  useEffect(() => {
+    if (target === from.current) return undefined;
+    const a = from.current;
+    from.current = target;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setShown(target); return undefined; }
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / 640);
+      setShown(a + (target - a) * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return h('span', { className: 'n', style: { fontVariantNumeric: 'tabular-nums' } },
+    (prefix || '') + shown.toFixed(digits == null ? 0 : digits));
+}
+
+/**
+ * M1 — the state word swap.
+ *
+ * Triggered from a useEffect comparing the STRING to a ref of its previous value, so a
+ * WORKING → WORKING push is completely silent; the class is dropped on `animationend`, so a
+ * re-render mid-flight cannot restart it. This is the only fact on the page that changes
+ * meaning rather than magnitude, and a founder glancing up needs to catch that it moved.
+ */
+function StateWord({ state }) {
+  const el = useRef(null);
+  const prev = useRef(state);
+  useEffect(() => {
+    if (prev.current === state) return undefined;
+    prev.current = state;
+    const node = el.current;
+    if (!node) return undefined;
+    node.classList.remove('swap');
+    void node.offsetWidth;           // one forced reflow, only ever on a real state change
+    node.classList.add('swap');
+    const done = () => node.classList.remove('swap');
+    node.addEventListener('animationend', done, { once: true });
+    return () => node.removeEventListener('animationend', done);
+  }, [state]);
+  return h('div', { className: 'marquee-state', ref: el }, state);
+}
+
+function Marquee({ s, top, armed, unsupervised, owedCount, onOwed }) {
+  const c = s.catalog;
+  const t = s.totals;
+  const lanes = (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []);
+  const shown = lanes.slice(0, 3);
+  const on = top.tone === 'on';
+  // The leased account is the one a tick would actually run on: the first that is not cold.
+  const leased = (s.accounts || []).find((a) => !a.cold) || (s.accounts || [])[0] || null;
+  const u = leased ? leased.utilization : null;
+  const gcls = u == null ? '' : u >= 0.9 ? 'crit' : u >= 0.7 ? 'warn' : '';
+  const overage = (s.accounts || []).some((a) => a.overageStatus === 'allowed');
+
+  return h('section', {
+    className: 'panel' + (on ? '' : ' alert'),
+    style: { marginBottom: '1.1rem' },
+  },
+    h('div', { className: 'marquee' },
+
+      // ── CELL A — is it working, and why not ──────────────────────────
+      h('div', { className: 'mq-cell' },
+        h('div', { className: 'mq-head' },
+          h('i', {
+            className: 'marquee-dot ' + (on ? 'on' : top.tone === 'warn' ? 'warn' : 'off'),
+            title: top.reason || 'a lane is in flight',
+          }),
+          h(StateWord, { state: top.state })),
+        h('div', { className: 'marquee-rule' + (on ? '' : ' idle') }),
+        // The reason line, moved out of the header where it was 0.76rem. The chips describe
+        // PROCESSES — "running", "live feed" — and processes are what stayed true for eight
+        // hours over a cancelled rotation. This is the only line describing PROGRESS.
+        h('div', { className: 'whybar' + (top.tone === 'off' ? ' off' : ''), style: on && !top.reason ? { color: 'var(--text-soft)', borderLeftColor: 'var(--shatta)' } : null },
+          top.reason || 'a lane is in flight — the loop is doing the work'),
+        h('div', { className: 'role-chips', style: { marginTop: '0.6rem' } },
+          armed && h('span', { className: 'chip warn' },
+            (s.killFlag ? 'kill' : 'stop') + ' armed · ' + (armed.armedBy || 'unknown author') + ' · ' + ago(armed.armedAt)),
+          unsupervised && h('span', { className: 'chip warn' }, 'unsupervised'),
+          // The one added affordance on the whole page: the debt is stated where the founder
+          // is already looking, and clicking it takes them to the list rather than describing it.
+          owedCount > 0 && h('button', {
+            type: 'button', className: 'chip live chipbtn', onClick: onOwed,
+          }, owedCount + ' owed by you'))),
+
+      // ── CELL B — on what, and for how long ───────────────────────────
+      h('div', { className: 'mq-cell' },
+        h('div', { className: 'mq-label' }, 'on what'),
+        shown.length === 0
+          ? h('div', null,
+              h('div', { className: 'where-head', style: { fontSize: '1.15rem' } }, 'nothing in flight'),
+              h('div', { className: 'where-src', style: { marginTop: '0.4rem' } },
+                c.pending + ' pending · ' + c.parked.length + ' parked · ' + c.awaitingFounder.length + ' awaiting you'))
+          : shown.map((lane) => h('div', { key: lane.id || lane.spec, className: 'marquee-lane' },
+              h('div', { className: 'mq-lane-top' },
+                h('span', { className: 'mq-lane-name' }, 'Spec ' + lane.spec + ' · ' + lane.stage),
+                h(Elapsed, { since: lane.startedAt })),
+              h('div', { className: 'acct-meta', style: { marginTop: '0.2rem' } },
+                h('span', { className: 'tag' }, lane.account),
+                h('span', null, (lane.tools ?? 0) + ' tools'),
+                h('span', null, (lane.subagents ?? 0) + ' subagents')),
+              // M5: the runtime reports no percentage, so a determinate bar would be an
+              // invented number. A crawl says "in flight, duration unknown", which is true.
+              h('div', { className: 'runbar live', style: { marginTop: '0.4rem' } }, h('i', null)))),
+        lanes.length > shown.length && h('div', { className: 'where-src' },
+          '+' + (lanes.length - shown.length) + ' more lane(s) — all of them in Current tick below')),
+
+      // ── CELL C — at what cost, and how much window is left ───────────
+      h('div', { className: 'mq-cell' },
+        h('div', { className: 'mq-label' }, 'cost + runway'),
+        h('div', { className: 'statrow two' },
+          h('div', { className: 'stat' },
+            h(Counter, { value: t.notional, prefix: '$', digits: 2 }),
+            h('span', { className: 'l' }, 'notional')),
+          h(Stat, { n: t.ticks, l: 'ticks' }),
+          h(Stat, { n: t.closed, l: 'tasks closed' }),
+          h(Stat, { n: fmtMin(t.minutes), l: 'worker time' })),
+        leased && h('div', { style: { marginTop: '0.75rem' } },
+          h('div', { className: 'acct-top' },
+            h('span', { className: 'acct-name', style: { fontSize: '1rem' } }, leased.id),
+            overage
+              ? h('span', { className: 'tag warm' }, 'OVERAGE ON')
+              : h('span', { className: 'tag' + (u != null && u >= 0.9 ? ' warm' : '') }, leased.rateStatus || 'warm')),
+          h('div', { className: 'gauge', title: u == null ? 'under the reporting threshold' : pct(u) + '% used' },
+            h('i', { className: gcls, style: { transform: 'scaleX(' + (u == null ? 0.08 : Math.max(0.04, u)) + ')' } })),
+          h('div', { className: 'acct-meta' },
+            h('span', null, u == null ? '<90% used' : pct(u) + '% used'),
+            leased.windowEndsAt && h('span', null, 'window ' + clock(leased.windowEndsAt)),
+            h('span', null, leased.ticks + ' ticks'))),
+        h('p', { className: 'mono', style: { fontSize: '0.68rem', color: 'var(--text-dim)', margin: '0.6rem 0 0' } },
+          t.billable === 0
+            ? 'No tick used overage. Notional is list-price token value, not money.'
+            : t.billable + ' tick(s) ran as OVERAGE and may be billable.'))));
+}
+
+/* ── ZONE 4/5: the panels that report rather than block ────────────────
+   Each keeps its name, its title and every field it had. What changed is that a
+   reference strip is 110px collapsed instead of 1029px expanded by default.
+   -------------------------------------------------------------------- */
+
+/** Owed by you — every item, ranked, three across, and never taller than one screen. */
+function OwedPanel({ items, onOpen }) {
+  const [all, setAll] = useState(false);
+  const sorted = sortOwed(items);
+  const shown = all ? sorted : sorted.slice(0, 6);
+  if (sorted.length === 0) {
+    return h(Panel, { title: 'Owed by you', sub: 'nothing waiting on you' },
+      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
+        'No spec is awaiting a founder journey and no journey is half-walked. When one lands it appears here in red.'));
+  }
+  return h(Panel, { title: 'Owed by you', alert: true, sub: 'click one — each opens a checklist' },
+    h('ul', { className: 'owed owedgrid' + (all && sorted.length > 6 ? ' capped' : '') },
+      shown.map((item) => h('li', { key: item.key },
+        h('button', {
+          className: 'owedrow', type: 'button',
+          onClick: () => onOpen({ kind: item.kind, id: item.id }),
+        },
+          h('span', { className: 'owedtitle', title: item.title || ('Spec ' + item.id) },
+            item.kind === 'spec'
+              ? h(React.Fragment, null, h('b', null, 'Spec ' + item.id), ' — clicked founder journey')
+              : item.title),
+          h('div', { className: 'owedmeta' },
+            item.signedOff && h('span', { className: 'ready' }, 'SIGNED OFF'),
+            item.progress
+              ? h('span', null, item.progress.done + ' of ' + item.progress.total + ' checks')
+              : h('span', null, 'open to see what it needs'),
+            item.progress?.complete && !item.signedOff && h('span', { className: 'ready' }, 'ready to sign off'),
+            item.recordedOn && h('span', null, item.recordedOn)),
+          // `affects` is frequently a full sentence naming five downstream specs. One line
+          // here, the whole of it in the tooltip, and all of it in the brief the tile opens.
+          item.affectsSpec && h('div', { className: 'owedmeta' },
+            h('span', { className: 'owedaffects', title: 'affects ' + item.affectsSpec }, 'affects ' + item.affectsSpec)),
+          item.progress?.total > 0 && h('div', { className: 'minibar' },
+            h('i', {
+              className: item.progress.complete ? 'full' : '',
+              style: { transform: 'scaleX(' + (item.progress.done / item.progress.total) + ')' },
+            })))))),
+    !all && sorted.length > shown.length && h('button', {
+      className: 'linkish showall', type: 'button', onClick: () => setAll(true),
+    }, 'show ' + (sorted.length - shown.length) + ' more'));
+}
+
+/** The lanes' own task progress. Two blocks, then the rest in place. */
+function CatalogLanes({ lanes }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? lanes : lanes.slice(0, 2);
+  return h(React.Fragment, null,
+    shown.map((lane) => {
+      const lp = lane.progress;
+      return h('div', { key: lane.id, style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
+        h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
+          h('span', null, 'Spec ' + lane.id + (lane.stage ? ' · ' + lane.stage : '')), h('span', { className: 'sub' }, lane.slug)),
+        !lp && h('p', { className: 'mono', style: { fontSize: '0.78rem', margin: '0.2rem 0 0', color: 'var(--text-soft)' } },
+          'SHAPING — no tasks.md yet. This lane is writing spec.md, plan.md and tasks.md from the catalog entry, then the DESIGN gate rules on all three together.'),
+        lp && h(Progress, { done: lp.done, built: lp.held, total: lp.total }),
+        lp && h('div', { className: 'bar-legend' },
+          h('span', null, h('b', null, lp.done), ' done'),
+          h('span', null, h('b', null, lp.open), ' open'),
+          lp.held > 0 && h('span', null, h('b', null, lp.held), ' held (reason stated)'),
+          lp.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, lp.unmarked + ' UNMARKED'),
+          lp.currentWave && h('span', null, lp.currentWave.slice(0, 46))));
+    }),
+    lanes.length > shown.length && h('button', {
+      className: 'linkish showall', type: 'button', onClick: () => setAll(true),
+    }, '+' + (lanes.length - shown.length) + ' more lane(s)'));
+}
+
+/** Tree — and, at last, the dirty paths the server has always sent and the page never showed. */
+function TreeStrip({ git, open, onToggle }) {
+  const paths = git.dirtyPaths || [];
+  return h(Panel, { title: 'Tree', sub: git.branch },
+    h('div', { className: 'striphead' },
+      h('span', { className: 'stripone', title: git.head + ' ' + git.subject },
+        h('b', null, git.head), ' ' + git.subject)),
+    h('div', { className: 'acct-meta', style: { marginTop: '0.35rem' } },
+      h('span', null, 'branch ' + git.branch),
+      h('span', { style: git.dirty ? { color: 'var(--warn-text)', fontWeight: 700 } : null },
+        git.dirty ? git.dirty + ' dirty' : 'clean'),
+      paths.length > 0 && h('button', { className: 'linkish', type: 'button', onClick: onToggle },
+        h('span', { className: 'chev' + (open ? ' open' : '') }, '▸'), open ? ' hide files' : ' which files')),
+    h('div', { className: 'disclose' + (open ? ' open' : '') }, h('div', null,
+      h('ul', { className: 'feed', style: { marginTop: '0.5rem' } },
+        paths.map((p, i) => h('li', { key: p + '#' + i }, h('span', { className: 'hint', title: p }, p)))),
+      // The server sends the first eight. Saying so beats a list that silently stops.
+      git.dirty > paths.length && h('div', { className: 'where-src' },
+        (git.dirty - paths.length) + ' further dirty path(s) — the state feed carries the first ' + paths.length))));
+}
+
+/** Parked — and when nothing is parked it still occupies its cell, so clearing one does
+    not make the whole rail jump a row. */
+function ParkedStrip({ parked, open, onToggle }) {
+  const list = parked || [];
+  if (list.length === 0) {
+    return h(Panel, { title: 'Parked', sub: 'nothing parked' },
+      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
+        'Nothing in PARKED.md and no queue entry parked without a diagnosis. Anything only you can clear would be listed here.'));
+  }
+  return h(Panel, { title: 'Parked', alert: true, sub: 'only you can clear these — see PARKED.md' },
+    h('div', { className: 'striphead' },
+      h('span', { className: 'stripone', title: parkedLabel(list[0]) },
+        h('b', null, list.length), ' parked · ' + parkedLabel(list[0])),
+      h('button', { className: 'linkish', type: 'button', onClick: onToggle },
+        h('span', { className: 'chev' + (open ? ' open' : '') }, '▸'), open ? ' hide' : ' show all ' + list.length)),
+    h('div', { className: 'disclose' + (open ? ' open' : '') }, h('div', null,
+      h('ul', { className: 'feed', style: { marginTop: '0.5rem' } }, list.map((p, i) =>
+        h('li', { key: String(p) + '#' + i }, h('span', { className: 'hint' }, parkedLabel(p))))))));
+}
+
 /**
  * Red-first leaves the tree deliberately broken to prove a test fails before it passes. A
  * run that ENDS with residue left a break behind, which is the only thing worth a column;
@@ -1372,15 +2036,33 @@ const redFirstTitle = (r) =>
       ? 'no red-first residue was recorded for this run — unknown, not clean'
       : '';
 
+/**
+ * ZONE 6 — the record.
+ *
+ * Three density changes, no columns lost and no rows dropped: twelve of the server's forty
+ * by default with the rest one click away; the note clamped to one line with the full text
+ * and the red-first file list behind a per-row expand; and a sticky `thead` inside a bounded
+ * scroller, because column heads that scroll away turn a wide table into a guessing game.
+ * A real virtualizer at n=40 would be a lie about the cost.
+ */
 function Ticks({ ticks }) {
-  return h(Panel, { title: 'Tick history', sub: ticks.length + ' most recent' },
-    h('div', { className: 'tablewrap' },
+  const [limit, setLimit] = useState(12);
+  const [open, setOpen] = useState(null);
+  const shown = ticks.slice(0, limit);
+  const cols = ['#', 'exit', 'acct', 'dur', 'closed', '$', 'spec', 'tracker', 'red', 'note'];
+  return h(Panel, {
+      title: 'Tick history',
+      sub: shown.length + ' of ' + ticks.length + ' most recent',
+    },
+    h('div', { className: 'tablewrap tickscroll' },
       h('table', null,
-        h('thead', null, h('tr', null,
-          ['#', 'exit', 'acct', 'dur', 'closed', '$', 'spec', 'tracker', 'red', 'note'].map((c) => h('th', { key: c }, c)))),
-        h('tbody', null, ticks.map((t, i) => {
+        h('thead', null, h('tr', null, cols.map((c) => h('th', { key: c }, c)))),
+        h('tbody', null, shown.map((t, i) => {
           const bad = BAD.includes(t.exit), warn = WARN.includes(t.exit);
-          return h('tr', { key: i, className: bad ? 'bad' : warn ? 'warnrow' : '' },
+          const key = 'tick-' + t.tick + '-' + (t.attempt || '') + '#' + i;
+          const files = Array.isArray(t.redFirst) ? t.redFirst : [];
+          const isOpen = open === key;
+          const row = h('tr', { key, className: bad ? 'bad' : warn ? 'warnrow' : '' },
             h('td', null, t.tick, t.attempt ? h('span', { className: 'tag', style: { marginLeft: 4 } }, 'retry') : null),
             h('td', null, h('span', { className: 'pill ' + (bad ? 'bad' : warn ? 'warn' : 'clean') }, t.exit)),
             h('td', null, t.account || '—'),
@@ -1392,8 +2074,30 @@ function Ticks({ ticks }) {
             // Red-first residue: files this run left carrying a deliberate break. A count,
             // because the file list is long and the point is whether the tree was restored.
             h('td', { title: redFirstTitle(t.redFirst) }, redFirstCell(t.redFirst)),
-            h('td', { className: 'note' }, (t.note || '').slice(0, 150)));
-        })))));
+            h('td', { className: 'note', title: t.note || '' },
+              h('button', {
+                className: 'notebtn', type: 'button',
+                onClick: () => setOpen(isOpen ? null : key),
+                'aria-expanded': isOpen ? 'true' : 'false',
+              },
+                h('span', { className: 'chev' + (isOpen ? ' open' : '') }, '▸'),
+                h('span', { className: 'nt' }, (t.note || '').slice(0, 150) || 'no note'))));
+          if (!isOpen) return row;
+          return h(React.Fragment, { key: key + '-w' }, row,
+            h('tr', { className: 'detail' }, h('td', { colSpan: cols.length },
+              h('div', null, h('b', null, 'note '), t.note || 'none recorded'),
+              t.head && h('div', null, h('b', null, 'head '), t.head),
+              t.startedAt && h('div', null, h('b', null, 'started '), t.startedAt),
+              h('div', null, h('b', null, 'red-first '),
+                t.redFirst == null
+                  ? 'not recorded — unknown, not clean'
+                  : files.length === 0
+                    ? 'clean — the tree was restored'
+                    : files.map((x) => (typeof x === 'string' ? x : [x.file, x.marker].filter(Boolean).join(' '))).join(' · ')))));
+        })))),
+    ticks.length > shown.length && h('button', {
+      className: 'linkish showall', type: 'button', onClick: () => setLimit(ticks.length),
+    }, 'show all ' + ticks.length + ' ticks'));
 }
 
 function App() {
@@ -1418,6 +2122,12 @@ function App() {
   const [rolePartial, setRolePartial] = useState({});
   const [briefOpen, setBriefOpen] = useState(null);   // { kind, id } | null
   const [brief, setBrief] = useState(null);
+  // The three reference strips in the status rail. Collapsed by default — they REPORT, and
+  // the page's whole failure was nine panels reporting at the same volume as the one that
+  // decides. Their content is always in the DOM; these flags only move a 0fr to a 1fr.
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [parkedOpen, setParkedOpen] = useState(false);
 
   const live = useLive();
 
@@ -1434,6 +2144,21 @@ function App() {
   // the browser noticing. 15s rather than 3s: pushed data is the normal path now.
   useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id); }, [load]);
   useEffect(() => { if (live.state) { setS(live.state); setErr(null); } }, [live.state]);
+
+  // A collapsed strip may not hide a NEW break. Keyed to a signature of what is broken, not
+  // to a render: the same break on the next 4-second push produces an identical signature and
+  // does nothing, so a founder who deliberately collapsed a known failure is not fought with
+  // every four seconds — but a DIFFERENT check going down opens it again, once.
+  const healthSig = useRef('');
+  useEffect(() => {
+    const hs = s && s.health;
+    if (!hs) return;
+    const sig = (hs.supervisor && hs.supervisor.reporting ? '' : 'unsupervised;') +
+      (hs.rows || []).filter((r) => r.status === 'failed').map((r) => r.check).join(',');
+    if (sig === healthSig.current) return;
+    healthSig.current = sig;
+    if (sig) setHealthOpen(true);
+  }, [s]);
 
   // The owed index carries per-item progress, so it re-reads whenever a check changes rather
   // than on a timer: nothing else moves it, and a founder ticking a box expects the count
@@ -1655,7 +2380,24 @@ function App() {
     ? ['on', 'live feed']
     : live.link === 'reconnecting' ? ['warn', 'feed reconnecting'] : ['off', 'feed connecting'];
 
+  // Owed drives the marquee's one red affordance, so it is counted once, here, from the same
+  // list the panel renders — two places counting the same debt is how one of them goes stale.
+  const owedItems = owed.length
+    ? owed
+    : c.awaitingFounder.map((id) => ({ kind: 'spec', id, key: 'spec-' + id, title: 'Spec ' + id + ' — clicked founder journey' }));
+  const jumpToOwed = () => {
+    const el = document.getElementById('zone-obligations');
+    if (!el) return;
+    // Reduced motion means no scroll animation either — a 700px smooth glide is the largest
+    // piece of motion on the page, and the setting exists for people it makes ill.
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  };
+
   return h('div', null,
+    // Header and tabs are ONE sticky dock. Two stacked stickies need the second to know the
+    // first's height, and that number is wrong the moment the hero wraps.
+    h('div', { className: 'topdock' },
     h('header', { className: 'hero' },
       h('h1', null, 'Loop Control Room'),
       h('span', { className: 'pulse ' + top.tone, title: top.reason || 'a lane is in flight' },
@@ -1680,9 +2422,10 @@ function App() {
         h('button', { className: 'warn', disabled: busy || !s.running, onClick: () => act('stop') }, 'Pause after tick'),
         h('button', { className: 'danger', disabled: busy || !s.running, onClick: () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.') }, 'Kill now'),
         (s.stopArmed || s.killArmed) && h('button', { disabled: busy, onClick: () => act('resume') }, 'Clear stop'),
-        h('button', { disabled: busy, onClick: () => act('report') }, 'Report')),
-      // Full width, last in the hero: the one line that says whether anything is happening.
-      top.reason && h('div', { className: 'whybar' + (top.tone === 'off' ? ' off' : '') }, top.reason)),
+        h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))),
+    // The `.whybar` reason line has MOVED to the marquee, where it is read at three times
+    // this size. It left the header rather than being dropped: it is still the only line on
+    // the page that describes progress rather than a process.
 
     h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
       h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
@@ -1697,7 +2440,7 @@ function App() {
       h('button', { type: 'button', 'aria-pressed': tab === 'management' ? 'true' : 'false', onClick: () => setTab('management') },
         'Management',
         h('span', { className: 'badge' },
-          roles.some((r) => r.busy) ? 'talking' : String(roles.length || 3)))),
+          roles.some((r) => r.busy) ? 'talking' : String(roles.length || 3))))),
 
     // A fragment, not a wrapper div: the overview's grid layout must not gain a parent.
     tab === 'agents' && h(React.Fragment, null,
@@ -1822,118 +2565,67 @@ function App() {
             }, 'show ' + (pastFiltered.length - pastShown.length) + ' older'))),
 
     tab === 'overview' && h(React.Fragment, null,
-    // ONE two-column layout, not a stack of two-column rows.
+    // EIGHT ZONES, RANKED — not nine co-equal panels.
     //
-    // It was previously two separate `cols-2` rows — Catalog beside Accounts+Run totals, then
-    // Current tick beside Owed+Tree. A grid row is as tall as its tallest cell, so each row
-    // left a void under whichever side was shorter, and Accounts alone is taller than Catalog.
-    // Two independent column stacks have no cross-column rows to align, so panels pack
-    // tightly and the voids cannot exist by construction.
+    // The page was 4105px of panels that all shouted at the same volume: a 9px header dot
+    // answered "is it working", the cost answer sat 2055px down, and the self-healing panel
+    // — added last, dumping every check and every event — was 1029px of reference material
+    // sitting above the two things a founder acts on. Nothing here is deleted. It is ranked:
     //
-    // Column assignment is also the mobile reading order, since `cols-2` collapses to one
-    // column below 760px: Catalog, Current tick, Owed by you, then the reference panels. What
-    // blocks progress stays above what merely reports it.
+    //   2  MARQUEE      is it working · on what · for how long · at what cost
+    //   3  LIVE WORK    the current tick, and the catalog it is working through
+    //   4  OBLIGATIONS  what only the founder can clear, and what it is costing
+    //   5  STATUS RAIL  self-healing, tree, parked — three strips that expand in place
+    //   6  RECORDS      tick history, windowed
+    //
+    // Run totals is the only panel that stops existing as a panel; all four of its figures
+    // and its billable sentence are in the marquee's third cell. Fields removed: none.
+    // Fields added: git.dirtyPaths, which the server has always sent and the page never showed.
+
+    // ── ZONE 2 ──────────────────────────────────────────────────────────
+    h(Marquee, {
+      s, top, armed, unsupervised,
+      owedCount: owedItems.length,
+      onOwed: jumpToOwed,
+    }),
+
+    // ── ZONE 3 — live work ──────────────────────────────────────────────
     h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem' } },
-      h('div', { className: 'grid' },
+      h(Live, { live: s.live, lanes: s.lanes, running: s.running }),
+
       h(Panel, { title: 'Catalog', sub: c.signedOff + ' of ' + c.total + ' signed off' },
         h(Progress, { done: c.signedOff, built: c.builtFraction, total: c.total }),
         // "The platform never marks its own work done": a spec that retired on an empty task
         // list with no closing-gate APPROVE on record gets said out loud, not just logged.
+        // A chip, not an emoji — the page has a vocabulary for warnings and this is it.
         c.entries.some((e) => e.closingGateWarning) &&
           h('p', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--warn-text)', fontWeight: 700, margin: '0.6rem 0 0' } },
-            '⚠ retired without a closing-gate record: ' +
+            h('span', { className: 'tag warn' }, 'no closing gate'), ' ',
+            'retired without a closing-gate record: ' +
             c.entries.filter((e) => e.closingGateWarning).map((e) => e.id).join(', ')),
         h('div', { className: 'statrow', style: { marginTop: '1rem' } },
           h(Stat, { n: c.signedOff, l: 'signed off' }),
           h(Stat, { n: c.awaitingFounder.length, l: 'awaiting you' }),
           h(Stat, { n: c.parked.length, l: 'parked' }),
           h(Stat, { n: c.pending, l: 'not started' })),
-        (s.actives || (active ? [active] : [])).map((lane) => {
-          const lp = lane.progress;
-          return h('div', { key: lane.id, style: { marginTop: '1rem', borderTop: '2px solid var(--line)', paddingTop: '0.8rem' } },
-            h('div', { className: 'panel-title', style: { border: 0, margin: 0, paddingBottom: '0.3rem' } },
-              h('span', null, 'Spec ' + lane.id + (lane.stage ? ' · ' + lane.stage : '')), h('span', { className: 'sub' }, lane.slug)),
-            !lp && h('p', { className: 'mono', style: { fontSize: '0.78rem', margin: '0.2rem 0 0', color: 'var(--text-soft)' } },
-              'SHAPING — no tasks.md yet. This lane is writing spec.md, plan.md and tasks.md from the catalog entry, then the DESIGN gate rules on all three together.'),
-            lp && h(Progress, { done: lp.done, built: lp.held, total: lp.total }),
-            lp && h('div', { className: 'bar-legend' },
-              h('span', null, h('b', null, lp.done), ' done'),
-              h('span', null, h('b', null, lp.open), ' open'),
-              lp.held > 0 && h('span', null, h('b', null, lp.held), ' held (reason stated)'),
-              lp.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, lp.unmarked + ' UNMARKED'),
-              lp.currentWave && h('span', null, lp.currentWave.slice(0, 46))));
-        })),
+        h(CatalogLanes, { lanes: (s.actives || (active ? [active] : [])) }))),
 
-      h(Live, { live: s.live, lanes: s.lanes, running: s.running }),
-
-      // Directly under Current tick: when that panel is empty, this one says why, and whether
-      // anything is trying to fix it.
-      h(Health, { health: s.health }),
-
-      h(Panel, { title: 'Run totals' },
-          h('div', { className: 'statrow' },
-            h(Stat, { n: s.totals.ticks, l: 'ticks' }),
-            h(Stat, { n: fmtMin(s.totals.minutes), l: 'worker time' }),
-            h(Stat, { n: s.totals.closed, l: 'tasks closed' }),
-            h(Stat, { n: '$' + s.totals.notional, l: 'notional' })),
-          h('p', { className: 'mono', style: { fontSize: '0.7rem', color: 'var(--text-dim)', marginBottom: 0 } },
-            s.totals.billable === 0
-              ? 'No tick used overage. Notional is list-price token value, not money.'
-              : s.totals.billable + ' tick(s) ran as OVERAGE and may be billable.'))),
-
-      // Right column. Owed leads it, so on a wide screen the one panel describing work only
-      // the founder can do sits top-right, above the fold, in the only red frame on the page.
-      //
-      // The split itself was chosen by measuring: the columns came out 350px apart with Owed
-      // on the left and 68px apart this way. That balance is content-dependent and will drift
-      // — Owed shrinks as journeys get cleared, Current tick grows through a build — so it is
-      // a good default rather than a guarantee. What is guaranteed is the absence of INTERIOR
-      // voids, which is a property of the two-column-stack structure, not of this assignment.
-      h('div', { className: 'grid' },
+    // ── ZONE 4 — obligations. The scroll target of the marquee's red chip. ──
+    h('div', { className: 'grid cols-2', id: 'zone-obligations', style: { marginBottom: '1.1rem', scrollMarginTop: '8rem' } },
       // Every row opens a brief. The panel used to name a debt without saying what paying it
       // involves, which is how three specs came to sit here for two days.
-      (owed.length > 0 || c.awaitingFounder.length > 0) &&
-        h(Panel, { title: 'Owed by you', alert: true, sub: 'click one — each opens a checklist' },
-          h('ul', { className: 'owed' },
-            (owed.length ? owed : c.awaitingFounder.map((id) => ({ kind: 'spec', id, key: 'spec-' + id, title: 'Spec ' + id + ' — clicked founder journey' })))
-              .map((item) => h('li', { key: item.key },
-                h('button', {
-                  className: 'owedrow', type: 'button',
-                  onClick: () => setBriefOpen({ kind: item.kind, id: item.id }),
-                },
-                  h('span', { className: 'owedtitle' },
-                    item.kind === 'spec'
-                      ? h(React.Fragment, null, h('b', null, 'Spec ' + item.id), ' — clicked founder journey')
-                      : item.title),
-                  h('div', { className: 'owedmeta' },
-                    item.signedOff && h('span', { className: 'ready' }, 'SIGNED OFF'),
-                    item.progress
-                      ? h('span', null, item.progress.done + ' of ' + item.progress.total + ' checks')
-                      : h('span', null, 'open to see what it needs'),
-                    item.progress?.complete && !item.signedOff && h('span', { className: 'ready' }, 'ready to sign off'),
-                    item.affectsSpec && h('span', null, 'affects ' + item.affectsSpec),
-                    item.recordedOn && h('span', null, item.recordedOn)),
-                  item.progress?.total > 0 && h('div', { className: 'minibar' },
-                    h('i', {
-                      className: item.progress.complete ? 'full' : '',
-                      style: { width: Math.round((item.progress.done / item.progress.total) * 100) + '%' },
-                    }))))))),
+      h(OwedPanel, { items: owedItems, onOpen: setBriefOpen }),
+      h(Accounts, { accounts: s.accounts, events: s.accountEvents })),
 
-        h(Accounts, { accounts: s.accounts, events: s.accountEvents }),
+    // ── ZONE 5 — the status rail. Three strips, collapsed, that expand in place. ──
+    h('div', { className: 'grid cols-3', style: { marginBottom: '1.1rem' } },
+      // Self-healing keeps its name, its full output tree and every row it ever rendered —
+      // it collapses visually and never conditionally, and re-opens itself on a new break.
+      h(Health, { health: s.health, open: healthOpen, onToggle: () => setHealthOpen((v) => !v) }),
+      h(TreeStrip, { git: s.git, open: treeOpen, onToggle: () => setTreeOpen((v) => !v) }),
+      h(ParkedStrip, { parked: s.parked, open: parkedOpen, onToggle: () => setParkedOpen((v) => !v) })),
 
-        // What only the founder can clear, straight from PARKED.md — a parked count with no
-        // reasons is a number the founder cannot act on.
-        s.parked && s.parked.length > 0 && h(Panel, { title: 'Parked', alert: true, sub: 'only you can clear these — see PARKED.md' },
-          h('ul', { className: 'feed' }, s.parked.map((p, i) =>
-            h('li', { key: i }, h('span', { className: 'hint' }, parkedLabel(p)))))),
-        h(Panel, { title: 'Tree' },
-          h('p', { className: 'mono', style: { fontSize: '0.76rem', margin: 0 } },
-            h('b', null, s.git.head), ' ', s.git.subject),
-          h('div', { className: 'acct-meta' },
-            h('span', null, 'branch ', s.git.branch),
-            h('span', { style: s.git.dirty ? { color: 'var(--warn-text)', fontWeight: 700 } : null },
-              s.git.dirty ? s.git.dirty + ' dirty' : 'clean'))))),
-
+    // ── ZONE 6 — the record ─────────────────────────────────────────────
     h(Ticks, { ticks: s.ticks })),
 
     roleOpen && h(ChatSheet, {
