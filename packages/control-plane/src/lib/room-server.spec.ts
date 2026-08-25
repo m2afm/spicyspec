@@ -668,8 +668,17 @@ describe('health panel', () => {
     // against a fixed 'SUPV' annunciator slot that shipped in a deck redesign and was
     // reverted when that build blanked the page; the guarantee survived the revert in the
     // form of a header chip, so the test follows the guarantee rather than the widget.
-    expect(page).toContain("const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
-    expect(page).toMatch(/unsupervised && h\('span', \{ className: 'chip warn' \}, 'unsupervised'\)/);
+    // THE GUARANTEE, not the widget. A supervisor that is not reporting must reach the
+    // header, because a loop nobody watches must never look watched. Two shells have
+    // carried it — a header chip in the scrolling layout, a fixed SUPV annunciator in the
+    // deck — and the layout has already been reverted and restored once. Assert that the
+    // state is derived and that SOME header element is driven by it; pinning the widget
+    // made this test fail on a change that never touched the guarantee.
+    expect(page).toContain('!s.health.supervisor.reporting');
+    const surfaced =
+      /unsupervised && h\('span', \{ className: 'chip warn' \}/.test(page) ||
+      /id: 'SUPV', level: supBad \? 'alarm' : 'nominal'/.test(page);
+    expect(surfaced).toBe(true);
   });
 
   it('renders the full roster and the install command when the supervisor has never reported', () => {
