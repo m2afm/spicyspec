@@ -695,9 +695,18 @@ export async function superviseCommand(options: SuperviseCommandOptions): Promis
   const log =
     options.log ??
     ((line: string) => {
-      // eslint-disable-next-line no-console
-      console.log(line);
+      // FILE FIRST, console second, console guarded. Task Scheduler runs this with NO
+      // console attached, so console.log can throw (EBADF) — and because it ran first and
+      // unguarded, the throw killed the whole sweep before a single line was recorded: the
+      // task reported exit 1 while the identical command run by hand exited 0 and logged
+      // six checks. The file is the durable record; the terminal is a convenience.
       appendLogLine(logPath, line);
+      try {
+        // eslint-disable-next-line no-console
+        console.log(line);
+      } catch {
+        /* no console attached (scheduled task, service) */
+      }
     });
   const store = await openConfiguredStore(config.storePath);
   const supervisor = createSupervisor({

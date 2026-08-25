@@ -110,7 +110,9 @@ describe('planAutostart — windows vectors', () => {
     expect(tr).toMatch(/supervise\.cmd"$/);
     expect(tr.length).toBeLessThan(261);
     const script = windowsLauncherScript(req());
-    expect(script).toContain('supervise --once --config "C:/XIII/share/Work/airvia/spicyspec.runner.json"');
+    // --interval carries the scheduler's real cadence into the heartbeat, so the room does
+    // not call a healthy supervisor missing (the beat's interval is the staleness clock).
+    expect(script).toContain('supervise --once --interval 180 --config "C:/XIII/share/Work/airvia/spicyspec.runner.json"');
     // NO shell redirect. cmd's `>>` opens the log for the whole process, so any other holder
     // — an overlapping sweep, a tail — made the launcher exit 1 BEFORE node started: no
     // checks, no repairs, zero bytes written, no diagnosis. Reproduced by holding the file
@@ -154,7 +156,7 @@ describe('planAutostart — systemd user units', () => {
   it('the service runs one sweep and appends to the same log the room links', () => {
     const service = systemdServiceUnit(linux);
     expect(service).toContain('Type=oneshot');
-    expect(service).toContain('supervise --once --config');
+    expect(service).toContain('supervise --once --interval');
     expect(service).toContain('StandardOutput=append:');
     expect(service).toContain('StandardError=append:');
     expect(service).toContain('supervisor.log');

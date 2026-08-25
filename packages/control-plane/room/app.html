@@ -20,6 +20,10 @@
   window.__loopTheme = { key: KEY, mode: mode };
 })();
 </script>
+<!-- C5 - the installable console. The manifest and the worker are served by the room
+     server; if they are not there yet the link 404s and nothing else changes. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#EDE4CC">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23EDE4CC'/%3E%3Crect x='3' y='3' width='26' height='26' fill='none' stroke='%231A1A1A' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23D62828'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -854,6 +858,535 @@ tr.detail b { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing:
 .quote.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .showall { margin-top: 0.45rem; font-family: var(--font-mono); font-size: 0.68rem; }
 
+
+/* ══════════════════════════════════════════════════════════════════
+   THE DECK — the instrument shell.
+
+   The command-centre layer above made the page 1970px of ranked panels. A
+   ranked document is still a document: it answers "is it stuck" only after a
+   scroll, and it forgets everything the moment the founder looks away. THE
+   DECK is a fixed 100dvh instrument shell — every answer at a known screen
+   position, zero interaction — with an honesty spine bolted through it.
+
+   Nothing below redefines the locked system: every colour is a ROLE token from
+   the two blocks at the top of this file, so paper / night / auto keep working
+   and no thirteenth colour is introduced. New custom properties here are
+   GEOMETRY and DURATION only.
+
+   Two shells, one render tree:
+     data-shell="deck"  ≥760×700 — the fixed grid below
+     data-shell="doc"   anything smaller — the document flow of the previous
+                        build, with Z4 and Z5 hidden outright. A 40px-wide
+                        coverage rail is a lie about resolution, so it is not
+                        shrunk, it is withdrawn and says so.
+
+   Motion law is unchanged and now has a fourth clause:
+     · transform and opacity only in a hot path;
+     · one-shot animations fire from a VALUE change, never a render;
+     · ambient loops live on nodes React never unmounts;
+     · NOTHING restarts on the 4-second state push except .beatdot, whose
+       entire meaning is "a push just landed".
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  --deck-bar: 40px;
+  --deck-dock: 34px;
+  --deck-rail: 76px;
+  --deck-ticker: 28px;
+  --deck-bus: 26px;
+  --deck-scale: 1;
+  --pane-pad: 0.85rem;
+}
+/* Density is a root FONT SIZE, not a pile of overrides: the whole page is sized
+   in rem, so one number moves the type, the padding and the pane geometry
+   together and nothing can fall out of proportion with anything else. */
+:root[data-density="comfortable"] { font-size: 16px; --pane-pad: 0.95rem; }
+:root[data-density="console"]     { font-size: 14.7px; --pane-pad: 0.55rem; --list-cap: 17rem; }
+:root[data-density="wall"]        { font-size: 25.6px; --pane-pad: 0.8rem; --list-cap: 14rem; }
+body { font-size: 0.94rem; }
+
+/* ── the shell ─────────────────────────────────────────────────────
+   React owns #root, so the grid sits on the app's own wrapper rather than on
+   <body>. Same geometry, one less thing that breaks if the mount point moves. */
+:root[data-shell="deck"] body { padding: 0; height: 100dvh; overflow: hidden; }
+:root[data-shell="deck"] #root { height: 100%; min-height: 0; }
+:root[data-shell="deck"] .deckwrap {
+  height: 100%; min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--deck-rail);
+  grid-template-rows: var(--deck-bar) var(--deck-dock) auto auto minmax(0, 1fr) var(--deck-ticker) var(--deck-bus);
+  grid-template-areas:
+    "bar    bar"
+    "dock   dock"
+    "pfd    watch"
+    "alarm  watch"
+    "grid   watch"
+    "ticker ticker"
+    "bus    bus";
+}
+/* DEVIATION, stated: the spec gives the bar eight fixed annunciator slots and no
+   room for the tab strip or the five control actions, and deleting either would
+   remove capability the founder has today. They get their own 34px dock row. */
+:root[data-shell="deck"] .z-bar    { grid-area: bar; }
+:root[data-shell="deck"] .z-dock   { grid-area: dock; }
+:root[data-shell="deck"] .z-pfd    { grid-area: pfd; }
+:root[data-shell="deck"] .z-alarm  { grid-area: alarm; }
+:root[data-shell="deck"] .z-grid   { grid-area: grid; min-height: 0; }
+:root[data-shell="deck"] .z-watch  { grid-area: watch; }
+:root[data-shell="deck"] .z-ticker { grid-area: ticker; }
+:root[data-shell="deck"] .z-bus    { grid-area: bus; }
+
+/* Only the console grid scrolls, and each of its columns is its own scroller —
+   a single scroller means reading the wire drags the owed list off the screen. */
+:root[data-shell="deck"] .deckgrid { height: 100%; min-height: 0; overflow: hidden; }
+:root[data-shell="deck"] .deckcol  { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 0.3rem; }
+:root[data-shell="deck"] .tabpane  { height: 100%; min-height: 0; overflow-y: auto; padding: 0 var(--gutter) 1.2rem; }
+
+/* The document fallback. Z4 and Z5 are withdrawn rather than squeezed. */
+:root[data-shell="doc"] .z-watch,
+:root[data-shell="doc"] .z-ticker { display: none; }
+:root[data-shell="doc"] .z-bar { position: sticky; top: 0; z-index: 8; }
+:root[data-shell="doc"] .z-dock { position: sticky; top: var(--deck-bar); z-index: 7; }
+:root[data-shell="doc"] .deckwrap > * + * { margin-top: 0; }
+:root[data-shell="doc"] .z-pfd, :root[data-shell="doc"] .z-alarm,
+:root[data-shell="doc"] .z-grid, :root[data-shell="doc"] .z-bus { padding-left: var(--gutter); padding-right: var(--gutter); }
+:root[data-shell="doc"] body { padding: 0 0 var(--gutter); }
+:root[data-shell="doc"] .topdock { display: none; }
+:root[data-shell="deck"] .topdock { display: none; }
+
+/* ── R2 — THE PROVENANCE GRAMMAR ───────────────────────────────────
+   One vocabulary, four classes, enforced by one primitive. Every fact on this
+   page declares how it is known: whether the page WATCHED it land, whether the
+   server merely asserts it, whether it was backfilled after the event, or
+   whether the source field is simply absent. The underline is the grammar; the
+   title attribute always names the source.
+
+   R1 rides with it: an absent field is never 0. It is '—' over a hatch band. */
+.fact { position: relative; white-space: nowrap; }
+.fact.obs { box-shadow: inset 0 -2px 0 0 var(--line); }
+.fact.rep { box-shadow: inset 0 -1px 0 0 var(--line-soft); }
+.fact.rec { background-image: linear-gradient(to right, var(--line-soft) 0 3px, transparent 3px 6px);
+            background-repeat: repeat-x; background-size: 6px 1px; background-position: 0 100%; }
+.fact.unk {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px);
+  color: var(--text-dim); padding: 0 0.2rem;
+}
+/* R3 — over its freshness budget. It keeps its value AND wears the hatch, because
+   a stale number that hides is a number the founder assumes is current. */
+.fact.stale { background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px); }
+.fact .asof { font-family: var(--font-mono); font-size: 0.62em; color: var(--warn-text); margin-left: 0.3rem; }
+.prov {
+  font-family: var(--font-mono); font-size: 0.58rem; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-dim); white-space: nowrap;
+}
+
+/* ── Z0 — THE ANNUNCIATOR BAR ──────────────────────────────────────
+   Eight fixed slots, never reordered: position is meaning, and a bar whose
+   slots move is a bar you have to read instead of glance at. */
+.annbar {
+  display: flex; align-items: stretch; gap: 0; min-width: 0;
+  background: var(--surface); border-bottom: var(--ink-thick) solid var(--line);
+  -webkit-app-region: drag;
+  padding-left: env(titlebar-area-x, 0px);
+}
+.annbar > * { -webkit-app-region: no-drag; }
+.annslots { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.ann {
+  font-family: var(--font-mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  border: 0; border-right: var(--ink-thin) solid var(--line); border-radius: 0;
+  box-shadow: none; background: transparent; color: var(--text-dim);
+  padding: 0 0.55rem; cursor: pointer; line-height: 1; min-width: 0;
+}
+.ann:hover:not(:disabled), .ann:active:not(:disabled) { transform: none; box-shadow: none; }
+.ann > i.lamp { width: 7px; height: 7px; flex: 0 0 auto; border: 1px solid currentColor; background: transparent; }
+.ann.nominal { color: var(--text-dim); }
+.ann.nominal:hover { background: var(--surface-alt); color: var(--text); }
+.ann.caution { background: var(--flame-soft); color: var(--on-warm); }
+.ann.alarm   { background: var(--shatta); color: var(--on-fill); }
+.ann.caution > i.lamp, .ann.alarm > i.lamp { background: currentColor; }
+.ann.caution.blink, .ann.alarm.blink { animation: annblink 1.1s steps(1, end) infinite; }
+/* Escalation: five minutes unacked and the slot grows a ring. Nothing about the
+   escalation is time-animated — it is a state change, so it cannot flicker. */
+.ann.escalated { box-shadow: inset 0 0 0 2px var(--hot-deep); }
+.ann .acked { font-family: var(--font-mono); font-size: 0.55rem; opacity: 0.85; letter-spacing: 0.02em; }
+@keyframes annblink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0.42; } }
+
+.annright { display: flex; align-items: stretch; flex: 0 0 auto; border-left: var(--ink-thin) solid var(--line); }
+.annright .ann { border-right: 0; border-left: var(--ink-thin) solid var(--line); }
+.annright .ann:first-child { border-left: 0; }
+.ann.denied { background: var(--shatta); color: var(--on-fill); }
+.keycap {
+  font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700;
+  border: 1px solid var(--line); padding: 0.08rem 0.3rem; background: var(--surface-alt);
+  color: var(--text-dim); white-space: nowrap;
+}
+
+/* ── Z0b — the dock: tabs and the five control actions ────────────── */
+.deckdock {
+  display: flex; align-items: center; gap: 0.5rem; min-width: 0;
+  background: var(--surface-alt); border-bottom: var(--ink-medium) solid var(--line);
+  padding: 0 0.5rem; overflow: hidden;
+}
+.deckdock .tabs { margin: 0; box-shadow: none; border-width: var(--ink-medium); flex: 0 0 auto; }
+.deckdock .tabs button { font-size: 0.82rem; padding: 0.15rem 0.6rem; }
+.deckdock .controls { gap: 0.35rem; flex: 0 0 auto; margin-left: auto; }
+.deckdock .controls button { font-size: 0.78rem; padding: 0.12rem 0.55rem; box-shadow: none; border-width: var(--ink-medium); }
+.deckdock .controls button:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 0 var(--offset); }
+.docktitle {
+  font-family: var(--font-display); font-size: 1rem; letter-spacing: 0.05em;
+  flex: 0 0 auto; white-space: nowrap; padding-right: 0.2rem;
+}
+
+/* ── Z1 — THE PFD ──────────────────────────────────────────────────
+   Four cells: is it working / on what / at what cost / how much runway.
+   The four questions the founder asks from across the room, at four fixed
+   positions, so the answer is a look and never a search. */
+.pfd {
+  display: grid; gap: 0; min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: var(--ink-thick) solid var(--line);
+  background: var(--surface);
+}
+@media (max-width: 1100px) { .pfd { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pfd-cell {
+  min-width: 0; padding: 0.55rem var(--pane-pad) 0.6rem;
+  border-right: var(--ink-thin) dashed var(--line-soft);
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.pfd-cell:last-child { border-right: 0; }
+@media (max-width: 1100px) { .pfd-cell:nth-child(2n) { border-right: 0; }
+  .pfd-cell:nth-child(-n+2) { border-bottom: var(--ink-thin) dashed var(--line-soft); } }
+.pfd-label {
+  font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim);
+}
+/* CELL A keeps the display face; nothing else on the deck is allowed near this size. */
+:root[data-shell="deck"] .marquee-state { font-size: clamp(1.8rem, 3.4vw, 3.1rem); }
+.pfd-reason {
+  font-family: var(--font-body); font-size: 0.9rem; line-height: 1.3; color: var(--text);
+  /* NEVER truncated. This is the "always say why when idle" clause and a clipped
+     reason is the same failure as no reason. */
+  overflow-wrap: anywhere;
+}
+
+/* C1 — THE CADENCE STRIP. The only instrument on this page that DEMONSTRATES
+   motion rather than asserting it: 60 bars, one per 4s frame, of Δ tools. */
+.cadence { display: flex; align-items: flex-end; gap: 1px; height: 26px; min-width: 0; }
+.cadence > i {
+  display: block; flex: 1 1 0; min-width: 0; background: var(--line-soft);
+  transform-origin: bottom center; height: 100%;
+  transform: scaleY(0.06);
+  transition: transform var(--dur-base) var(--ease-snap);
+}
+.cadence > i.moved { background: var(--fill-solid); }
+.cadence > i.gap   { background: var(--inert); }
+.cadence.stalled > i.moved, .cadence.stalled > i { background: var(--shatta); }
+.cadence.unknown {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px);
+}
+.cadence-read {
+  font-family: var(--font-mono); font-size: 0.68rem; font-variant-numeric: tabular-nums;
+  color: var(--text-soft);
+}
+.cadence-read.stalled { color: var(--hot); font-weight: 700; }
+
+/* counter + sparkline pairs */
+.sparkrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
+.sparkcell { min-width: 0; }
+.sparkcell .n { font-family: var(--font-display); font-size: 1.5rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.sparkcell .l { font-family: var(--font-mono); font-size: 0.56rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); display: block; }
+.sparkcell sub { font-family: var(--font-mono); font-size: 0.55rem; color: var(--text-dim); }
+.spark { display: block; width: 100%; height: 16px; overflow: visible; }
+.spark path { fill: none; stroke: var(--line-soft); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark.unknown { background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px); }
+
+/* CELL C — burn. Every figure carries its n and what it excludes. */
+.burnrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem 0.7rem; }
+.burncell .n { font-family: var(--font-display); font-size: 1.45rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.burncell .l { font-family: var(--font-mono); font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); display: block; }
+.burnexcl { font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim); line-height: 1.35; }
+
+/* CELL D — runway. A TIMELINE, not a bar: a percentage tells you how much is
+   gone, a timeline tells you how long you have, which is the actual question. */
+.runway { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.rwy { min-width: 0; }
+.rwy.lead { padding: 0.15rem 0; }
+.rwy-top { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.rwy-name { font-family: var(--font-display); font-size: 0.95rem; letter-spacing: 0.03em; flex: 0 0 auto; }
+.rwy.lead .rwy-name { font-size: 1.25rem; }
+.rwy-meta { font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rwy-track {
+  position: relative; height: 10px; border: 1px solid var(--line);
+  background: var(--surface-alt); margin-top: 0.2rem; overflow: hidden;
+}
+.rwy.lead .rwy-track { height: 14px; }
+.rwy-track > i.fill {
+  display: block; height: 100%; width: 100%; background: var(--fill-solid);
+  transform-origin: left center; transform: scaleX(0);
+  transition: transform var(--dur-slow) var(--ease-snap);
+}
+.rwy-track > i.fill.warn { background: var(--flame); }
+.rwy-track > i.fill.crit { background: var(--shatta); }
+.rwy-track > i.now {
+  position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--hot-deep);
+  transition: left var(--dur-slow) var(--ease-snap);
+}
+.rwy-track.unknown {
+  background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px);
+}
+.rwy.cold .rwy-track > i.fill { background: var(--shatta); }
+
+/* ── Z2 — ALARMS ───────────────────────────────────────────────────
+   No empty card and no all-clear box. An all-clear box is a chip that is always
+   on, and this room exists because of a chip that was always on. */
+.alarmzone { display: none; }
+.alarmzone.live {
+  display: block; border-bottom: var(--ink-thick) solid var(--shatta);
+  background: var(--surface); padding: 0.45rem var(--pane-pad);
+}
+.alarmcard {
+  border-left: var(--ink-bold) solid var(--shatta); background: var(--surface-alt);
+  padding: 0.3rem 0.55rem; font-size: 0.82rem; line-height: 1.35;
+  margin-bottom: 0.3rem; overflow-wrap: anywhere;
+}
+.alarmcard:last-child { margin-bottom: 0; }
+.alarmcard.warn { border-left-color: var(--flame); }
+.alarmcard b { font-variant-numeric: tabular-nums; }
+.alarmmore { font-family: var(--font-mono); font-size: 0.64rem; color: var(--hot); }
+
+/* ── Z3 — THE CONSOLE GRID ─────────────────────────────────────────
+   ACT first, because it is what the founder DOES. MACHINE second, because it is
+   what the founder watches. RECORD third, because it is what the founder reads. */
+.deckgrid {
+  display: grid; gap: 0; min-width: 0;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.2fr) minmax(320px, 1.1fr);
+}
+@media (max-width: 1240px) { .deckgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); } }
+@media (max-width: 900px)  { .deckgrid { grid-template-columns: minmax(0, 1fr); } }
+:root[data-density="wall"] .deckgrid { grid-template-columns: minmax(0, 1fr); }
+:root[data-density="wall"] .deckcol.machine, :root[data-density="wall"] .deckcol.record { display: none; }
+.deckcol { border-right: var(--ink-thin) solid var(--hairline); padding: 0.5rem var(--pane-pad) 1.5rem; min-width: 0; }
+.deckcol:last-child { border-right: 0; }
+.colhead {
+  font-family: var(--font-mono); font-size: 0.58rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim);
+  border-bottom: var(--ink-medium) solid var(--line); padding-bottom: 0.2rem; margin-bottom: 0.5rem;
+  display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline;
+  position: sticky; top: 0; background: var(--page); z-index: 2;
+}
+.pane { margin-bottom: 0.9rem; min-width: 0; }
+.panehead {
+  font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.05em;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
+  border-bottom: var(--ink-thin) solid var(--line); padding-bottom: 0.15rem; margin-bottom: 0.4rem;
+}
+.panehead .sub { font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0; color: var(--text-dim); text-transform: uppercase; }
+
+/* ACT — the top owed item is DOUBLE weight, because "which one first" was never
+   answered by six equal tiles. */
+.owedstack { list-style: none; margin: 0; padding: 0; }
+.owedstack li { margin-bottom: 0.4rem; min-width: 0; }
+.owedstack li.lead .owedrow { border-left-width: var(--ink-bold); box-shadow: var(--shadow-sm); }
+.owedstack li.lead .owedtitle { font-size: 1rem; -webkit-line-clamp: 3; }
+.owedwhy { font-family: var(--font-mono); font-size: 0.6rem; color: var(--hot); margin-top: 0.15rem; }
+
+/* MACHINE — the standfirst is the best single line the room can print: the
+   worker's own words, attributed and timed. */
+.standfirst {
+  font-size: 1.05rem; font-style: italic; line-height: 1.35;
+  border-left: var(--ink-bold) solid var(--shatta); background: var(--surface-alt);
+  padding: 0.4rem 0.6rem; overflow-wrap: anywhere;
+}
+.standfirst .attr { display: block; font-style: normal; font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); margin-top: 0.25rem; }
+.river { font-family: var(--font-mono); font-size: 0.72rem; list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.river li { display: flex; gap: 0.45rem; padding: 0.16rem 0; border-bottom: 1px dashed var(--hairline); min-width: 0; }
+.river li:last-child { border-bottom: 0; }
+.river .tool { font-weight: 700; flex: 0 0 5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.river .hint { color: var(--text-soft); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* SPEC LADDER — 22 cells, one per catalog entry, id-ordered. The whole build in
+   one glance, and it never reflows because the cell count is the catalog. */
+.ladder { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.1rem, 1fr)); gap: 3px; }
+.rung {
+  position: relative; height: 2.6rem; min-width: 0; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 0; box-shadow: none;
+  background: var(--surface-alt); overflow: hidden;
+  font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; color: var(--text);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.rung:hover:not(:disabled) { transform: none; box-shadow: 0 0 0 2px var(--line); }
+.rung:active:not(:disabled) { transform: none; box-shadow: none; }
+.rung > i.fill {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 100%;
+  transform-origin: bottom center; transform: scaleY(0);
+  transition: transform var(--dur-slow) var(--ease-snap);
+  background: var(--inert);
+}
+.rung.done > i.fill { background: var(--fill-solid); }
+.rung.awaiting > i.fill { background: var(--flame-soft); }
+.rung.parked > i.fill { background: var(--shatta); }
+.rung .id { position: relative; z-index: 1; padding-bottom: 0.15rem; mix-blend-mode: difference; color: var(--paper); }
+.rung.gatewarn { border-top: var(--ink-medium) solid var(--shatta); }
+
+/* RECORD — THE WIRE. Every ruling, every price, every break, one river, and
+   every row names the file it came from. */
+.wirefilter { display: flex; gap: 0; border: var(--ink-medium) solid var(--line); margin-bottom: 0.4rem; }
+.wirefilter button {
+  flex: 1 1 0; font-family: var(--font-mono); font-size: 0.55rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; padding: 0.16rem 0.1rem;
+  border: 0; border-radius: 0; box-shadow: none; background: transparent; color: var(--text-dim);
+}
+.wirefilter button + button { border-left: var(--ink-thin) solid var(--line); }
+.wirefilter button:hover:not(:disabled), .wirefilter button:active:not(:disabled) { transform: none; box-shadow: none; }
+.wirefilter button[aria-pressed="true"] { background: var(--fill-solid); color: var(--page); }
+.wire { list-style: none; margin: 0; padding: 0; }
+.wire li { border-bottom: 1px dashed var(--hairline); padding: 0.22rem 0; min-width: 0; }
+.wirerow {
+  display: flex; gap: 0.4rem; align-items: baseline; width: 100%; text-align: left;
+  background: none; border: 0; box-shadow: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; min-width: 0;
+}
+.wirerow:hover:not(:disabled), .wirerow:active:not(:disabled) { transform: none; box-shadow: none; }
+.wirerow .wt { font-family: var(--font-mono); font-size: 0.62rem; font-variant-numeric: tabular-nums; color: var(--text-dim); flex: 0 0 auto; }
+.wirerow .wd { font-family: var(--font-mono); font-size: 0.55rem; font-weight: 700; letter-spacing: 0.07em; color: var(--text-dim); flex: 0 0 4.2rem; }
+.wirerow .wh { font-size: 0.78rem; line-height: 1.3; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wire li.open .wirerow .wh { white-space: normal; overflow: visible; }
+.wirerow .ws { font-family: var(--font-mono); font-size: 0.55rem; color: var(--text-dim); flex: 0 0 auto; }
+.wirerow.bad .wh { color: var(--hot); }
+.wirenote {
+  border-left: 1px solid var(--hot); margin: 0.3rem 0 0.15rem 4.6rem;
+  padding: 0.25rem 0 0.25rem 0.55rem; font-size: 0.86rem; line-height: 1.45;
+  max-width: 68ch; overflow-wrap: anywhere;
+}
+.wirenew {
+  display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0;
+  font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--hot);
+}
+.wirenew::after { content: ''; flex: 1 1 auto; height: 2px; background: var(--shatta); }
+
+/* LEDGER WALL — six hand-rolled small multiples. Each captioned with its n and
+   its exclusions; a bare curve is a curve you cannot audit. */
+.wall { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.wallcell { min-width: 0; }
+.wallcell .cap { font-family: var(--font-mono); font-size: 0.55rem; color: var(--text-dim); line-height: 1.3; display: block; }
+.wallcell svg { display: block; width: 100%; height: 44px; border: 1px solid var(--hairline); background: var(--surface-alt); }
+.wallcell svg path { fill: none; stroke: var(--line); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.wallcell svg rect.band { stroke: none; }
+.wallcell.unknown svg { background-image: repeating-linear-gradient(45deg, transparent 0 3px, var(--hatch) 3px 4px); }
+
+/* ── Z4 — THE WATCH RAIL ───────────────────────────────────────────
+   Coverage made spatial. A filled tick is a transition the page WATCHED land; a
+   hollow ring was reconstructed from the ledger afterwards; a hatched band is a
+   span nobody was looking at. STATIC by law — a gap that shimmers is a gap that
+   draws the eye away from the break beside it. */
+.watchrail {
+  border-left: var(--ink-thick) solid var(--line); background: var(--surface);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.watchhead {
+  font-family: var(--font-mono); font-size: 0.5rem; font-weight: 700; line-height: 1.25;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim);
+  padding: 0.25rem 0.3rem; border-bottom: var(--ink-thin) solid var(--line); text-align: center;
+}
+.watchbody { flex: 1 1 auto; min-height: 0; }
+.watchbody svg { display: block; width: 100%; height: 100%; }
+.watchbody svg .hourline { stroke: var(--hairline); stroke-width: 1; }
+.watchbody svg .hourlab { font-family: var(--font-mono); font-size: 7px; fill: var(--text-dim); }
+.watchbody svg .mk { stroke: var(--line); stroke-width: 2; }
+.watchbody svg .mk.hot { stroke: var(--shatta); }
+.watchbody svg .mk.warm { stroke: var(--flame); }
+.watchbody svg circle.rec { fill: none; stroke: var(--line-soft); stroke-width: 1.5; }
+.watchbody svg rect.gap { fill: var(--hatch); }
+.watchbody svg .drop { stroke: var(--offset); stroke-width: 3; opacity: 0.35; }
+
+/* ── Z5 — THE TICKER ───────────────────────────────────────────────
+   One line, always the newest tool call, visible at every scroll position. The
+   reflex answer to "is it actually doing something". */
+.ticker {
+  display: flex; align-items: center; gap: 0.6rem; min-width: 0;
+  background: var(--fill-solid); color: var(--page);
+  border-top: var(--ink-medium) solid var(--line); padding: 0 0.6rem;
+  font-family: var(--font-mono); font-size: 0.72rem; overflow: hidden;
+}
+.ticker .tk { font-weight: 700; flex: 0 0 auto; letter-spacing: 0.04em; }
+.ticker .tv { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.92; }
+.ticker.idle { background: var(--surface-sunk); color: var(--text-soft); }
+
+/* ── Z6 — THE TELEMETRY BUS ────────────────────────────────────────
+   Mono, right-aligned, one line, every item a fact with a budget. */
+.bus {
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.7rem;
+  min-width: 0; overflow: hidden; padding: 0 0.6rem;
+  background: var(--surface); border-top: var(--ink-thin) solid var(--hairline);
+  font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim);
+  white-space: nowrap;
+}
+.bus .busitem { flex: 0 0 auto; }
+.bus .busitem.grow { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+/* The ONE thing that is allowed to restart on the 4-second push, because that is
+   precisely and only what it means. */
+.beatdot { display: inline-block; width: 6px; height: 6px; background: var(--hot); vertical-align: 0.02em; }
+.beatdot.push { animation: pushblip var(--dur-event) var(--ease-out) 1; }
+@keyframes pushblip { 0% { transform: scale(2.1); opacity: 1; } 100% { transform: scale(1); opacity: 0.55; } }
+
+/* ── OVERLAYS ──────────────────────────────────────────────────────
+   The palette is the keyboard surface of everything on the deck; the digest is
+   the answer to "what happened while I slept"; shortcuts is the map. */
+.scrim { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.42); display: flex; align-items: flex-start; justify-content: center; padding: 8vh 1rem 1rem; }
+.palette {
+  width: min(560px, 96vw); max-height: 74vh; display: flex; flex-direction: column;
+  background: var(--surface); border: var(--ink-bold) solid var(--line); box-shadow: var(--shadow);
+}
+.palette input {
+  font-family: var(--font-mono); font-size: 0.9rem; padding: 0.55rem 0.7rem;
+  border: 0; border-bottom: var(--ink-medium) solid var(--line);
+  background: var(--surface-alt); color: var(--text); outline: none; width: 100%;
+}
+.palette ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; }
+.palette li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.3rem 0.7rem; cursor: pointer; border-bottom: 1px dashed var(--hairline); min-width: 0; }
+.palette li[aria-selected="true"] { background: var(--fill-solid); color: var(--page); }
+.palette li[aria-selected="true"] .pgroup { color: var(--page); opacity: 0.8; }
+.palette .pgroup { font-family: var(--font-mono); font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); flex: 0 0 4.6rem; }
+.palette .plabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.palette .pempty { padding: 0.7rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-dim); }
+
+.bigsheet {
+  position: fixed; inset: 0; z-index: 42; background: var(--page); overflow-y: auto;
+  padding: 1.2rem var(--gutter) 3rem;
+}
+.digest-lede { font-family: var(--font-display); font-size: clamp(1.6rem, 3.6vw, 2.6rem); line-height: 1.05; letter-spacing: 0.03em; }
+.digest-sec { margin-top: 1.3rem; }
+.digest-sec > h3 { font-size: 1.15rem; border-bottom: var(--ink-medium) solid var(--line); padding-bottom: 0.2rem; margin-bottom: 0.5rem; }
+.digest-cov {
+  margin-top: 1.4rem; font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.5;
+  border-left: var(--ink-bold) solid var(--flame); background: var(--surface-alt); padding: 0.5rem 0.7rem;
+}
+.handover {
+  border: var(--ink-thick) solid var(--shatta); box-shadow: var(--shadow-red);
+  background: var(--surface); padding: 0.5rem 0.7rem; margin: 0.5rem var(--pane-pad);
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+}
+.handover .hl { font-family: var(--font-display); font-size: 1.15rem; letter-spacing: 0.04em; }
+
+.shortcuts { columns: 2; column-gap: 1.4rem; font-family: var(--font-mono); font-size: 0.76rem; }
+.shortcuts div { break-inside: avoid; padding: 0.15rem 0; display: flex; gap: 0.5rem; }
+.shortcuts kbd {
+  font-family: var(--font-mono); font-size: 0.68rem; border: 1px solid var(--line);
+  background: var(--surface-alt); padding: 0 0.28rem; flex: 0 0 auto;
+}
+
+/* Notification rules — every one has a TEST button, because a silently broken
+   alerter is strictly worse than no alerter. */
+.rulerow { display: flex; align-items: center; gap: 0.5rem; padding: 0.22rem 0; border-bottom: 1px dashed var(--hairline); min-width: 0; }
+.rulerow .rl { flex: 1 1 auto; min-width: 0; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rulerow .rc { font-family: var(--font-mono); font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-dim); flex: 0 0 auto; }
+.offline-bar {
+  background: var(--shatta); color: var(--on-fill); font-family: var(--font-mono);
+  font-size: 0.7rem; font-weight: 700; padding: 0.25rem 0.6rem; text-align: center;
+}
+
 /* Directive 3 is linework and hard offsets — neither needs motion to read, and the founder
    watches this page for hours. Everything ambient stops; nothing moves or disappears. */
 @media (prefers-reduced-motion: reduce) {
@@ -865,6 +1398,12 @@ tr.detail b { font-family: var(--font-mono); font-size: 0.62rem; letter-spacing:
   .marquee-state.swap { animation: none !important; }
   .disclose { transition: none; }
   .gauge > i, .minibar > i, .chev { transition: none; }
+  /* THE DECK. Motion becomes an instant state change, never a removal of information:
+     the annunciator keeps its fill, the cadence bars keep their heights, the beat dot
+     keeps its colour — only the movement stops. */
+  .ann.caution.blink, .ann.alarm.blink { animation: none !important; }
+  .beatdot.push { animation: none !important; }
+  .cadence > i, .rwy-track > i.fill, .rwy-track > i.now, .rung > i.fill { transition: none !important; }
   * { will-change: auto !important; }
 }
 
@@ -1211,14 +1750,12 @@ const THEME_MODES = [
   ['dark', 'Night', 'The same drawing reversed out — white ink on a night panel'],
 ];
 
-const ThemeSwitch = ({ mode, onPick }) =>
-  h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Colour theme' },
-    THEME_MODES.map(([id, label, hint]) =>
-      h('button', {
-        key: id, type: 'button', title: hint,
-        'aria-pressed': mode === id ? 'true' : 'false',
-        onClick: () => onPick(id),
-      }, label)));
+/* The three positions survive; the SEGMENTED CONTROL does not. On a 40px annunciator
+   bar, three buttons for one setting is three slots stolen from eight that carry alarms,
+   so the bar cycles and the palette names all three explicitly — AUTO is still its own
+   position, which is the whole reason it exists. */
+const THEME_ORDER = THEME_MODES.map((m) => m[0]);
+const isMac = /Mac|iPhone|iPad/.test((navigator.platform || '') + ' ' + navigator.userAgent);
 
 /* ── the live feed ─────────────────────────────────────────────────────
    One EventSource for the whole page. It carries four kinds of message:
@@ -1577,6 +2114,220 @@ const healthWorst = (rows) => {
   if (quiet.length) return quiet.length + ' of ' + list.length + ' checks have never reported';
   return 'all ' + list.length + ' checks ok';
 };
+
+/**
+ * Which shell the deck can honestly draw.
+ *
+ * The fixed instrument grid needs both axes: below 760px the three console columns
+ * stack into a scroll anyway, and below 700px tall the PFD alone eats the viewport
+ * and the console grid gets nothing. Either miss and the page falls back to the
+ * document flow rather than drawing a deck it cannot fit — a cramped instrument is
+ * worse than an honest page.
+ */
+const shellFor = (w, hgt) => (w >= 760 && hgt >= 700 ? 'deck' : 'doc');
+
+/** '6s' / '4m 12s' / '2h 06m' — the elapsed form the cadence readout and the wire use. */
+const spanShort = (ms) => {
+  if (ms == null || !isFinite(ms)) return '—';
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  return Math.floor(s / 3600) + 'h ' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm';
+};
+
+/**
+ * R3 — a freshness budget, evaluated.
+ *
+ * Every metric on the deck declares how old it is allowed to get before it stops
+ * being a statement about now. Over budget it does NOT disappear and it does NOT
+ * keep a clean face: it hatches itself and says how old it is, because a stale
+ * number wearing a fresh face is the exact failure this room was built after.
+ * A missing timestamp is UNKNOWN freshness, never fresh.
+ */
+const freshness = (at, budgetMs, now) => {
+  const t = now == null ? Date.now() : now;
+  const stamp = at == null ? null : (typeof at === 'number' ? at : new Date(at).getTime());
+  if (stamp == null || !isFinite(stamp)) return { known: false, stale: false, ageMs: null, label: null };
+  const ageMs = Math.max(0, t - stamp);
+  const stale = budgetMs != null && ageMs > budgetMs;
+  return { known: true, stale, ageMs, label: stale ? 'as of ' + spanShort(ageMs) + ' ago' : null };
+};
+
+/**
+ * R2 — which of the four provenance classes a fact wears, when the instruments
+ * module has not supplied one.
+ *
+ * An absent value is UNKNOWN and nothing else; a value the page has not watched
+ * land is REPORTED. The page never upgrades a fact on its own — only the journal,
+ * which actually witnessed the transition, can say `observed`.
+ */
+const factClass = (value, declared) => {
+  if (value == null || value === '') return 'unknown';
+  if (declared === 'observed' || declared === 'reported' || declared === 'reconstructed' || declared === 'unknown') return declared;
+  return 'reported';
+};
+
+/** The four classes, as the class token the stylesheet uses. */
+const PROV_CLASS = { observed: 'obs', reported: 'rep', reconstructed: 'rec', unknown: 'unk' };
+
+/**
+ * Fuzzy subsequence match for the command palette. Returns a score (lower is better)
+ * or -1 for no match. Contiguous runs and word-start hits win, so 'kil' finds
+ * "Kill now" ahead of "Spec 011 — checklist".
+ */
+const paletteScore = (query, label) => {
+  const q = String(query || '').toLowerCase().trim();
+  const s = String(label || '').toLowerCase();
+  if (!q) return 0;
+  let i = 0, score = 0, last = -1;
+  for (const ch of q) {
+    const at = s.indexOf(ch, i);
+    if (at < 0) return -1;
+    score += at - last - 1;                         // characters skipped
+    if (at > 0 && /[\s\-·/]/.test(s[at - 1])) score -= 2;   // word start
+    last = at; i = at + 1;
+  }
+  return score;
+};
+
+/** Palette rows, filtered and ranked. Ties keep authored order, which is the order of use. */
+const rankPalette = (items, query) => {
+  const out = [];
+  (items || []).forEach((it, ix) => {
+    const sc = paletteScore(query, (it && it.label) || '');
+    if (sc >= 0) out.push({ it, sc, ix });
+  });
+  out.sort((a, b) => (a.sc - b.sc) || (a.ix - b.ix));
+  return out.map((r) => r.it);
+};
+
+/**
+ * How much clearing one owed item unblocks — the question six equal tiles never
+ * answered. Ready-to-sign is one click from freeing a review slot, so it leads;
+ * after that, weight by how many specs the item says it affects, then by how far
+ * through its checklist it already is. `sortOwed` stays the tiebreak, and stays
+ * exported, because recency is still the right answer when nothing else separates two.
+ */
+const unblockWeight = (it) => {
+  if (!it) return 0;
+  const affects = String((it && it.affectsSpec) || '');
+  const downstream = affects ? affects.split(/[,\s]+/).filter((x) => /\d/.test(x)).length : 0;
+  const ready = it.progress && it.progress.complete && !it.signedOff ? 6 : 0;
+  const walked = it.progress && it.progress.total ? (it.progress.done / it.progress.total) * 2 : 0;
+  const paid = it.signedOff ? -10 : 0;
+  return ready + downstream * 1.5 + walked + paid;
+};
+
+/** Owed, ranked by what clearing it unblocks, with sortOwed's recency as the tiebreak. */
+const rankOwed = (items) => {
+  const base = sortOwed(items);
+  const ix = new Map(base.map((it, i) => [it, i]));
+  return base.slice().sort((a, b) => (unblockWeight(b) - unblockWeight(a)) || (ix.get(a) - ix.get(b)));
+};
+
+/** One line for the top owed tile: why THIS one first, in words, never a score. */
+const unblockWhy = (it) => {
+  if (!it) return null;
+  if (it.signedOff) return 'already signed off — kept as the receipt';
+  if (it.progress && it.progress.complete) return 'every check ticked — one click frees a review slot';
+  const affects = String((it && it.affectsSpec) || '').trim();
+  if (affects) return 'blocks ' + affects;
+  if (it.progress && it.progress.total) return it.progress.total - it.progress.done + ' checks left to walk';
+  return 'nothing else is waiting on a founder right now';
+};
+
+/**
+ * The freshness budgets, in one place, in milliseconds. `health` is deliberately
+ * absent: the supervisor reports its own staleAfterMs and reading a hardcoded number
+ * over the top of it would be the room second-guessing the only thing that knows.
+ */
+const BUDGET = { state: 12000, heartbeat: 30000, ticks: 600000, gates: 3600000 };
+
+/** The newest tool call anywhere, for the ticker. Null when nothing is in flight. */
+const newestAction = (lanes) => {
+  for (const lane of lanes || []) {
+    const acts = (lane && lane.actions) || [];
+    if (acts.length) return { tool: acts[acts.length - 1].tool, hint: acts[acts.length - 1].hint, lane: lane.spec || lane.id };
+  }
+  return null;
+};
+
+/**
+ * A ledger figure with its own denominator.
+ *
+ * Every money number on the deck has to carry the n it was computed over and what
+ * it left out, because `$1,742.10` over 40 rows where 24 have no cost is not a
+ * total, it is a floor wearing a total's clothes.
+ */
+const overRows = (rows, pick) => {
+  const list = rows || [];
+  let n = 0, sum = 0;
+  for (const r of list) {
+    const v = pick(r);
+    if (typeof v === 'number' && isFinite(v)) { n += 1; sum += v; }
+  }
+  return { n, sum, total: list.length, missing: list.length - n };
+};
+
+/** '16 of 40 rows carry a cost' — the exclusion line, spelt out, never implied. */
+const exclusionLine = (n, total, noun) =>
+  total === 0 ? 'no rows on the ledger yet'
+    : n === total ? 'all ' + total + ' rows carry ' + noun
+      : n + ' of ' + total + ' rows carry ' + noun;
+
+/**
+ * C1 — THE CADENCE METER, reduced from the frame ring.
+ *
+ * This is the only instrument on the page that DEMONSTRATES motion rather than
+ * asserting it: it compares state.live.tools between consecutive 4-second frames,
+ * so it can only report movement that actually happened between two things the
+ * page watched. A chip that is always on cannot survive next to it, and neither
+ * can a feed frozen at "starting up" — 502 tools unchanged for four minutes reads
+ * as 502 tools unchanged for four minutes.
+ *
+ * Fewer than two samples is UNKNOWN, never zero: one frame proves nothing about
+ * motion, and '0 tools/min' from a page that has been open for four seconds is a
+ * fabricated accusation.
+ */
+const cadenceOf = (samples, now) => {
+  const list = (samples || []).filter((x) => x && typeof x.tools === 'number' && typeof x.at === 'number');
+  const t = now == null ? Date.now() : now;
+  if (list.length < 2) {
+    return { known: false, bars: [], perMin: null, lastMovementMs: null, spanMs: 0,
+      tools: list.length ? list[list.length - 1].tools : null, verdict: 'unknown' };
+  }
+  const bars = [];
+  for (let i = 1; i < list.length; i += 1) {
+    // A frame gap wider than three missed pushes is a hole in the record, not a
+    // quiet moment. It is drawn as a hole.
+    bars.push({ at: list[i].at, d: Math.max(0, list[i].tools - list[i - 1].tools), gap: list[i].at - list[i - 1].at > 12000 });
+  }
+  const spanMs = list[list.length - 1].at - list[0].at;
+  const moved = list[list.length - 1].tools - list[0].tools;
+  const perMin = spanMs >= 20000 ? moved / (spanMs / 60000) : null;
+  let lastMovementMs = null;
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    if (list[i].tools > list[i - 1].tools) { lastMovementMs = t - list[i].at; break; }
+  }
+  if (lastMovementMs == null) lastMovementMs = t - list[0].at;
+  const verdict = lastMovementMs > 120000 ? 'stalled' : moved > 0 ? 'moving' : 'quiet';
+  return { known: true, bars, perMin, lastMovementMs, spanMs, tools: list[list.length - 1].tools, verdict };
+};
+
+/**
+ * A polyline through n values, normalised into a w×hgt box. Drawing, not fact:
+ * the instruments module owns the numbers, the page owns the ink. Returns null
+ * for anything it cannot honestly draw, and null renders as a hatch.
+ */
+const sparkPathOf = (values, w, hgt) => {
+  const v = (values || []).filter((n) => typeof n === 'number' && isFinite(n));
+  if (v.length < 2) return null;
+  const lo = Math.min(...v), hi = Math.max(...v);
+  const span = hi - lo || 1;
+  const step = w / (v.length - 1);
+  return v.map((n, i) => (i === 0 ? 'M' : 'L') + (i * step).toFixed(1) + ' ' + (hgt - ((n - lo) / span) * hgt).toFixed(1)).join(' ');
+};
+
 /* ── end pure helpers ─────────────────────────────────────────────── */
 
 /**
@@ -1813,144 +2564,10 @@ function StateWord({ state }) {
   return h('div', { className: 'marquee-state', ref: el }, state);
 }
 
-function Marquee({ s, top, armed, unsupervised, owedCount, onOwed }) {
-  const c = s.catalog;
-  const t = s.totals;
-  const lanes = (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []);
-  const shown = lanes.slice(0, 3);
-  const on = top.tone === 'on';
-  // The leased account is the one a tick would actually run on: the first that is not cold.
-  const leased = (s.accounts || []).find((a) => !a.cold) || (s.accounts || [])[0] || null;
-  const u = leased ? leased.utilization : null;
-  const gcls = u == null ? '' : u >= 0.9 ? 'crit' : u >= 0.7 ? 'warn' : '';
-  const overage = (s.accounts || []).some((a) => a.overageStatus === 'allowed');
-
-  return h('section', {
-    className: 'panel' + (on ? '' : ' alert'),
-    style: { marginBottom: '1.1rem' },
-  },
-    h('div', { className: 'marquee' },
-
-      // ── CELL A — is it working, and why not ──────────────────────────
-      h('div', { className: 'mq-cell' },
-        h('div', { className: 'mq-head' },
-          h('i', {
-            className: 'marquee-dot ' + (on ? 'on' : top.tone === 'warn' ? 'warn' : 'off'),
-            title: top.reason || 'a lane is in flight',
-          }),
-          h(StateWord, { state: top.state })),
-        h('div', { className: 'marquee-rule' + (on ? '' : ' idle') }),
-        // The reason line, moved out of the header where it was 0.76rem. The chips describe
-        // PROCESSES — "running", "live feed" — and processes are what stayed true for eight
-        // hours over a cancelled rotation. This is the only line describing PROGRESS.
-        h('div', { className: 'whybar' + (top.tone === 'off' ? ' off' : ''), style: on && !top.reason ? { color: 'var(--text-soft)', borderLeftColor: 'var(--shatta)' } : null },
-          top.reason || 'a lane is in flight — the loop is doing the work'),
-        h('div', { className: 'role-chips', style: { marginTop: '0.6rem' } },
-          armed && h('span', { className: 'chip warn' },
-            (s.killFlag ? 'kill' : 'stop') + ' armed · ' + (armed.armedBy || 'unknown author') + ' · ' + ago(armed.armedAt)),
-          unsupervised && h('span', { className: 'chip warn' }, 'unsupervised'),
-          // The one added affordance on the whole page: the debt is stated where the founder
-          // is already looking, and clicking it takes them to the list rather than describing it.
-          owedCount > 0 && h('button', {
-            type: 'button', className: 'chip live chipbtn', onClick: onOwed,
-          }, owedCount + ' owed by you'))),
-
-      // ── CELL B — on what, and for how long ───────────────────────────
-      h('div', { className: 'mq-cell' },
-        h('div', { className: 'mq-label' }, 'on what'),
-        shown.length === 0
-          ? h('div', null,
-              h('div', { className: 'where-head', style: { fontSize: '1.15rem' } }, 'nothing in flight'),
-              h('div', { className: 'where-src', style: { marginTop: '0.4rem' } },
-                c.pending + ' pending · ' + c.parked.length + ' parked · ' + c.awaitingFounder.length + ' awaiting you'))
-          : shown.map((lane) => h('div', { key: lane.id || lane.spec, className: 'marquee-lane' },
-              h('div', { className: 'mq-lane-top' },
-                h('span', { className: 'mq-lane-name' }, 'Spec ' + lane.spec + ' · ' + lane.stage),
-                h(Elapsed, { since: lane.startedAt })),
-              h('div', { className: 'acct-meta', style: { marginTop: '0.2rem' } },
-                h('span', { className: 'tag' }, lane.account),
-                h('span', null, (lane.tools ?? 0) + ' tools'),
-                h('span', null, (lane.subagents ?? 0) + ' subagents')),
-              // M5: the runtime reports no percentage, so a determinate bar would be an
-              // invented number. A crawl says "in flight, duration unknown", which is true.
-              h('div', { className: 'runbar live', style: { marginTop: '0.4rem' } }, h('i', null)))),
-        lanes.length > shown.length && h('div', { className: 'where-src' },
-          '+' + (lanes.length - shown.length) + ' more lane(s) — all of them in Current tick below')),
-
-      // ── CELL C — at what cost, and how much window is left ───────────
-      h('div', { className: 'mq-cell' },
-        h('div', { className: 'mq-label' }, 'cost + runway'),
-        h('div', { className: 'statrow two' },
-          h('div', { className: 'stat' },
-            h(Counter, { value: t.notional, prefix: '$', digits: 2 }),
-            h('span', { className: 'l' }, 'notional')),
-          h(Stat, { n: t.ticks, l: 'ticks' }),
-          h(Stat, { n: t.closed, l: 'tasks closed' }),
-          h(Stat, { n: fmtMin(t.minutes), l: 'worker time' })),
-        leased && h('div', { style: { marginTop: '0.75rem' } },
-          h('div', { className: 'acct-top' },
-            h('span', { className: 'acct-name', style: { fontSize: '1rem' } }, leased.id),
-            overage
-              ? h('span', { className: 'tag warm' }, 'OVERAGE ON')
-              : h('span', { className: 'tag' + (u != null && u >= 0.9 ? ' warm' : '') }, leased.rateStatus || 'warm')),
-          h('div', { className: 'gauge', title: u == null ? 'under the reporting threshold' : pct(u) + '% used' },
-            h('i', { className: gcls, style: { transform: 'scaleX(' + (u == null ? 0.08 : Math.max(0.04, u)) + ')' } })),
-          h('div', { className: 'acct-meta' },
-            h('span', null, u == null ? '<90% used' : pct(u) + '% used'),
-            leased.windowEndsAt && h('span', null, 'window ' + clock(leased.windowEndsAt)),
-            h('span', null, leased.ticks + ' ticks'))),
-        h('p', { className: 'mono', style: { fontSize: '0.68rem', color: 'var(--text-dim)', margin: '0.6rem 0 0' } },
-          t.billable === 0
-            ? 'No tick used overage. Notional is list-price token value, not money.'
-            : t.billable + ' tick(s) ran as OVERAGE and may be billable.'))));
-}
-
 /* ── ZONE 4/5: the panels that report rather than block ────────────────
    Each keeps its name, its title and every field it had. What changed is that a
    reference strip is 110px collapsed instead of 1029px expanded by default.
    -------------------------------------------------------------------- */
-
-/** Owed by you — every item, ranked, three across, and never taller than one screen. */
-function OwedPanel({ items, onOpen }) {
-  const [all, setAll] = useState(false);
-  const sorted = sortOwed(items);
-  const shown = all ? sorted : sorted.slice(0, 6);
-  if (sorted.length === 0) {
-    return h(Panel, { title: 'Owed by you', sub: 'nothing waiting on you' },
-      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
-        'No spec is awaiting a founder journey and no journey is half-walked. When one lands it appears here in red.'));
-  }
-  return h(Panel, { title: 'Owed by you', alert: true, sub: 'click one — each opens a checklist' },
-    h('ul', { className: 'owed owedgrid' + (all && sorted.length > 6 ? ' capped' : '') },
-      shown.map((item) => h('li', { key: item.key },
-        h('button', {
-          className: 'owedrow', type: 'button',
-          onClick: () => onOpen({ kind: item.kind, id: item.id }),
-        },
-          h('span', { className: 'owedtitle', title: item.title || ('Spec ' + item.id) },
-            item.kind === 'spec'
-              ? h(React.Fragment, null, h('b', null, 'Spec ' + item.id), ' — clicked founder journey')
-              : item.title),
-          h('div', { className: 'owedmeta' },
-            item.signedOff && h('span', { className: 'ready' }, 'SIGNED OFF'),
-            item.progress
-              ? h('span', null, item.progress.done + ' of ' + item.progress.total + ' checks')
-              : h('span', null, 'open to see what it needs'),
-            item.progress?.complete && !item.signedOff && h('span', { className: 'ready' }, 'ready to sign off'),
-            item.recordedOn && h('span', null, item.recordedOn)),
-          // `affects` is frequently a full sentence naming five downstream specs. One line
-          // here, the whole of it in the tooltip, and all of it in the brief the tile opens.
-          item.affectsSpec && h('div', { className: 'owedmeta' },
-            h('span', { className: 'owedaffects', title: 'affects ' + item.affectsSpec }, 'affects ' + item.affectsSpec)),
-          item.progress?.total > 0 && h('div', { className: 'minibar' },
-            h('i', {
-              className: item.progress.complete ? 'full' : '',
-              style: { transform: 'scaleX(' + (item.progress.done / item.progress.total) + ')' },
-            })))))),
-    !all && sorted.length > shown.length && h('button', {
-      className: 'linkish showall', type: 'button', onClick: () => setAll(true),
-    }, 'show ' + (sorted.length - shown.length) + ' more'));
-}
 
 /** The lanes' own task progress. Two blocks, then the rest in place. */
 function CatalogLanes({ lanes }) {
@@ -1996,26 +2613,6 @@ function TreeStrip({ git, open, onToggle }) {
       // The server sends the first eight. Saying so beats a list that silently stops.
       git.dirty > paths.length && h('div', { className: 'where-src' },
         (git.dirty - paths.length) + ' further dirty path(s) — the state feed carries the first ' + paths.length))));
-}
-
-/** Parked — and when nothing is parked it still occupies its cell, so clearing one does
-    not make the whole rail jump a row. */
-function ParkedStrip({ parked, open, onToggle }) {
-  const list = parked || [];
-  if (list.length === 0) {
-    return h(Panel, { title: 'Parked', sub: 'nothing parked' },
-      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
-        'Nothing in PARKED.md and no queue entry parked without a diagnosis. Anything only you can clear would be listed here.'));
-  }
-  return h(Panel, { title: 'Parked', alert: true, sub: 'only you can clear these — see PARKED.md' },
-    h('div', { className: 'striphead' },
-      h('span', { className: 'stripone', title: parkedLabel(list[0]) },
-        h('b', null, list.length), ' parked · ' + parkedLabel(list[0])),
-      h('button', { className: 'linkish', type: 'button', onClick: onToggle },
-        h('span', { className: 'chev' + (open ? ' open' : '') }, '▸'), open ? ' hide' : ' show all ' + list.length)),
-    h('div', { className: 'disclose' + (open ? ' open' : '') }, h('div', null,
-      h('ul', { className: 'feed', style: { marginTop: '0.5rem' } }, list.map((p, i) =>
-        h('li', { key: String(p) + '#' + i }, h('span', { className: 'hint' }, parkedLabel(p))))))));
 }
 
 /**
@@ -2100,6 +2697,1152 @@ function Ticks({ ticks }) {
     }, 'show all ' + ticks.length + ' ticks'));
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   THE DECK — instruments, zones and overlays.
+
+   Everything below renders from state the server already sends, from a frame
+   ring this file keeps, or from two sibling modules loaded at boot:
+
+     ./instruments.mjs   the derivations — cadence, annunciators, burn, anomalies,
+                         wireRows, ledgerSeries, digestDiff, sparkPath, provenance
+     ./journal.mjs       the durable transition log — open(), record(), range(),
+                         seed(), since()
+
+   THE MISSING-MODULE RULE, which is the whole honesty spine in one sentence:
+   a FACT the page cannot source renders UNKNOWN — '—' over a hatch band with a
+   title naming the field that is absent — and never falls back to a guess. Only
+   three things carry a local fallback, and each has a stated reason:
+
+     · sparkPathOf   drawing, not fact. The module owns the numbers; the page
+                     owns the ink, and a polyline cannot be wrong about the world.
+     · cadenceOf     the reduction of a ring buffer that lives in THIS file. C1
+                     is the antidote to the always-on chip and the frozen feed;
+                     losing proof-of-life to a module that has not shipped would
+                     reintroduce the exact failure the deck exists to end.
+     · annunciators  eight direct field reads with no derivation between the
+                     state and the lamp. This is the primary glance surface; a
+                     dark bar is worse than a duplicated `if`.
+
+   Everything else — rulings, ledger small multiples, anomaly ranking, the
+   digest, the watch rail — says so out loud when its source is not there.
+   ══════════════════════════════════════════════════════════════════ */
+
+/** Any module call, made safe. A module that throws must degrade to UNKNOWN, never to a blank page. */
+const callMod = (mod, name, args, fallback) => {
+  try {
+    if (mod && typeof mod[name] === 'function') return mod[name].apply(mod, args);
+  } catch (e) { /* a broken instrument reads unknown, exactly like an absent one */ }
+  return fallback === undefined ? null : fallback;
+};
+
+/**
+ * The two sibling modules, loaded once at boot.
+ *
+ * A dynamic import rather than a <script type="module">: the React tree is a plain
+ * script with no build step, and a static module graph would mean the page cannot
+ * render at all until both files parse. Here a missing module costs the instruments
+ * that depend on it and nothing else — and the bar and the bus both say which one.
+ */
+function useModules() {
+  const [mods, setMods] = useState({ inst: null, jnl: null, errors: [], settled: false });
+  useEffect(() => {
+    let alive = true;
+    const errs = [];
+    const grab = (spec) => import(spec).then((m) => m).catch((e) => { errs.push(spec + ': ' + (e && e.message ? e.message : 'did not load')); return null; });
+    Promise.all([grab('./instruments.mjs'), grab('./journal.mjs')]).then(([inst, jnl]) => {
+      if (alive) setMods({ inst, jnl, errors: errs, settled: true });
+    });
+    return () => { alive = false; };
+  }, []);
+  return mods;
+}
+
+/* ── R1 + R2 + R3 — the Fact primitive ─────────────────────────────
+   Every number, word and timestamp on this deck goes through here. It is the
+   only thing on the page allowed to render a metric, and it cannot render one
+   without also rendering how it is known and how old it is.
+
+   `value` null → '—' over a hatch, with `field` named in the title. Never '0'.
+   `at` + `budget` over → the value keeps its face AND wears the hatch, plus
+   'as of Xm ago', because a stale figure that hides is a figure assumed current.
+   ------------------------------------------------------------------ */
+function Fact({ value, prov, field, source, at, budget, title, className, glyph }) {
+  const cls = factClass(value, prov);
+  const f = freshness(at, budget);
+  const known = cls !== 'unknown';
+  const bits = [];
+  if (source) bits.push('source: ' + source);
+  if (field) bits.push(known ? 'field: ' + field : 'missing field: ' + field);
+  bits.push('provenance: ' + cls);
+  if (f.known) bits.push('stamped ' + spanShort(f.ageMs) + ' ago' + (budget ? ' · budget ' + spanShort(budget) : ''));
+  else if (budget) bits.push('no timestamp — freshness unknown');
+  return h('span', {
+    className: 'fact ' + PROV_CLASS[cls] + (f.stale ? ' stale' : '') + (className ? ' ' + className : ''),
+    title: (title ? title + ' — ' : '') + bits.join(' · '),
+  },
+    known ? value : (glyph || '—'),
+    f.stale && h('span', { className: 'asof' }, f.label));
+}
+
+/** A hand-rolled sparkline. No chart library exists offline and none is wanted. */
+function Spark({ values, inst, label }) {
+  const w = 100, hh = 16;
+  const d = callMod(inst, 'sparkPath', [values, w, hh], undefined);
+  const path = d === undefined || d === null ? sparkPathOf(values, w, hh) : d;
+  if (!path) {
+    return h('span', {
+      className: 'spark unknown', role: 'img',
+      title: (label || 'series') + ' — fewer than two samples on record, so there is no shape to draw',
+      style: { display: 'block', height: hh + 'px' },
+    });
+  }
+  return h('svg', { className: 'spark', viewBox: '0 0 ' + w + ' ' + hh, preserveAspectRatio: 'none', role: 'img', 'aria-label': label || 'trend' },
+    h('path', { d: path }));
+}
+
+/* ── C1 — THE CADENCE STRIP ────────────────────────────────────────
+   Sixty bars, one per 4-second frame: the last four minutes of Δ tool calls.
+   It is drawn from what the page WATCHED, so an empty ring is empty, never zero.
+   ------------------------------------------------------------------ */
+function Cadence({ samples, inst, working }) {
+  const now = Date.now();
+  const c = callMod(inst, 'cadence', [samples, now], undefined);
+  const cad = c && typeof c === 'object' && 'verdict' in c ? c : cadenceOf(samples, now);
+  const stalled = working && cad.known && cad.lastMovementMs != null && cad.lastMovementMs > 120000;
+  const bars = cad.bars || [];
+  const peak = bars.reduce((m, b) => Math.max(m, b.d || 0), 0) || 1;
+  const pad = Math.max(0, 60 - bars.length);
+  return h('div', null,
+    h('div', {
+      className: 'cadence' + (stalled ? ' stalled' : '') + (cad.known ? '' : ' unknown'),
+      role: 'img',
+      'aria-label': cad.known
+        ? 'tool calls per frame over the last ' + spanShort(cad.spanMs)
+        : 'not enough frames watched yet to show cadence',
+      title: cad.known
+        ? 'Δ state.live.tools per 4s frame, over ' + bars.length + ' watched frames'
+        : 'the page has watched fewer than two frames — cadence is unknown, not zero',
+    },
+      Array.from({ length: pad }, (unused, i) => h('i', { key: 'p' + i, className: 'gap', style: { transform: 'scaleY(0.06)' }, title: 'before this page was open' })),
+      bars.map((b, i) => h('i', {
+        key: 'b' + i,
+        className: b.gap ? 'gap' : b.d > 0 ? 'moved' : '',
+        style: { transform: 'scaleY(' + (b.gap ? 1 : Math.max(0.06, (b.d || 0) / peak)).toFixed(3) + ')' },
+        title: b.gap ? 'a frame gap — the page was not watching' : b.d + ' tool call(s) in this frame',
+      }))),
+    h('div', { className: 'cadence-read' + (stalled ? ' stalled' : '') },
+      !cad.known
+        ? h(Fact, { value: null, field: 'state.live.tools over 2+ frames', source: 'the SSE state frames this page has watched', title: 'cadence' })
+        : stalled
+          // The literal number, because "stalled" alone is an adjective and the founder
+          // has been lied to by adjectives. This says what did not move, and for how long.
+          ? h('span', null, cad.tools + ' tools, unchanged for ' + spanShort(cad.lastMovementMs))
+          : h('span', null,
+              cad.perMin == null
+                ? h(Fact, { value: null, field: 'a span ≥ 20s of watched frames', source: 'frame ring', title: 'tools per minute' })
+                : Math.round(cad.perMin) + ' tools/min',
+              ' · last movement ', spanShort(cad.lastMovementMs), ' ago')));
+}
+
+/* ── Z0 — THE ANNUNCIATOR BAR ──────────────────────────────────────
+   Eight slots, fixed order, position is meaning. Every slot carries a SIGNATURE
+   of what is wrong; the ack is keyed to that signature, so acknowledging a known
+   failure silences that failure and nothing else — a NEW failure of the same slot
+   re-alarms, which is the difference between an annunciator and a dismiss button.
+   ------------------------------------------------------------------ */
+const ANN_ORDER = ['LOOP', 'FEED', 'SUPV', 'STOP', 'RATE', 'OWED', 'PARK', 'GATE'];
+
+/** Direct field reads — see THE MISSING-MODULE RULE above for why these have a local path. */
+const annunciatorsOf = (s, ctx) => {
+  const acc = s.accounts || [];
+  const maxU = acc.reduce((m, a) => (typeof a.utilization === 'number' ? Math.max(m, a.utilization) : m), -1);
+  const anyCold = acc.some((a) => a.cold);
+  const gates = (s.catalog && s.catalog.entries || []).filter((e) => e.closingGateWarning);
+  const feedAge = ctx.lastFrameAt == null ? null : Date.now() - ctx.lastFrameAt;
+  const stalled = ctx.cadenceVerdict === 'stalled' && s.activity && s.activity.state === 'WORKING';
+  const supBad = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting);
+  const armed = s.stopArmed || s.killArmed;
+  const armedBy = (s.killFlag && s.killFlag.armedBy) || (s.stopFlag && s.stopFlag.armedBy) || null;
+  const tone = (s.activity && s.activity.tone) || 'off';
+  return [
+    { id: 'LOOP',
+      level: stalled ? 'caution' : tone === 'on' ? 'nominal' : tone === 'warn' ? 'caution' : 'caution',
+      label: (s.activity && s.activity.state) || 'UNKNOWN',
+      sig: (s.activity && s.activity.state || '?') + (stalled ? '/stalled' : ''),
+      title: stalled ? 'the loop reports WORKING but no tool call has landed in over two minutes' : (s.activity && s.activity.reason) || 'a lane is in flight' },
+    { id: 'FEED',
+      level: ctx.link === 'live' && (feedAge == null || feedAge < BUDGET.state) ? 'nominal' : ctx.link === 'live' ? 'caution' : 'alarm',
+      label: 'FEED', sig: ctx.link + '/' + (feedAge != null && feedAge >= BUDGET.state ? 'stale' : 'fresh'),
+      title: 'EventSource ' + ctx.link + (feedAge == null ? ' · no frame yet' : ' · last frame ' + spanShort(feedAge) + ' ago, budget ' + spanShort(BUDGET.state)) },
+    // The word, not the abbreviation, when it is true: an unwatched loop and a watched one
+    // look identical on a page that only ever shows the loop, and this slot is the difference.
+    { id: 'SUPV', level: supBad ? 'alarm' : 'nominal', label: supBad ? 'unsupervised' : 'SUPV', sig: supBad ? 'silent' : 'ok',
+      title: supBad ? ((s.health.supervisor.advice) || 'the supervisor is not reporting') : 'the supervisor reported within its own staleAfterMs' },
+    { id: 'STOP', level: armed ? 'caution' : 'nominal', label: armed ? (s.killArmed ? 'KILL' : 'STOP') : 'STOP',
+      sig: armed ? (s.killArmed ? 'kill' : 'stop') + '/' + (armedBy || '?') : 'clear',
+      title: armed ? (s.killArmed ? 'kill' : 'stop') + ' armed by ' + (armedBy || 'an unknown author') : 'no stop or kill flag is armed' },
+    { id: 'RATE', level: anyCold ? 'alarm' : maxU >= 0.85 ? 'caution' : 'nominal', label: 'RATE',
+      sig: anyCold ? 'cold:' + acc.filter((a) => a.cold).map((a) => a.id).join(',') : maxU >= 0.85 ? 'hot' : 'ok',
+      title: anyCold ? acc.filter((a) => a.cold).map((a) => a.id + ' cold ' + a.coldMinutes + 'm').join(' · ')
+        : maxU < 0 ? 'no account is over the ~90% reporting threshold' : Math.round(maxU * 100) + '% used on the busiest account' },
+    { id: 'OWED', level: ctx.owedCount > 0 ? 'caution' : 'nominal', label: 'OWED ' + (ctx.owedCount || 0),
+      sig: 'owed:' + (ctx.owedCount || 0), title: ctx.owedCount ? ctx.owedCount + ' thing(s) only you can clear' : 'nothing is waiting on a founder' },
+    { id: 'PARK', level: (s.parked || []).length > 0 ? 'alarm' : 'nominal', label: 'PARK ' + (s.parked || []).length,
+      sig: 'park:' + (s.parked || []).length, title: (s.parked || [])[0] || 'nothing parked' },
+    { id: 'GATE', level: gates.length > 0 ? 'caution' : 'nominal', label: 'GATE ' + gates.length,
+      sig: 'gate:' + gates.map((e) => e.id).join(','),
+      title: gates.length ? 'retired without a closing-gate record: ' + gates.map((e) => e.id).join(', ') : 'every retired spec carries a closing-gate record' },
+  ];
+};
+
+/** The eight slots as the bar will draw them — module first, direct field reads as the floor. */
+const annSlots = (s, ctx, inst) => {
+  const fromMod = callMod(inst, 'annunciators', [s, ctx], undefined);
+  return Array.isArray(fromMod) && fromMod.length ? fromMod : annunciatorsOf(s, ctx);
+};
+
+function Annunciators({ s, ctx, inst, acks, onAck, onSlot }) {
+  const slots = annSlots(s, ctx, inst);
+  const byId = new Map(slots.map((x) => [x.id, x]));
+  const now = Date.now();
+  // When each slot's CURRENT signature first went live, so escalation counts from the
+  // moment the failure appeared rather than from the moment the page happened to open.
+  const firstSeen = useRef(new Map());
+  for (const sl of slots) {
+    const key = sl.id + '|' + sl.sig;
+    const live = sl.level === 'caution' || sl.level === 'alarm';
+    if (live && !firstSeen.current.has(key)) firstSeen.current.set(key, now);
+    if (!live) firstSeen.current.delete(key);
+  }
+  return h('div', { className: 'annslots', role: 'group', 'aria-label': 'Annunciator panel' },
+    ANN_ORDER.map((id) => {
+      const a = byId.get(id) || { id, level: 'nominal', label: id, sig: 'unknown', title: 'this slot reported nothing' };
+      const live = a.level === 'caution' || a.level === 'alarm';
+      const ack = acks[id];
+      const acked = Boolean(ack && ack.sig === a.sig);
+      const since = firstSeen.current.get(a.id + '|' + a.sig) || null;
+      const escalated = live && !acked && since != null && now - since > 300000;
+      return h('button', {
+        key: id, type: 'button',
+        className: 'ann ' + a.level + (live && !acked ? ' blink' : '') + (escalated ? ' escalated' : ''),
+        title: a.title + (acked ? ' · acknowledged' : ''),
+        onClick: () => { onAck(id, a.sig); if (onSlot) onSlot(id); },
+      },
+        h('i', { className: 'lamp' }),
+        a.label || id,
+        acked && live && h('span', { className: 'acked' }, 'ack ' + new Date(ack.at).toTimeString().slice(0, 5)));
+    }));
+}
+
+/* ── Z1 — THE PFD ──────────────────────────────────────────────────
+   Four cells at four fixed positions: is it working, on what, at what cost, how
+   much runway. Read together, from across the room, without a scroll.
+   ------------------------------------------------------------------ */
+function PfdState({ s, top, samples, inst }) {
+  return h('div', { className: 'pfd-cell' },
+    h('div', { className: 'mq-head' },
+      h('i', {
+        className: 'marquee-dot ' + (top.tone === 'on' ? 'on' : top.tone === 'warn' ? 'warn' : 'off'),
+        title: top.reason || 'a lane is in flight',
+      }),
+      h(StateWord, { state: top.state })),
+    // Never truncated, never conditional. This is the "always say why when idle" clause.
+    h('div', { className: 'pfd-reason' }, top.reason || 'a lane is in flight — the loop is doing the work'),
+    h(Cadence, { samples, inst, working: top.state === 'WORKING' }));
+}
+
+function PfdLane({ s, samples, inst }) {
+  const lanes = (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []);
+  const lane = lanes[0] || null;
+  const entry = lane ? (s.catalog.entries || []).find((e) => e.id === lane.spec) : null;
+  const lp = entry && entry.progress;
+  const series = (key) => samples.map((x) => x[key]).filter((n) => typeof n === 'number');
+  if (!lane) {
+    return h('div', { className: 'pfd-cell' },
+      h('div', { className: 'pfd-label' }, 'on what'),
+      h('div', { className: 'where-head', style: { fontSize: '1.1rem' } }, 'nothing in flight'),
+      h('div', { className: 'burnexcl' },
+        s.catalog.pending + ' pending · ' + s.catalog.parked.length + ' parked · ' + s.catalog.awaitingFounder.length + ' awaiting you'));
+  }
+  const verifyPct = lane.tools ? Math.round(((lane.verification || 0) / lane.tools) * 100) : null;
+  return h('div', { className: 'pfd-cell' },
+    h('div', { className: 'pfd-label' }, 'on what' + (lanes.length > 1 ? ' · ' + lanes.length + ' lanes' : '')),
+    h('div', { className: 'mq-lane-top' },
+      h('span', { className: 'mq-lane-name' }, 'Spec ' + lane.spec + ' · ' + lane.stage),
+      h(Elapsed, { since: lane.startedAt })),
+    h('div', { className: 'acct-meta', style: { marginTop: '0.1rem' } },
+      h('span', { className: 'tag' }, lane.account || 'account not reported')),
+    h('div', { className: 'sparkrow' },
+      h('div', { className: 'sparkcell' },
+        h('span', { className: 'n' }, h(Fact, { value: lane.tools == null ? null : String(lane.tools), field: 'state.live.tools', source: '/api/state', prov: 'reported' })),
+        h('span', { className: 'l' }, 'tool calls'),
+        h(Spark, { values: series('tools'), inst, label: 'tool calls per watched frame' })),
+      h('div', { className: 'sparkcell' },
+        h('span', { className: 'n' },
+          h(Fact, { value: lane.verification == null ? null : String(lane.verification), field: 'state.live.verification', source: '/api/state', prov: 'reported' }),
+          verifyPct != null && h('sub', { title: 'share of this lane\'s tool calls that were verification commands' }, ' ' + verifyPct + '%')),
+        h('span', { className: 'l' }, 'verify cmds'),
+        h(Spark, { values: series('verification'), inst, label: 'verification commands per watched frame' })),
+      h('div', { className: 'sparkcell' },
+        h('span', { className: 'n' }, h(Fact, { value: lane.subagents == null ? null : String(lane.subagents), field: 'state.live.subagents', source: '/api/state', prov: 'reported' })),
+        h('span', { className: 'l' }, 'subagents'),
+        h(Spark, { values: series('subagents'), inst, label: 'subagents per watched frame' }))),
+    h('div', { className: 'burnexcl' },
+      lp
+        ? lp.done + '/' + lp.total + ' done · ' + lp.open + ' open' + (lp.held ? ' · ' + lp.held + ' held' : '') +
+          (lp.unmarked ? ' · ' + lp.unmarked + ' UNMARKED' : '')
+        : 'no tasks.md for this spec yet — the lane is still writing spec, plan and tasks'),
+    lanes.length > 1 && h('div', { className: 'burnexcl' },
+      '+' + (lanes.length - 1) + ' more lane(s) — all of them under MACHINE'));
+}
+
+function PfdBurn({ s, inst }) {
+  const t = s.totals;
+  const rows = s.ticks || [];
+  const b = callMod(inst, 'burn', [s], undefined);
+  const cost = overRows(rows, (r) => r.cost);
+  const mins = overRows(rows, (r) => r.minutes);
+  const hours = mins.sum / 60;
+  const perHour = b && b.perHour != null ? b.perHour : (hours > 0.05 ? cost.sum / hours : null);
+  const perTick = b && b.perTick != null ? b.perTick : (t.ticks ? t.notional / t.ticks : null);
+  const perTask = b && b.perTask != null ? b.perTask : (t.closed ? t.notional / t.closed : null);
+  const fig = (v, digits, prefix) => (v == null ? null : (prefix || '') + v.toFixed(digits == null ? 2 : digits));
+  return h('div', { className: 'pfd-cell' },
+    h('div', { className: 'pfd-label' }, 'burn'),
+    h('div', { className: 'burnrow' },
+      h('div', { className: 'burncell' },
+        h('span', { className: 'n' }, h(Counter, { value: t.notional, prefix: '$', digits: 2 })),
+        h('span', { className: 'l' }, 'notional')),
+      h('div', { className: 'burncell' },
+        h('span', { className: 'n' }, h(Fact, {
+          value: fig(perHour, 2, '$'), field: 'Σ state.ticks[].minutes', source: 'the run ledger', prov: 'reconstructed',
+          title: 'notional per hour of worker time',
+        })),
+        h('span', { className: 'l' }, '$/hour')),
+      h('div', { className: 'burncell' },
+        h('span', { className: 'n' }, h(Fact, {
+          value: fig(perTick, 2, '$'), field: 'state.totals.ticks', source: 'the run ledger', prov: 'reconstructed',
+          title: 'notional ÷ ticks',
+        })),
+        h('span', { className: 'l' }, '$/tick')),
+      h('div', { className: 'burncell' },
+        h('span', { className: 'n' }, h(Fact, {
+          value: fig(perTask, 2, '$'), field: 'state.totals.closed', source: 'the run ledger', prov: 'reconstructed',
+          title: 'notional ÷ tasks closed — unknown while nothing has closed, never $0',
+        })),
+        h('span', { className: 'l' }, '$/task closed'))),
+    // Every figure the folded Run-totals panel carried, kept whole: the rebuild moved
+    // panels and has never removed a field.
+    h('div', { className: 'burnexcl' },
+      t.ticks + ' ticks · ' + t.closed + ' tasks closed · ' + fmtMin(t.minutes) + ' of worker time · ' + t.rows + ' ledger rows'),
+    h('div', { className: 'burnexcl' },
+      (b && b.exclusion) || exclusionLine(cost.n, cost.total, 'a cost'),
+      ' · ', exclusionLine(mins.n, mins.total, 'a duration')),
+    h('div', { className: 'burnexcl' },
+      t.billable === 0
+        ? 'No tick used overage. Notional is list-price token value, not money.'
+        : t.billable + ' tick(s) ran as OVERAGE and may be billable.'));
+}
+
+/**
+ * CELL D — RUNWAY. Three account TIMELINES.
+ *
+ * A percentage answers "how much is gone"; the founder's question is "how long
+ * have I got", and only a window with a now-marker on it answers that. The account
+ * with the least headroom is drawn at 1.4× because it is the one that ends the night.
+ */
+function PfdRunway({ s, inst }) {
+  const now = Date.now();
+  const accts = s.accounts || [];
+  const headroom = (a) => (a.cold ? -1 : typeof a.utilization === 'number' ? 1 - a.utilization : 0.5);
+  const worst = accts.slice().sort((x, y) => headroom(x) - headroom(y))[0] || null;
+  return h('div', { className: 'pfd-cell' },
+    h('div', { className: 'pfd-label' }, 'runway'),
+    h('div', { className: 'runway' }, accts.map((a) => {
+      const u = a.utilization;
+      const cls = u == null ? '' : u >= 0.9 ? 'crit' : u >= 0.7 ? 'warn' : '';
+      const rw = callMod(inst, 'accountRunway', [a, now], undefined);
+      const start = (rw && rw.startedAt) || a.windowStartedAt || null;
+      const end = a.windowEndsAt || null;
+      const nowPct = start && end && end > start ? Math.min(1, Math.max(0, (now - start) / (end - start))) : null;
+      const lead = worst && a.id === worst.id && accts.length > 1;
+      return h('div', { key: a.id, className: 'rwy' + (lead ? ' lead' : '') + (a.cold ? ' cold' : '') },
+        h('div', { className: 'rwy-top' },
+          h('span', { className: 'rwy-name' }, a.id),
+          h('span', { className: 'rwy-meta' },
+            a.cold
+              ? 'cold ' + a.coldMinutes + 'm' + (a.refusedReason ? ' — ' + String(a.refusedReason).slice(0, 60) : '')
+              : h(React.Fragment, null,
+                  h(Fact, { value: u == null ? null : Math.round(u * 100) + '%', field: 'accounts[].utilization', source: 'the last run row for this account', prov: 'reported',
+                    title: u == null ? 'the provider reports a utilization only past about 90%' : 'window used' }),
+                  ' · ',
+                  end ? 'window ends ' + clock(end) : h(Fact, { value: null, field: 'accounts[].windowEndsAt', source: 'the account pool', title: 'window end' })))),
+        h('div', {
+          className: 'rwy-track' + (nowPct == null ? ' unknown' : ''),
+          title: nowPct == null
+            ? 'no window start on record for ' + a.id + ' — the track cannot be placed in time, so it is hatched rather than drawn at zero'
+            : a.id + ' window: ' + clock(start) + ' → ' + clock(end),
+        },
+          h('i', { className: 'fill ' + cls, style: { transform: 'scaleX(' + (u == null ? 0 : Math.max(0.02, u)).toFixed(3) + ')' } }),
+          nowPct != null && h('i', { className: 'now', style: { left: (nowPct * 100).toFixed(1) + '%' } })),
+        u == null && !a.cold && h('div', { className: 'burnexcl' }, 'utilization not reported'));
+    })),
+    accts.length === 0 && h('div', { className: 'burnexcl' }, 'no accounts in the pool — state.accounts is empty'));
+}
+
+/* ── Z2 — ALARMS ───────────────────────────────────────────────────
+   Never an empty card, never an all-clear. Number, comparison, reason.
+   ------------------------------------------------------------------ */
+function Alarms({ s, inst, onWire }) {
+  const list = callMod(inst, 'anomalies', [s], null);
+  if (!Array.isArray(list) || list.length === 0) return h('div', { className: 'alarmzone' });
+  const top = list.slice(0, 3);
+  return h('div', { className: 'alarmzone live', role: 'alert' },
+    top.map((a, i) => h('div', { key: a.id || i, className: 'alarmcard' + (a.level === 'warn' ? ' warn' : '') },
+      a.headline || a.text || String(a))),
+    list.length > top.length && h('button', {
+      className: 'linkish alarmmore', type: 'button', onClick: onWire,
+    }, '+' + (list.length - top.length) + ' more → open the wire'));
+}
+
+/* ── Z3 LEFT — ACT ─────────────────────────────────────────────────
+   What the founder DOES, ranked by what clearing it unblocks. The top item is
+   double weight because "which one first" is the question, and six equal tiles
+   have never once answered it.
+   ------------------------------------------------------------------ */
+function ActColumn({ s, owedItems, inst, onOpen }) {
+  const fromMod = callMod(inst, 'rankOwed', [owedItems], undefined);
+  const ranked = Array.isArray(fromMod) && fromMod.length === (owedItems || []).length ? fromMod : rankOwed(owedItems);
+  const parked = s.parked || [];
+  return h('div', { className: 'deckcol act' },
+    h('div', { className: 'colhead' }, h('span', null, 'act'), h('span', null, ranked.length + ' owed · ' + parked.length + ' parked')),
+    h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Owed by you'),
+        h('span', { className: 'sub' }, ranked.length ? 'ranked by what it unblocks' : 'nothing waiting')),
+      ranked.length === 0
+        ? h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
+            'No spec is awaiting a founder journey and no journey is half-walked. When one lands it appears here in red.')
+        : h('ul', { className: 'owedstack' }, ranked.map((item, i) => h('li', { key: item.key, className: i === 0 ? 'lead' : '' },
+            h('button', { className: 'owedrow', type: 'button', onClick: () => onOpen({ kind: item.kind, id: item.id }) },
+              h('span', { className: 'owedtitle', title: item.title || ('Spec ' + item.id) },
+                item.kind === 'spec'
+                  ? h(React.Fragment, null, h('b', null, 'Spec ' + item.id), ' — clicked founder journey')
+                  : item.title),
+              i === 0 && h('div', { className: 'owedwhy' }, unblockWhy(item)),
+              h('div', { className: 'owedmeta' },
+                item.signedOff && h('span', { className: 'ready' }, 'SIGNED OFF'),
+                item.progress
+                  ? h('span', null, item.progress.done + ' of ' + item.progress.total + ' checks')
+                  : h('span', null, 'open to see what it needs'),
+                item.progress && item.progress.complete && !item.signedOff && h('span', { className: 'ready' }, 'ready to sign off'),
+                item.recordedOn && h('span', null, item.recordedOn)),
+              item.affectsSpec && h('div', { className: 'owedmeta' },
+                h('span', { className: 'owedaffects', title: 'affects ' + item.affectsSpec }, 'affects ' + item.affectsSpec)),
+              item.progress && item.progress.total > 0 && h('div', { className: 'minibar' },
+                h('i', {
+                  className: item.progress.complete ? 'full' : '',
+                  style: { transform: 'scaleX(' + (item.progress.done / item.progress.total) + ')' },
+                }))))))),
+    h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Parked'),
+        h('span', { className: 'sub' }, parked.length ? 'only you can clear these' : 'nothing parked')),
+      parked.length === 0
+        ? h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
+            'Nothing in PARKED.md and no queue entry parked without a diagnosis.')
+        // Promoted out of the collapsed rail: a park is the single most common reason the
+        // loop is waiting on a human, and it spent this whole build behind a chevron.
+        : h('ul', { className: 'owed', style: { margin: 0, padding: 0 } }, parked.map((p, i) =>
+            h('li', { key: String(p) + '#' + i, style: { fontSize: '0.8rem' } }, parkedLabel(p))))));
+}
+
+/* ── Z3 CENTRE — MACHINE ───────────────────────────────────────────
+   The worker's own words, then its hands, then the whole build as a ladder.
+   ------------------------------------------------------------------ */
+function MachineColumn({ s, inst, onSpec }) {
+  const lanes = (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []);
+  const lane = lanes[0] || null;
+  const actions = ((lane && lane.actions) || []).slice(-8).reverse();
+  const entries = (s.catalog.entries || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return h('div', { className: 'deckcol machine' },
+    h('div', { className: 'colhead' }, h('span', null, 'machine'),
+      h('span', null, lanes.length ? lanes.length + ' lane' + (lanes.length > 1 ? 's' : '') : 'no lane')),
+    h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Tool river'), h('span', { className: 'sub' }, actions.length + ' newest first')),
+      lane && lane.say
+        ? h('div', { className: 'standfirst' }, '“' + lane.say + '”',
+            h('span', { className: 'attr' }, '— the worker' + (lane.sayAt ? ', ' + ago(lane.sayAt) : '')))
+        : h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--text-dim)' } },
+            lane ? 'the worker has not said anything this tick yet' : 'no lane in flight — nothing is being said'),
+      actions.length > 0
+        ? h('ul', { className: 'river' }, actions.map((a, i) =>
+            h('li', { key: (lane.id || 'l') + '|' + a.tool + '|' + a.hint + '#' + i },
+              h('span', { className: 'tool' }, a.tool),
+              h('span', { className: 'hint', title: a.hint }, a.hint))))
+        : h('p', { className: 'mono', style: { marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-dim)' } },
+            lane ? 'no tool call has been pushed for this lane yet' : '')),
+    h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Spec ladder'),
+        h('span', { className: 'sub' }, s.catalog.signedOff + ' of ' + s.catalog.total + ' signed off')),
+      h('div', { className: 'ladder' }, entries.map((e) => {
+        const p = e.progress;
+        const fillFrac = p && p.total ? (p.done + p.held) / p.total : e.status === 'done' ? 1 : 0;
+        const cls = e.status === 'done' ? 'done' : e.status === 'awaiting-founder' ? 'awaiting' : e.status === 'parked' ? 'parked' : '';
+        return h('button', {
+          key: e.id, type: 'button', className: 'rung ' + cls + (e.closingGateWarning ? ' gatewarn' : ''),
+          title: 'Spec ' + e.id + (e.slug ? ' · ' + e.slug : '') + ' — ' + e.status +
+            (p ? ' · ' + p.done + '/' + p.total + ' done, ' + p.open + ' open' : ' · no tasks.md') +
+            (e.closingGateWarning ? ' · RETIRED WITHOUT A CLOSING-GATE RECORD' : ''),
+          onClick: () => onSpec(e.id),
+        },
+          h('i', { className: 'fill', style: { transform: 'scaleY(' + fillFrac.toFixed(3) + ')' } }),
+          h('span', { className: 'id' }, e.id));
+      })),
+      h('div', { className: 'burnexcl', style: { marginTop: '0.35rem' } },
+        entries.filter((e) => !e.progress).length + ' of ' + entries.length + ' entries have no tasks.md and are drawn empty, not at zero')),
+
+    // Nothing the previous build showed is gone. The per-lane task bars, the wave name and
+    // the UNMARKED count keep their own pane under the ladder; the full Current-tick panel,
+    // with its complete action feed and its 'show all n actions', is one disclosure away.
+    h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Lane progress'),
+        h('span', { className: 'sub' }, (s.actives || []).length + ' active')),
+      h(CatalogLanes, { lanes: (s.actives || (s.active ? [s.active] : [])) })),
+    h('details', { className: 'morebox pane' },
+      h('summary', null, 'open the full current-tick panel'),
+      h(Live, { live: s.live, lanes: s.lanes, running: s.running })));
+}
+
+/* ── Z3 RIGHT — RECORD: THE WIRE ───────────────────────────────────
+   One reverse-chronological river of everything the loop has ruled, spent, or
+   broken, each row naming the file it came from. A 900-character ruling is read
+   here, in place, or it is read nowhere.
+   ------------------------------------------------------------------ */
+const WIRE_FILTERS = [['all', 'All'], ['rulings', 'Rulings'], ['money', 'Money'], ['breaks', 'Breaks'], ['mine', 'Mine']];
+const WIRE_DESK_GROUP = { RULINGS: 'rulings', LEDGER: 'money', BUREAU: 'money', HEALTH: 'breaks', TREE: 'all', DESK: 'mine' };
+
+function Wire({ s, inst, journal, seenAt, filter, onFilter, openRow, onOpenRow }) {
+  const setOpenRow = onOpenRow;
+  const rows = callMod(inst, 'wireRows', [s, journal], null);
+  if (!Array.isArray(rows)) {
+    return h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'The wire'), h('span', { className: 'sub' }, 'unavailable')),
+      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.74rem', color: 'var(--hot)' } },
+        'instruments.wireRows is not available, so this river is EMPTY rather than partial. ' +
+        'It is not showing you a subset and calling it the record.'));
+  }
+  const shown = rows.filter((r) => filter === 'all' || WIRE_DESK_GROUP[r.desk] === filter);
+  let dividerDrawn = false;
+  return h('div', { className: 'pane' },
+    h('div', { className: 'panehead' }, h('span', null, 'The wire'),
+      h('span', { className: 'sub' }, shown.length + ' of ' + rows.length + ' rows')),
+    h('div', { className: 'wirefilter', role: 'group', 'aria-label': 'Filter the wire' },
+      WIRE_FILTERS.map(([id, label]) => h('button', {
+        key: id, type: 'button', 'aria-pressed': filter === id ? 'true' : 'false', onClick: () => onFilter(id),
+      }, label))),
+    shown.length === 0
+      ? h('p', { className: 'mono', style: { margin: 0, fontSize: '0.72rem', color: 'var(--text-dim)' } },
+          'Nothing of that kind on the wire — ' + rows.length + ' other row(s) are under All.')
+      : h('ul', { className: 'wire' }, shown.map((r, i) => {
+          const at = typeof r.at === 'number' ? r.at : new Date(r.at).getTime();
+          // The NEW SINCE mark sits where the founder last LOOKED, and does not move
+          // while the tab is hidden — a divider that chases the newest row is a divider
+          // that has never once told anyone what they missed.
+          const divide = !dividerDrawn && seenAt != null && at <= seenAt && i > 0;
+          if (divide) dividerDrawn = true;
+          const key = r.id || (r.desk + '#' + at + '#' + i);
+          const isOpen = openRow === key;
+          return h(React.Fragment, { key: key + '-w' },
+            divide && h('li', { key: key + '-div', style: { border: 0, padding: 0 } },
+              h('div', { className: 'wirenew' }, 'new since ' + new Date(seenAt).toTimeString().slice(0, 5))),
+            h('li', { className: isOpen ? 'open' : '' },
+              h('button', {
+                className: 'wirerow' + (r.level === 'bad' ? ' bad' : ''), type: 'button',
+                'aria-expanded': r.note ? (isOpen ? 'true' : 'false') : undefined,
+                onClick: () => setOpenRow(isOpen ? null : key),
+                title: r.headline,
+              },
+                h('span', { className: 'wt' }, new Date(at).toTimeString().slice(0, 5)),
+                h('span', { className: 'wd' }, r.desk),
+                h('span', { className: 'wh' }, r.note ? h('span', { className: 'chev' + (isOpen ? ' open' : '') }, '▸ ') : null, r.headline),
+                h('span', { className: 'ws' }, r.source || 'source not stated')),
+              isOpen && r.note && h('div', { className: 'wirenote' }, r.note)));
+        })));
+}
+
+/** Six hand-rolled small multiples. Each captioned with its n and its exclusions. */
+function LedgerWall({ s, inst }) {
+  const series = callMod(inst, 'ledgerSeries', [s], null);
+  if (!Array.isArray(series) || series.length === 0) {
+    const rows = s.ticks || [];
+    const cost = overRows(rows, (r) => r.cost);
+    return h('div', { className: 'pane' },
+      h('div', { className: 'panehead' }, h('span', null, 'Ledger wall'), h('span', { className: 'sub' }, 'unavailable')),
+      h('p', { className: 'mono', style: { margin: 0, fontSize: '0.72rem', color: 'var(--text-dim)' } },
+        'instruments.ledgerSeries is not available. The raw ledger below is the whole record this page can prove: ' +
+        exclusionLine(cost.n, cost.total, 'a cost') + ', and state.ticks is capped at the last 40 runs by the server.'));
+  }
+  return h('div', { className: 'pane' },
+    h('div', { className: 'panehead' }, h('span', null, 'Ledger wall'), h('span', { className: 'sub' }, series.length + ' series')),
+    h('div', { className: 'wall' }, series.slice(0, 6).map((sr) => {
+      const path = sr.kind === 'band' ? null : (callMod(inst, 'sparkPath', [sr.values, 100, 40], undefined) ?? sparkPathOf(sr.values, 100, 40));
+      const bands = sr.kind === 'band' && Array.isArray(sr.bands) ? sr.bands : null;
+      return h('div', { key: sr.key, className: 'wallcell' + (!path && !bands ? ' unknown' : '') },
+        h('span', { className: 'cap' }, sr.label),
+        h('svg', { viewBox: '0 0 100 40', preserveAspectRatio: 'none', role: 'img', 'aria-label': sr.label },
+          bands
+            ? bands.map((b, i) => h('rect', {
+                key: i, className: 'band', x: (b.x0 * 100).toFixed(2), y: (b.y0 * 40).toFixed(2),
+                width: Math.max(0.4, (b.x1 - b.x0) * 100).toFixed(2), height: Math.max(0.4, (b.y1 - b.y0) * 40).toFixed(2),
+                fill: 'var(' + (b.token || '--line-soft') + ')',
+              }))
+            : path && h('path', { d: path })),
+        h('span', { className: 'cap' }, sr.caption || exclusionLine(sr.n || 0, sr.total || 0, 'a value')));
+    })));
+}
+
+function RecordColumn({ s, inst, journal, seenAt, wireFilter, onWireFilter, wireOpen, onWireOpen, children }) {
+  return h('div', { className: 'deckcol record', id: 'deck-record' },
+    h('div', { className: 'colhead' }, h('span', null, 'record'), h('span', null, (s.ticks || []).length + ' runs on file')),
+    h(Wire, { s, inst, journal, seenAt, filter: wireFilter, onFilter: onWireFilter, openRow: wireOpen, onOpenRow: onWireOpen }),
+    h(LedgerWall, { s, inst }),
+    children);
+}
+
+/* ── Z4 — THE WATCH RAIL ───────────────────────────────────────────
+   Coverage, made spatial. This is the only thing on the page that can say what
+   the room did NOT see, which is exactly the class of failure a snapshot
+   renderer can never catch. Static by law: a gap must never shimmer.
+   ------------------------------------------------------------------ */
+function WatchRail({ range, onMark }) {
+  const H = 1000;              // a viewBox unit space; the SVG scales to the rail
+  if (!range) {
+    return h('aside', { className: 'watchrail z-watch' },
+      h('div', { className: 'watchhead' }, 'watch', h('br'), 'rail'),
+      h('div', { className: 'watchbody', style: { display: 'flex', alignItems: 'center', padding: '0 0.2rem' } },
+        h('div', {
+          className: 'mono',
+          style: { fontSize: '0.5rem', color: 'var(--text-dim)', lineHeight: 1.3, textAlign: 'center' },
+          title: 'journal.mjs is not available, so the page cannot say which spans it watched. It says that, rather than drawing 24 unbroken hours it cannot prove.',
+        }, 'no journal — coverage unknown')));
+  }
+  const marks = range.marks || [];
+  const gaps = range.gaps || [];
+  const from = range.from, to = range.to;
+  const span = Math.max(1, to - from);
+  const y = (t) => ((to - t) / span) * H;      // newest at top
+  const hours = [];
+  const firstHour = Math.ceil(from / 3600000) * 3600000;
+  for (let t = firstHour; t <= to; t += 3600000) hours.push(t);
+  return h('aside', { className: 'watchrail z-watch' },
+    h('div', { className: 'watchhead', title: 'the share of the last 24 hours in which this page was open and recording transitions' },
+      'watched', h('br'),
+      range.coverage == null ? '—' : Math.round(range.coverage * 100) + '%', h('br'), 'of 24h'),
+    h('div', { className: 'watchbody' },
+      h('svg', { viewBox: '0 0 40 ' + H, preserveAspectRatio: 'none', role: 'img', 'aria-label': 'coverage of the last 24 hours' },
+        gaps.map((g, i) => h('rect', {
+          key: 'g' + i, className: 'gap', x: 0, width: 40,
+          y: y(Math.min(to, g.to)).toFixed(1),
+          height: Math.max(1, y(Math.max(from, g.from)) - y(Math.min(to, g.to))).toFixed(1),
+        })),
+        hours.map((t) => h(React.Fragment, { key: 'h' + t },
+          h('line', { className: 'hourline', x1: 0, x2: 40, y1: y(t).toFixed(1), y2: y(t).toFixed(1) }),
+          h('text', { className: 'hourlab', x: 2, y: (y(t) - 2).toFixed(1) }, new Date(t).toTimeString().slice(0, 5)))),
+        marks.map((m, i) => {
+          const my = y(m.at);
+          const tone = m.level === 'bad' ? ' hot' : m.level === 'warn' ? ' warm' : '';
+          return m.prov === 'reconstructed'
+            ? h('circle', { key: 'm' + i, className: 'rec', cx: 26, cy: my.toFixed(1), r: 3, onClick: () => onMark(m), style: { cursor: 'pointer' } },
+                h('title', null, m.label + ' — reconstructed from the ledger'))
+            : h('line', { key: 'm' + i, className: 'mk' + tone, x1: 18, x2: 34, y1: my.toFixed(1), y2: my.toFixed(1), onClick: () => onMark(m), style: { cursor: 'pointer' } },
+                h('title', null, m.label + ' — observed'));
+        }))));
+}
+
+/* ── Z5 — THE TICKER ───────────────────────────────────────────────
+   One line, always the newest tool call. The reflex answer to "is it actually
+   doing something", visible at every scroll position and from any tab.
+   ------------------------------------------------------------------ */
+function Ticker({ lanes, reason }) {
+  const a = newestAction(lanes);
+  if (!a) return h('div', { className: 'ticker idle z-ticker' },
+    h('span', { className: 'tk' }, 'IDLE'),
+    h('span', { className: 'tv' }, reason || 'no lane in flight — no tool call to show'));
+  return h('div', { className: 'ticker z-ticker', role: 'status', 'aria-live': 'off' },
+    h('span', { className: 'tk' }, a.tool),
+    h('span', { className: 'tv', title: a.hint }, a.hint));
+}
+
+/* ── Z6 — THE TELEMETRY BUS ────────────────────────────────────────
+   One mono line. Every item is a fact with a budget; nothing here is decoration.
+   ------------------------------------------------------------------ */
+function Bus({ s, link, lastFrameAt, bell, modErrors, offline }) {
+  const beat = useRef(null);
+  const sig = useRef(lastFrameAt);
+  // THE ONE animation on this page allowed to restart on the 4-second push, because
+  // that is precisely and only what it means: a push just landed.
+  useEffect(() => {
+    if (sig.current === lastFrameAt) return undefined;
+    sig.current = lastFrameAt;
+    const node = beat.current;
+    if (!node) return undefined;
+    node.classList.remove('push');
+    void node.offsetWidth;
+    node.classList.add('push');
+    const done = () => node.classList.remove('push');
+    node.addEventListener('animationend', done, { once: true });
+    return () => node.removeEventListener('animationend', done);
+  }, [lastFrameAt]);
+  const up = s.driver && s.driver.startedAt ? spanShort(Date.now() - new Date(s.driver.startedAt).getTime()) : null;
+  return h('div', { className: 'bus z-bus' },
+    modErrors.length > 0 && h('span', {
+      className: 'busitem grow', style: { color: 'var(--hot)', fontWeight: 700 },
+      title: modErrors.join(' · ') + ' — every instrument that depends on it is reading UNKNOWN, not zero',
+    }, modErrors.length + ' module(s) did not load'),
+    offline && h('span', { className: 'busitem', style: { color: 'var(--hot)', fontWeight: 700 } }, 'OFFLINE'),
+    h('span', { className: 'busitem', title: s.git.subject }, 'head ' + s.git.head),
+    h('span', { className: 'busitem' }, s.git.branch),
+    h('span', { className: 'busitem', title: (s.git.dirtyPaths || []).join('\n') || 'clean' },
+      s.git.dirty ? s.git.dirty + ' dirty' : 'clean'),
+    h('span', { className: 'busitem' }, 'pid ' + (s.driver ? s.driver.pid : '—')),
+    h('span', { className: 'busitem' }, 'up ', h(Fact, { value: up, field: 'driver.startedAt', source: 'the runner registration record', prov: 'reported', title: 'driver uptime' })),
+    h('span', { className: 'busitem' }, 'beat ',
+      h(Fact, {
+        value: s.driver && s.driver.heartbeat ? ago(s.driver.heartbeat) : null,
+        at: s.driver && s.driver.heartbeat, budget: BUDGET.heartbeat, prov: 'reported',
+        field: 'driver.heartbeat', source: 'runner:main', title: 'runner heartbeat',
+      })),
+    h('span', { className: 'busitem' }, 'pushed ',
+      h(Fact, {
+        value: lastFrameAt ? spanShort(Date.now() - lastFrameAt) + ' ago' : null,
+        at: lastFrameAt, budget: BUDGET.state, prov: 'observed',
+        field: 'SSE state frame', source: 'the page watched it arrive', title: 'last state push',
+      }),
+      ' ', h('i', { className: 'beatdot', ref: beat, title: 'blips once per state push — if this is still, the feed is still' })),
+    h('span', { className: 'busitem', style: bell === 'denied' ? { color: 'var(--hot)', fontWeight: 700 } : null },
+      'notify ' + (bell === 'granted' ? 'ON' : bell === 'denied' ? 'DENIED' : 'OFF')),
+    h('span', { className: 'busitem' }, 'feed ' + link));
+}
+
+/* ── C6 — THE COMMAND PALETTE ──────────────────────────────────────
+   Every action on the deck, reachable without knowing where it lives.
+   ------------------------------------------------------------------ */
+function Palette({ items, onClose }) {
+  const [q, setQ] = useState('');
+  const [ix, setIx] = useState(0);
+  const input = useRef(null);
+  const rows = useMemo(() => rankPalette(items, q).slice(0, 60), [items, q]);
+  useEffect(() => { if (input.current) input.current.focus(); }, []);
+  useEffect(() => { setIx(0); }, [q]);
+  const run = (it) => { onClose(); if (it && it.run) it.run(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIx((n) => Math.min(rows.length - 1, n + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setIx((n) => Math.max(0, n - 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); run(rows[ix]); }
+  };
+  return h('div', { className: 'scrim', onMouseDown: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'palette', role: 'dialog', 'aria-label': 'Command palette' },
+      h('input', {
+        ref: input, value: q, onChange: (e) => setQ(e.target.value), onKeyDown: onKey,
+        placeholder: 'run, open, jump…', 'aria-label': 'Command', spellCheck: false,
+      }),
+      rows.length === 0
+        ? h('div', { className: 'pempty' }, 'nothing matches “' + q + '”')
+        : h('ul', { role: 'listbox' }, rows.map((it, i) => h('li', {
+            key: it.id, role: 'option', 'aria-selected': i === ix ? 'true' : 'false',
+            onMouseEnter: () => setIx(i), onMouseDown: (e) => { e.preventDefault(); run(it); },
+          },
+            h('span', { className: 'pgroup' }, it.group),
+            h('span', { className: 'plabel' }, it.label))))));
+}
+
+/* ── C3 — HANDOVER / WHILE YOU SLEPT ───────────────────────────────
+   The only structural answer to "what happened while nobody was watching", and
+   the only one that can name its own blind spots. A digest that cannot say
+   "03:04–04:52 unobserved" is a digest that is quietly claiming to be complete.
+   ------------------------------------------------------------------ */
+function Digest({ digest, sinceAt, onClose, onWire }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const sec = (title, lines) => (lines && lines.length
+    ? h('div', { className: 'digest-sec' }, h('h3', null, title),
+        h('ul', { className: 'where-list' }, lines.map((l, i) =>
+          h('li', { key: i },
+            typeof l === 'string' ? l : h(React.Fragment, null,
+              h('strong', null, l.headline || l.text),
+              l.note && h('div', { style: { fontSize: '0.86rem', marginTop: '0.2rem' } }, l.note),
+              l.wire && h('button', { className: 'linkish', type: 'button', onClick: () => { onClose(); onWire(l.wire); } }, 'find it on the wire'))))))
+    : null);
+  return h('div', { className: 'bigsheet', role: 'dialog', 'aria-label': 'While you slept' },
+    h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'baseline' } },
+      h('div', { className: 'digest-lede' }, digest ? digest.lede : 'Late edition'),
+      h('button', { type: 'button', onClick: onClose }, 'Close')),
+    !digest
+      ? h('p', { className: 'mono', style: { marginTop: '1rem', color: 'var(--hot)' } },
+          'instruments.digestDiff is not available, so there is NO digest — not an empty one. ' +
+          'The page will not summarise a span it cannot read.' +
+          (sinceAt ? ' You were last here at ' + new Date(sinceAt).toLocaleString() + '.' : ''))
+      : h(React.Fragment, null,
+          sec('The numbers', digest.numbers),
+          sec('What ruled', digest.ruled),
+          sec('What broke', digest.broke),
+          sec('What needs you', digest.needsYou),
+          h('div', { className: 'digest-cov' },
+            digest.coverage || 'coverage was not reported for this window — treat everything above as partial')));
+}
+
+function Shortcuts({ onClose }) {
+  const rows = [
+    ['⌘K / Ctrl+K', 'command palette'],
+    ['a', 'acknowledge every annunciator'],
+    ['t', 'cycle theme — auto / paper / night'],
+    ['d', 'cycle density — console / comfortable / wall'],
+    ['w', 'open the digest'],
+    ['b', 'notification rules'],
+    ['[  ]', 'scrub the watch rail ±15 min'],
+    ['1 2 3 4', 'Overview / Agents / History / Management'],
+    ['?', 'this list'],
+    ['Esc', 'close whatever is open'],
+  ];
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return h('div', { className: 'scrim', onMouseDown: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'palette', style: { padding: '0.9rem' }, role: 'dialog', 'aria-label': 'Keyboard shortcuts' },
+      h('div', { className: 'panehead' }, h('span', null, 'Keys'), h('span', { className: 'sub' }, 'esc closes')),
+      h('div', { className: 'shortcuts' }, rows.map(([k, v]) => h('div', { key: k }, h('kbd', null, k), h('span', null, v))))));
+}
+
+/* ── C4 — THE NIGHT BELL ───────────────────────────────────────────
+   Rules fire off JOURNAL TRANSITIONS — edges, not polling — so a condition that
+   is already true when you open the page does not shout, and one that BECOMES
+   true at 04:12 does. Every rule has a TEST button, because an alerter that has
+   quietly stopped working is strictly worse than no alerter at all.
+   ------------------------------------------------------------------ */
+const BELL_RULES = [
+  { id: 'left-working', cls: 'critical', label: 'the loop stops WORKING' },
+  { id: 'health-failed', cls: 'critical', label: 'any health check goes to failed' },
+  { id: 'supervisor-silent', cls: 'critical', label: 'the supervisor stops reporting' },
+  { id: 'feed-silent', cls: 'critical', label: 'the feed goes silent for 90s' },
+  { id: 'parked', cls: 'owed', label: 'a new parked entry appears' },
+  { id: 'owed', cls: 'owed', label: 'a new thing is owed by you' },
+  { id: 'exit-bad', cls: 'critical', label: 'a run exits stalled / blocked / refused' },
+  { id: 'account-refused', cls: 'money', label: 'an account refuses' },
+  { id: 'accounts-cold', cls: 'money', label: 'every account is cold' },
+  { id: 'gate-warning', cls: 'critical', label: 'a spec retires with no closing gate' },
+  { id: 'gate-revise', cls: 'critical', label: 'a gate rules REVISE' },
+  { id: 'money-mark', cls: 'money', label: 'notional crosses the next $250' },
+];
+
+function BellSheet({ perm, enabled, quiet, onToggle, onQuiet, onAsk, onTest, onClose, journalReady }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return h('div', { className: 'scrim', onMouseDown: (e) => { if (e.target === e.currentTarget) onClose(); } },
+    h('div', { className: 'palette', style: { padding: '0.9rem' }, role: 'dialog', 'aria-label': 'Notification rules' },
+      h('div', { className: 'panehead' }, h('span', null, 'Night bell'),
+        h('span', { className: 'sub' }, perm === 'granted' ? 'permission on' : perm === 'denied' ? 'DENIED' : 'permission not asked')),
+      perm === 'denied' && h('p', { className: 'mono', style: { color: 'var(--hot)', fontSize: '0.76rem', margin: '0 0 0.6rem' } },
+        'This browser has DENIED notifications for 127.0.0.1. No rule below can fire until you clear that in site settings. ' +
+        'It is said here loudly rather than swallowed, because a bell you believe is on and is not is the worst state of the three.'),
+      perm !== 'granted' && perm !== 'denied' && h('button', { type: 'button', className: 'go', onClick: onAsk, style: { marginBottom: '0.6rem' } },
+        'Turn the bell on'),
+      !journalReady && h('p', { className: 'mono', style: { color: 'var(--hot)', fontSize: '0.74rem', margin: '0 0 0.6rem' } },
+        'journal.mjs is not loaded, so no rule can fire: every rule below is an EDGE, and edges come from the transition log.'),
+      h('label', { className: 'rulerow', style: { cursor: 'pointer' } },
+        h('input', { type: 'checkbox', checked: quiet.on, onChange: (e) => onQuiet({ ...quiet, on: e.target.checked }) }),
+        h('span', { className: 'rl' }, 'Quiet hours ' + quiet.from + ':00 → ' + quiet.to + ':00 — CRITICAL rules override it'),
+        h('span', { className: 'rc' }, 'quiet')),
+      BELL_RULES.map((r) => h('div', { key: r.id, className: 'rulerow' },
+        h('input', {
+          type: 'checkbox', id: 'rule-' + r.id, checked: enabled[r.id] !== false,
+          onChange: (e) => onToggle(r.id, e.target.checked),
+        }),
+        h('label', { className: 'rl', htmlFor: 'rule-' + r.id }, r.label),
+        h('span', { className: 'rc' }, r.cls),
+        h('button', { type: 'button', className: 'chipbtn', onClick: () => onTest(r) }, 'test')))));
+}
+
+
+/* ── DECK HOOKS ────────────────────────────────────────────────────
+   Shell, density, acknowledgements, the frame ring, the journal, the bell and
+   the last-seen mark. All of them persist through localStorage, because a
+   console you re-configure every morning is a console you stop configuring.
+   ------------------------------------------------------------------ */
+
+const LS = {
+  get(k, dflt) { try { const v = localStorage.getItem(k); return v == null ? dflt : JSON.parse(v); } catch (e) { return dflt; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
+};
+
+/**
+ * Which shell we can honestly draw, re-decided on a debounced resize.
+ *
+ * Written to a data attribute rather than threaded through props: the whole
+ * difference between the two shells is CSS, so exactly one render tree feeds both
+ * and there is no second layout to keep in step with the first.
+ */
+function useShell() {
+  const [shell, setShell] = useState(() => shellFor(window.innerWidth, window.innerHeight));
+  useEffect(() => {
+    let t = 0;
+    const pick = () => {
+      clearTimeout(t);
+      t = setTimeout(() => setShell(shellFor(window.innerWidth, window.innerHeight)), 160);
+    };
+    window.addEventListener('resize', pick);
+    return () => { clearTimeout(t); window.removeEventListener('resize', pick); };
+  }, []);
+  useEffect(() => { document.documentElement.dataset.shell = shell; }, [shell]);
+  return shell;
+}
+
+const DENSITIES = ['console', 'comfortable', 'wall'];
+function useDensity() {
+  const [d, setD] = useState(() => {
+    const saved = LS.get('loop.density', null);
+    return DENSITIES.includes(saved) ? saved : 'console';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.density = d;
+    LS.set('loop.density', d);
+    // WALL is a room-scale readout left on a screen nobody touches, so it is the one
+    // density that asks to keep the screen awake — and it asks, it never assumes:
+    // wakeLock does not exist in every browser and a rejected promise is not an error.
+    if (d === 'wall' && navigator.wakeLock && navigator.wakeLock.request) {
+      navigator.wakeLock.request('screen').catch(() => { /* denied or unsupported: the deck is unaffected */ });
+    }
+  }, [d]);
+  return [d, setD, () => setD((cur) => DENSITIES[(DENSITIES.indexOf(cur) + 1) % DENSITIES.length])];
+}
+
+/**
+ * Annunciator acknowledgements, keyed to the SIGNATURE of what is wrong.
+ *
+ * This is the difference between an annunciator and a dismiss button: acking
+ * "rotation failed" silences rotation-failed and nothing else. A DIFFERENT failure
+ * of the same slot produces a different signature, finds no ack, and alarms again.
+ * `firstAt` is when the slot first went live unacked, which is what the five-minute
+ * escalation is measured from.
+ */
+function useAcks() {
+  const [acks, setAcks] = useState(() => LS.get('loop.acks', {}) || {});
+  const write = useCallback((next) => { setAcks(next); LS.set('loop.acks', next); }, []);
+  const ack = useCallback((id, sig) => {
+    setAcks((cur) => {
+      const next = { ...cur, [id]: { sig, at: Date.now(), firstAt: (cur[id] && cur[id].firstAt) || Date.now() } };
+      LS.set('loop.acks', next);
+      return next;
+    });
+  }, []);
+  const ackAll = useCallback((slots) => {
+    const at = Date.now();
+    const next = {};
+    for (const sl of slots || []) next[sl.id] = { sig: sl.sig, at, firstAt: at };
+    write(next);
+  }, [write]);
+  return [acks, ack, ackAll];
+}
+
+/**
+ * C1's ring: the last 60 state frames, appended once per push.
+ *
+ * A useRef mirrored through a counter, not state: sixty samples re-rendering the
+ * whole deck sixty times would be the page spending its budget proving it is alive.
+ */
+function useFrameRing(state) {
+  const ring = useRef([]);
+  const [, bump] = useState(0);
+  const lastAt = useRef(0);
+  useEffect(() => {
+    if (!state) return;
+    const live = state.live || {};
+    const at = Date.now();
+    if (at - lastAt.current < 500) return;    // the poll backstop and a push can land together
+    lastAt.current = at;
+    ring.current = [...ring.current, {
+      at,
+      tools: typeof live.tools === 'number' ? live.tools : 0,
+      verification: typeof live.verification === 'number' ? live.verification : 0,
+      subagents: typeof live.subagents === 'number' ? live.subagents : 0,
+      lane: live.id || null,
+    }].slice(-60);
+    bump((n) => (n + 1) % 1000);
+  }, [state]);
+  return ring.current;
+}
+
+/**
+ * C2 — THE JOURNAL.
+ *
+ * The room's memory. Everything else on this page renders the present; only this
+ * can describe a span nobody watched, which is the exact failure that burned the
+ * founder — a snapshot renderer cannot ever catch a thing that was briefly wrong.
+ *
+ * The page owns the pump (feed it frames, ask it for a range); the module owns the
+ * store and the diffing. When the module is absent the rail says so and the bell
+ * says so; nothing invents a coverage figure it did not measure.
+ */
+function useJournal(jnl, state, railOffsetMs) {
+  const [journal, setJournal] = useState(null);
+  const [range, setRange] = useState(null);
+  const [transitions, setTransitions] = useState([]);
+  const prev = useRef(null);
+  const seeded = useRef(false);
+
+  useEffect(() => {
+    if (!jnl) return undefined;
+    let alive = true;
+    Promise.resolve(callMod(jnl, 'open', [], null)).then((j) => { if (alive && j) setJournal(j); })
+      .catch(() => { /* an unopenable store is an absent one: the rail says coverage unknown */ });
+    return () => { alive = false; };
+  }, [jnl]);
+
+  useEffect(() => {
+    if (!journal || !state) return;
+    if (!seeded.current) {
+      seeded.current = true;
+      // Backfill from state.ticks so an empty database still yields a 24h rail — marked
+      // RECONSTRUCTED, drawn as hollow rings, never as things the page saw happen.
+      Promise.resolve(callMod(journal, 'seed', [state], null)).catch(() => {});
+    }
+    const before = prev.current;
+    prev.current = state;
+    if (!before) return;
+    Promise.resolve(callMod(journal, 'record', [before, state, Date.now()], []))
+      .then((tr) => { if (Array.isArray(tr) && tr.length) setTransitions(tr); })
+      .catch(() => {});
+  }, [journal, state]);
+
+  const refresh = useCallback(() => {
+    if (!journal) return;
+    const to = Date.now() + (railOffsetMs || 0);
+    Promise.resolve(callMod(journal, 'range', [to - 86400000, to], null))
+      .then((r) => { if (r) setRange({ ...r, from: r.from == null ? to - 86400000 : r.from, to: r.to == null ? to : r.to }); })
+      .catch(() => {});
+  }, [journal, railOffsetMs]);
+  useEffect(() => { refresh(); const id = setInterval(refresh, 30000); return () => clearInterval(id); }, [refresh]);
+  useEffect(() => { refresh(); }, [transitions, refresh]);
+
+  return { journal, range, transitions };
+}
+
+/* Which transitions each bell rule listens for. Edges, never levels: a condition
+   already true when the page opens must not shout, and one that becomes true at
+   04:12 must. The predicate reads defensively because the journal is another
+   owner's module and a shape it does not produce must fail silent, not throw. */
+const BELL_MATCH = {
+  'left-working': (t) => t.kind === 'activity.state' && t.from === 'WORKING' && t.to !== 'WORKING',
+  'health-failed': (t) => t.kind === 'health.row' && t.to === 'failed',
+  'supervisor-silent': (t) => t.kind === 'supervisor.reporting' && t.to === false,
+  'feed-silent': (t) => t.kind === 'feed' && t.to === 'down',
+  parked: (t) => t.kind === 'parked' && t.change === 'add',
+  owed: (t) => t.kind === 'owed' && t.change === 'add',
+  'exit-bad': (t) => t.kind === 'tick.exit' && ['stalled', 'blocked', 'account-refused', 'no-progress'].includes(String(t.to)),
+  'account-refused': (t) => t.kind === 'account.refused',
+  'accounts-cold': (t) => t.kind === 'accounts.allCold' && t.to === true,
+  'gate-warning': (t) => t.kind === 'gate.warning' && t.change === 'add',
+  'gate-revise': (t) => t.kind === 'gate.ruling' && String(t.verdict).toUpperCase() === 'REVISE',
+  'money-mark': (t) => t.kind === 'notional.mark',
+};
+const BELL_CLASS = Object.fromEntries(BELL_RULES.map((r) => [r.id, r.cls]));
+
+/**
+ * C4 — the night bell.
+ *
+ * 127.0.0.1 is a secure context, so this needs no server, no push service and no
+ * third party. Permission is requested ONLY from a real click, never on load:
+ * a dashboard that prompts on arrival gets denied once and stays denied forever,
+ * and a denied bell that pretends to be on is the worst of the three states — so
+ * DENIED is rendered loudly in the bar and on the bus rather than swallowed.
+ */
+function useBell(transitions, journalReady) {
+  const supported = typeof window !== 'undefined' && 'Notification' in window;
+  const [perm, setPerm] = useState(() => (supported ? Notification.permission : 'unsupported'));
+  const [enabled, setEnabled] = useState(() => LS.get('loop.bell.rules', {}) || {});
+  const [quiet, setQuiet] = useState(() => LS.get('loop.bell.quiet', { on: false, from: 1, to: 7 }));
+  const fired = useRef(new Set());
+
+  const ask = useCallback(() => {
+    if (!supported) return;
+    Notification.requestPermission().then((p) => setPerm(p)).catch(() => setPerm('denied'));
+  }, [supported]);
+
+  const send = useCallback((rule, title, body) => {
+    if (perm !== 'granted') return false;
+    const hour = new Date().getHours();
+    const inQuiet = quiet.on && (quiet.from < quiet.to
+      ? hour >= quiet.from && hour < quiet.to
+      : hour >= quiet.from || hour < quiet.to);
+    if (inQuiet && BELL_CLASS[rule] !== 'critical') return false;
+    try {
+      // One tag per rule CLASS, so eight hours of alerts replace each other instead of
+      // stacking into a wall the founder has to dismiss one by one at 07:00.
+      new Notification(title, { body, tag: 'loop-' + (BELL_CLASS[rule] || 'critical'), silent: false });
+      return true;
+    } catch (e) { return false; }
+  }, [perm, quiet]);
+
+  useEffect(() => {
+    if (!transitions || !transitions.length) return;
+    for (const t of transitions) {
+      for (const rule of BELL_RULES) {
+        if (enabled[rule.id] === false) continue;
+        let hit = false;
+        try { hit = BELL_MATCH[rule.id] ? BELL_MATCH[rule.id](t) : false; } catch (e) { hit = false; }
+        if (!hit) continue;
+        const sig = rule.id + '|' + (t.at || '') + '|' + (t.to == null ? '' : String(t.to));
+        if (fired.current.has(sig)) continue;
+        fired.current.add(sig);
+        send(rule.id, 'Loop — ' + rule.label, t.headline || t.label || (t.kind + ' ' + (t.from == null ? '' : t.from + ' → ') + t.to));
+      }
+    }
+  }, [transitions, enabled, send]);
+
+  const toggle = useCallback((id, on) => {
+    setEnabled((cur) => { const next = { ...cur, [id]: on }; LS.set('loop.bell.rules', next); return next; });
+  }, []);
+  const setQuietHours = useCallback((q) => { setQuiet(q); LS.set('loop.bell.quiet', q); }, []);
+  const test = useCallback((rule) => {
+    const ok = send(rule.id, 'Loop — test', rule.label + ' (test fired ' + new Date().toTimeString().slice(0, 8) + ')');
+    return ok;
+  }, [send]);
+
+  return { supported, perm, enabled, quiet, ask, toggle, setQuietHours, test, journalReady };
+}
+
+/**
+ * C3's mark. Written on the way OUT — visibilitychange→hidden and pagehide — and
+ * never on a 4-second push, because a mark that moves while you are away can never
+ * tell you what you missed. That is the entire reason the NEW SINCE divider on the
+ * wire holds still with the tab in the background.
+ */
+function useLastSeen() {
+  const [seenAt, setSeenAt] = useState(() => LS.get('loop.lastSeenAt', null));
+  const [gapMs, setGapMs] = useState(0);
+  useEffect(() => {
+    const mark = () => { LS.set('loop.lastSeenAt', Date.now()); };
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') { mark(); return; }
+      const last = LS.get('loop.lastSeenAt', null);
+      setSeenAt(last);
+      setGapMs(last ? Date.now() - last : 0);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', mark);
+    return () => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pagehide', mark); };
+  }, []);
+  const clear = useCallback(() => { LS.set('loop.lastSeenAt', Date.now()); setGapMs(0); setSeenAt(Date.now()); }, []);
+  return { seenAt, gapMs, clear };
+}
+
 function App() {
   const [themeMode, setThemeMode] = useTheme();
   const [s, setS] = useState(null);
@@ -2122,14 +3865,37 @@ function App() {
   const [rolePartial, setRolePartial] = useState({});
   const [briefOpen, setBriefOpen] = useState(null);   // { kind, id } | null
   const [brief, setBrief] = useState(null);
-  // The three reference strips in the status rail. Collapsed by default — they REPORT, and
-  // the page's whole failure was nine panels reporting at the same volume as the one that
-  // decides. Their content is always in the DOM; these flags only move a 0fr to a 1fr.
+  // Two reference strips, now at the foot of the RECORD column. They REPORT, and the page's
+  // whole failure was nine panels reporting at the same volume as the one that decides.
+  // Their content is always in the DOM; these flags only move a 0fr to a 1fr. Parked left
+  // this rail entirely — it is promoted into ACT, because a park is the single most common
+  // reason the loop is waiting on a human and it spent a whole build behind a chevron.
   const [healthOpen, setHealthOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
-  const [parkedOpen, setParkedOpen] = useState(false);
 
   const live = useLive();
+
+  // ── THE DECK ──────────────────────────────────────────────────────
+  // Shell and density are written to data attributes, so exactly one render tree
+  // feeds the fixed deck and the document fallback and there is no second layout
+  // to keep in step. Everything else here is memory: the frame ring that proves
+  // motion, the journal that remembers spans nobody watched, the acknowledgements,
+  // the bell, and the mark that says when the founder last actually looked.
+  const shell = useShell();
+  const [density, setDensity, cycleDensity] = useDensity();
+  const mods = useModules();
+  const ring = useFrameRing(s);
+  const [railOffset, setRailOffset] = useState(0);
+  const jr = useJournal(mods.jnl, s, railOffset);
+  const [acks, ackOne, ackAll] = useAcks();
+  const bell = useBell(jr.transitions, Boolean(jr.journal));
+  const lastSeen = useLastSeen();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [digestOpen, setDigestOpen] = useState(false);
+  const [wireFilter, setWireFilter] = useState('all');
+  const [wireOpen, setWireOpen] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -2330,13 +4096,121 @@ function App() {
     load();
   };
 
+
+  /* ── the deck's own wiring ───────────────────────────────────────
+     Everything below is a hook, so it sits above the two early returns: a hook
+     called conditionally is a hook that changes order between renders, and React
+     will take the whole page down for it. */
+
+  const cycleTheme = useCallback(() => {
+    setThemeMode(THEME_ORDER[(THEME_ORDER.indexOf(themeMode) + 1) % THEME_ORDER.length]);
+  }, [themeMode, setThemeMode]);
+
+  /** Scroll a deck column to the top of its own scroller — the deck never scrolls the page. */
+  const jumpTo = useCallback((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest', inline: 'nearest' });
+    el.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  }, []);
+
+  const copyRestart = useCallback(() => {
+    const cmd = 'node "C:/Users/ASUS/Desktop/claude work/spicyspec/packages/runner/dist/bin.js" dashboard --config ' +
+      ((s && s.driver && s.driver.config) ? s.driver.config : '<your runner config>') + ' --port ' + window.location.port;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(() => setToast('restart command copied')).catch(() => setToast(cmd));
+    } else setToast(cmd);
+  }, [s]);
+
+  /* C3 — the digest. Composed only when it is actually opened: it reads the whole
+     journal window, and doing that on every 4-second push would be the page paying
+     for a report nobody asked for. */
+  const digest = useMemo(() => {
+    if (!digestOpen || !s) return null;
+    return callMod(mods.inst, 'digestDiff', [
+      { at: lastSeen.seenAt },
+      { at: Date.now(), state: s, journal: jr.journal, transitions: jr.transitions, range: jr.range },
+    ], null);
+  }, [digestOpen, s, mods.inst, lastSeen.seenAt, jr.journal, jr.transitions, jr.range]);
+
+  /* C6 — everything the deck can do, as one list. The palette is the only surface
+     that has to enumerate the console, which makes it the honest inventory of it. */
+  const paletteItems = useMemo(() => {
+    const out = [];
+    const add = (group, label, run) => out.push({ id: group + '|' + label, group, label, run });
+    add('run', 'Start the loop', () => act('start'));
+    add('run', 'Pause after this tick', () => act('stop'));
+    add('run', 'Kill the worker now', () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.'));
+    add('run', 'Clear the stop flag', () => act('resume'));
+    add('run', 'Write a report', () => act('report'));
+    add('view', 'Overview', () => setTab('overview'));
+    add('view', 'Agents', () => setTab('agents'));
+    add('view', 'History', () => setTab('history'));
+    add('view', 'Management', () => setTab('management'));
+    for (const m of THEME_ORDER) add('theme', 'Theme: ' + m, () => setThemeMode(m));
+    for (const d of DENSITIES) add('density', 'Density: ' + d, () => setDensity(d));
+    add('deck', 'Acknowledge every annunciator', () => ackAll(s ? annSlots(s, annCtxRef.current, mods.inst) : []));
+    add('deck', 'Notification rules — the night bell', () => setBellOpen(true));
+    add('deck', 'While you slept — the digest', () => setDigestOpen(true));
+    add('deck', 'Keyboard shortcuts', () => setShortcutsOpen(true));
+    add('deck', 'Open the raw ledger', () => jumpTo('deck-record'));
+    add('deck', 'Copy the dashboard restart command', copyRestart);
+    for (const [id, label] of WIRE_FILTERS) add('wire', 'Wire: ' + label, () => { setWireFilter(id); jumpTo('deck-record'); });
+    for (const e of (s && s.catalog && s.catalog.entries) || []) {
+      add('spec', 'Spec ' + e.id + (e.slug ? ' · ' + e.slug : '') + ' — ' + e.status, () => setBriefOpen({ kind: 'spec', id: e.id }));
+    }
+    for (const r of roles) add('role', 'Talk to ' + r.name, () => setRoleOpen(r.id));
+    return out;
+  }, [s, roles, mods.inst, ackAll, copyRestart, jumpTo, setThemeMode, setDensity]);
+
+  /* The annunciator context, in a ref so the palette's ack-all can read the current
+     signatures without the whole list re-memoising four times a minute. */
+  const annCtxRef = useRef({ link: 'connecting', lastFrameAt: null, owedCount: 0, cadenceVerdict: 'unknown' });
+
+  /* C5 — the installable console. The service worker caches the SHELL only and never
+     /api/*, so an offline window paints the instrument frame and says outright that
+     it has no state — which is the one thing a cached dashboard must never fake. */
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* not shipped yet: the page is unaffected */ });
+  }, []);
+
+  /* The keyboard. Single-letter keys are deliberately unmodified — this is a console
+     the founder keeps focused for hours — and every one of them bails out the moment
+     a text field has focus, so typing into the chat can never arm a stop flag. */
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setPaletteOpen((v) => !v); return; }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '?') { setShortcutsOpen(true); return; }
+      if (e.key === 'a') { ackAll(s ? annSlots(s, annCtxRef.current, mods.inst) : []); return; }
+      if (e.key === 't') { cycleTheme(); return; }
+      if (e.key === 'd') { cycleDensity(); return; }
+      if (e.key === 'w') { setDigestOpen(true); return; }
+      if (e.key === 'b') { setBellOpen(true); return; }
+      // The rail scrub moves the 24h WINDOW rather than replaying the console from a
+      // snapshot: a full time-scrub would mean every component rendering from a passed-in
+      // state object, which is an architectural refactor of a live 158KB page. Moving the
+      // window is honest, useful, and cannot desynchronise an instrument from its source.
+      if (e.key === '[') { setRailOffset((n) => n - 900000); return; }
+      if (e.key === ']') { setRailOffset((n) => Math.min(0, n + 900000)); return; }
+      if (e.key === '1') setTab('overview');
+      else if (e.key === '2') setTab('agents');
+      else if (e.key === '3') setTab('history');
+      else if (e.key === '4') setTab('management');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [s, mods.inst, ackAll, cycleTheme, cycleDensity]);
+
   if (err && !s) return h('div', { className: 'nojs' }, h('strong', null, 'Cannot reach the server. '), err,
     h('p', { className: 'mono' }, 'Start it with: node .specify/loop/ui/server.mjs'));
   if (!s) return h('div', { className: 'nojs' }, 'reading loop state…');
 
   const c = s.catalog;
-  const active = s.active;
-  const p = active && active.progress;
   // WORKING versus NOT WORKING, derived on the server (room-server topLine) so the poll, the
   // SSE frames and the tests all read one sentence. The chip used to be computed here from
   // `s.running`, which is a fresh runner HEARTBEAT and nothing more: it said 'running' for
@@ -2385,248 +4259,286 @@ function App() {
   const owedItems = owed.length
     ? owed
     : c.awaitingFounder.map((id) => ({ kind: 'spec', id, key: 'spec-' + id, title: 'Spec ' + id + ' — clicked founder journey' }));
-  const jumpToOwed = () => {
-    const el = document.getElementById('zone-obligations');
-    if (!el) return;
-    // Reduced motion means no scroll animation either — a 700px smooth glide is the largest
-    // piece of motion on the page, and the setting exists for people it makes ill.
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  // Everything the annunciator bar needs that is NOT in the state payload: the feed's own
+  // health, when the last frame actually landed, the debt count, and the cadence verdict —
+  // which is the one input to that bar the server cannot supply, because only this page
+  // watched the frames. Mirrored into a ref so the palette's ack-all and the `a` key can
+  // read the current signatures without re-memoising the whole command list every 4 seconds.
+  const cadNow = cadenceOf(ring, Date.now());
+  const annCtx = {
+    link: live.link,
+    lastFrameAt: live.lastAt,
+    owedCount: owedItems.length,
+    cadenceVerdict: cadNow.verdict,
   };
+  annCtxRef.current = annCtx;
 
-  return h('div', null,
-    // Header and tabs are ONE sticky dock. Two stacked stickies need the second to know the
-    // first's height, and that number is wrong the moment the hero wraps.
-    h('div', { className: 'topdock' },
-    h('header', { className: 'hero' },
-      h('h1', null, 'Loop Control Room'),
-      h('span', { className: 'pulse ' + top.tone, title: top.reason || 'a lane is in flight' },
-        h('i', { className: 'dot' }), top.state),
-      // WHO armed the flag, and WHEN. An unsigned flag reads as nobody's, which is exactly how
-      // an agent's stop survived a night with no founder able to say who set it.
-      armed && h('span', { className: 'pulse warn' }, h('i', { className: 'dot' }),
-        (s.killFlag ? 'kill' : 'stop') + ' armed · ' + (armed.armedBy || 'unknown author') + ' · ' + ago(armed.armedAt)),
-      // Feed health is stated separately from loop health on purpose: a dead feed and a
-      // stopped loop look identical on a page that shows only one of them.
-      h('span', { className: 'pulse ' + feedLink[0] }, h('i', { className: 'dot' }), feedLink[1]),
-      unsupervised && h('span', {
-        className: 'pulse off',
-        title: (s.health.supervisor.advice || 'the supervisor is not reporting'),
-      }, h('i', { className: 'dot' }), 'unsupervised'),
-      s.driver && h('span', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
-        'pid ' + s.driver.pid + (s.driver.workerPid ? ' · worker ' + s.driver.workerPid : '') + ' · code ' + (s.driver.code || '?') + ' · beat ' + ago(s.driver.heartbeat)),
-      h('span', { style: { flex: 1 } }),
-      h(ThemeSwitch, { mode: themeMode, onPick: setThemeMode }),
+  return h('div', { className: 'deckwrap' },
+    // ── Z0 — THE ANNUNCIATOR BAR ────────────────────────────────────
+    // Eight slots in a fixed order, then the console's own controls. It is the
+    // only element on the page that is drag-region in a Window Controls Overlay
+    // install, which is what makes the deck a window rather than a tab.
+    h('div', { className: 'annbar z-bar' },
+      h(Annunciators, {
+        s, ctx: annCtx, inst: mods.inst, acks,
+        onAck: ackOne,
+        onSlot: (id) => {
+          if (id === 'OWED' || id === 'PARK') jumpTo('deck-act');
+          else if (id === 'GATE') jumpTo('deck-machine');
+          else if (id === 'RATE') jumpTo('deck-pfd');
+        },
+      }),
+      h('div', { className: 'annright' },
+        h('button', {
+          type: 'button', className: 'ann ' + (bell.perm === 'denied' ? 'alarm denied' : bell.perm === 'granted' ? 'nominal' : 'nominal'),
+          title: bell.perm === 'granted' ? 'notifications on — open the rules'
+            : bell.perm === 'denied' ? 'notifications DENIED by this browser for 127.0.0.1 — no rule can fire'
+              : 'notifications off — click to see the rules and turn them on',
+          onClick: () => setBellOpen(true),
+        }, h('i', { className: 'lamp' }), bell.perm === 'granted' ? 'BELL ON' : bell.perm === 'denied' ? 'BELL DENIED' : 'BELL OFF'),
+        h('button', {
+          type: 'button', className: 'ann nominal', title: 'theme — auto follows the machine',
+          onClick: cycleTheme,
+        }, 'THEME ' + themeMode.toUpperCase()),
+        h('button', {
+          type: 'button', className: 'ann nominal', title: 'density — console is the deck default, wall is a room-scale readout',
+          onClick: cycleDensity,
+        }, density.toUpperCase()),
+        h('span', { className: 'ann nominal', title: shell === 'deck' ? 'the fixed instrument deck' : 'the viewport is too small for the deck — the watch rail and the ticker are withdrawn rather than squeezed' },
+          shell === 'deck' ? 'DECK' : 'DOC'),
+        h('button', { type: 'button', className: 'ann nominal', onClick: () => setPaletteOpen(true), title: 'command palette' },
+          h('span', { className: 'keycap' }, isMac ? '⌘K' : 'Ctrl K')))),
+
+    // ── Z0b — THE DOCK ──────────────────────────────────────────────
+    // DEVIATION, stated: the eight-slot bar has no room for the tab strip or the
+    // five control actions, and neither may be deleted, so they get 34px of their own.
+    h('div', { className: 'deckdock z-dock' },
+      h('span', { className: 'docktitle' }, 'LOOP'),
+      h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
+        h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
+        h('button', { type: 'button', 'aria-pressed': tab === 'agents' ? 'true' : 'false', onClick: () => setTab('agents') },
+          'Agents',
+          // Never a bare zero. "0" beside a worker that is plainly running reads as "this view
+          // is broken", and in effect it was: it counted only DISPATCHED agents, so a worker
+          // doing the job itself — which is most of a shape stage — showed nothing at all.
+          h('span', { className: 'badge' }, agentBadge(liveCount, realAgents.length, workerBusy))),
+        h('button', { type: 'button', 'aria-pressed': tab === 'history' ? 'true' : 'false', onClick: () => setTab('history') },
+          'History', h('span', { className: 'badge' }, String(pastAll.length))),
+        h('button', { type: 'button', 'aria-pressed': tab === 'management' ? 'true' : 'false', onClick: () => setTab('management') },
+          'Management',
+          h('span', { className: 'badge' },
+            roles.some((r) => r.busy) ? 'talking' : String(roles.length || 3)))),
       h('div', { className: 'controls' },
         h('button', { className: 'go', disabled: busy || s.running, onClick: () => act('start') }, 'Start'),
         h('button', { className: 'warn', disabled: busy || !s.running, onClick: () => act('stop') }, 'Pause after tick'),
         h('button', { className: 'danger', disabled: busy || !s.running, onClick: () => act('kill', 'Kill the running worker now? Uncommitted work in this tick may be lost.') }, 'Kill now'),
         (s.stopArmed || s.killArmed) && h('button', { disabled: busy, onClick: () => act('resume') }, 'Clear stop'),
         h('button', { disabled: busy, onClick: () => act('report') }, 'Report'))),
-    // The `.whybar` reason line has MOVED to the marquee, where it is read at three times
-    // this size. It left the header rather than being dropped: it is still the only line on
-    // the page that describes progress rather than a process.
 
-    h('div', { className: 'tabs', role: 'group', 'aria-label': 'View' },
-      h('button', { type: 'button', 'aria-pressed': tab === 'overview' ? 'true' : 'false', onClick: () => setTab('overview') }, 'Overview'),
-      h('button', { type: 'button', 'aria-pressed': tab === 'agents' ? 'true' : 'false', onClick: () => setTab('agents') },
-        'Agents',
-        // Never a bare zero. "0" beside a worker that is plainly running reads as "this view
-        // is broken", and in effect it was: it counted only DISPATCHED agents, so a worker
-        // doing the job itself — which is most of a shape stage — showed nothing at all.
-        h('span', { className: 'badge' }, agentBadge(liveCount, realAgents.length, workerBusy))),
-      h('button', { type: 'button', 'aria-pressed': tab === 'history' ? 'true' : 'false', onClick: () => setTab('history') },
-        'History', h('span', { className: 'badge' }, String(pastAll.length))),
-      h('button', { type: 'button', 'aria-pressed': tab === 'management' ? 'true' : 'false', onClick: () => setTab('management') },
-        'Management',
-        h('span', { className: 'badge' },
-          roles.some((r) => r.busy) ? 'talking' : String(roles.length || 3))))),
+    // ── Z1 — THE PFD ────────────────────────────────────────────────
+    // Always drawn, on every tab. The glance must not depend on which view the
+    // founder happened to leave open, and switching to Agents must not cost them
+    // the answer to "is it stuck".
+    h('div', { className: 'z-pfd', id: 'deck-pfd' },
+      !navigator.onLine && h('div', { className: 'offline-bar' },
+        'showing the shell only — this browser is offline, so nothing below is newer than ' +
+        (live.lastAt ? new Date(live.lastAt).toTimeString().slice(0, 8) : 'the last frame it saw')),
+      // C3 — the handover card. It precedes the PFD because on the morning it
+      // matters it is the only thing on this page the founder wants.
+      lastSeen.gapMs > 1200000 && h('div', { className: 'handover' },
+        h('span', { className: 'hl' }, 'You were away ' + spanShort(lastSeen.gapMs) + '.'),
+        h('span', { className: 'mono', style: { fontSize: '0.74rem', color: 'var(--text-soft)' } },
+          jr.range && jr.range.coverage != null
+            ? 'the room watched ' + Math.round(jr.range.coverage * 100) + '% of the last 24h'
+            : 'coverage of that span is unknown — the journal is not reporting'),
+        h('button', { type: 'button', className: 'go', onClick: () => setDigestOpen(true) }, 'What happened'),
+        h('button', { type: 'button', onClick: lastSeen.clear }, 'Dismiss')),
+      h('div', { className: 'pfd' },
+        h(PfdState, { s, top, samples: ring, inst: mods.inst }),
+        h(PfdLane, { s, samples: ring, inst: mods.inst }),
+        h(PfdBurn, { s, inst: mods.inst }),
+        h(PfdRunway, { s, inst: mods.inst }))),
 
-    // A fragment, not a wrapper div: the overview's grid layout must not gain a parent.
-    tab === 'agents' && h(React.Fragment, null,
-      h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem' } },
-        h(Panel, { title: 'Where we are', sub: live.meta ? 'tick ' + live.meta.number + ' · ' + live.meta.spec + '/' + live.meta.stage : 'no tick' },
-          h(WherePanel, { where: live.where })),
-        h(Panel, { title: 'Fan-out', sub: 'this tick' },
-          // The worker's own tool count leads, because it is the only figure here that is
-          // never zero while a tick is alive. All four columns read zero on a running loop
-          // during a shape stage, which is precisely when nothing gets dispatched.
-          h('div', { className: 'statrow' },
-            h(Stat, { n: worker ? worker.toolUses : 0, l: 'worker tools' }),
-            h(Stat, { n: realAgents.filter((a) => a.kind === 'local_agent').length, l: 'agents' }),
-            h(Stat, { n: liveCount, l: 'working now' }),
-            h(Stat, { n: realAgents.filter((a) => a.kind === 'local_bash').length, l: 'commands' })),
-          h('div', { className: 'agent-meta', style: { marginTop: '0.9rem' } },
-            worker && worker.contextTokens > 0 &&
-              h('span', null, 'worker context ' + Math.round(worker.contextTokens / 1000) + 'k'),
-            h('span', null, 'depth ' + live.agents.reduce((d, a) => Math.max(d, a.depth), 0)),
-            h('span', null, (live.counts.completed || 0) + ' returned'),
-            (live.counts.stopped || 0) > 0 && h('span', null, live.counts.stopped + ' cancelled'),
-            (live.counts.failed || 0) > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, live.counts.failed + ' failed'),
-            // SUBAGENT tokens by name: the runtime reports a total per subagent and none for
-            // the worker, so one combined number would be two different measurements added
-            // together and presented as one.
-            h('span', null, Math.round(realAgents.reduce((n, a) => n + (a.tokens || 0), 0) / 1000) + 'k subagent tokens')),
-          // A zero always gets a sentence. "0 agents" next to "5 commands" is accurate and
-          // still looks broken, so each shape of emptiness says why it is empty.
-          h('div', { className: 'where-src' },
-            realAgents.length === 0
-              ? 'Nothing dispatched yet this tick — the worker is doing the job itself, which is normal for a shape stage.'
-              : realAgents.filter((a) => a.kind === 'local_agent').length === 0
-                ? 'No subagent out: the worker is running background commands itself, not delegating.'
-                : 'A cancelled command is not a failure — the worker stopped waiting on it deliberately.'))),
+    // ── Z2 — ALARMS. Zero height when there is nothing wrong. ───────
+    h('div', { className: 'z-alarm' },
+      h(Alarms, { s, inst: mods.inst, onWire: () => { setWireFilter('all'); jumpTo('deck-record'); } })),
 
-      h(Panel, {
-        title: 'Working now',
-        // Counts DISPATCHED agents, matching the tab badge exactly. The first version counted
-        // the cards on screen, which includes the worker, so the badge said "1 live" beside a
-        // panel saying "2 live" — two numbers for one fact, which is the bug I keep fixing.
-        sub: liveNow.length === 0
-          ? 'nothing running'
-          : (liveDispatched === 0 ? 'the worker alone' : liveDispatched + ' live') +
-            ' · ' + pastAll.length + ' returned, in History',
+    // ── Z3 — THE CONSOLE GRID ───────────────────────────────────────
+    h('div', { className: 'z-grid' },
+      tab === 'overview' && h('div', { className: 'deckgrid' },
+        h(ActColumn, { s, owedItems, inst: mods.inst, onOpen: setBriefOpen }),
+        h(MachineColumn, { s, inst: mods.inst, onSpec: (id) => setBriefOpen({ kind: 'spec', id }) }),
+        h(RecordColumn, {
+          s, inst: mods.inst, journal: jr.journal, seenAt: lastSeen.seenAt,
+          wireFilter, onWireFilter: setWireFilter, wireOpen, onWireOpen: setWireOpen,
+        },
+          // Everything the previous build showed, kept and ranked below the record
+          // rather than deleted. A disclosure moves a panel down the page; it never
+          // removes a field, and every one of these is still in the DOM for ctrl-F.
+          h('div', { className: 'pane' },
+            h(Health, { health: s.health, open: healthOpen, onToggle: () => setHealthOpen((v) => !v) })),
+          h('div', { className: 'pane' },
+            h(TreeStrip, { git: s.git, open: treeOpen, onToggle: () => setTreeOpen((v) => !v) })),
+          h('div', { className: 'pane' },
+            h(Accounts, { accounts: s.accounts, events: s.accountEvents })),
+          h('details', { className: 'morebox pane' },
+            h('summary', null, 'open the raw ledger — all ' + (s.ticks || []).length + ' runs the state feed carries'),
+            h(Ticks, { ticks: s.ticks })),
+          h('footer', { style: { marginTop: '0.6rem' } },
+            'Reads the driver\'s state files and signals it back through files — closing this page never stops a build. ',
+            'Loopback bind + host allowlist + cross-site rejection + a per-start control token. Terminal equivalent: ', h('code', null, 'pnpm my-spec'),
+            ' · updated ', ago(s.at)))),
+
+      tab === 'agents' && h('div', { className: 'tabpane' },
+        h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem', marginTop: '0.6rem' } },
+          h(Panel, { title: 'Where we are', sub: live.meta ? 'tick ' + live.meta.number + ' · ' + live.meta.spec + '/' + live.meta.stage : 'no tick' },
+            h(WherePanel, { where: live.where })),
+          h(Panel, { title: 'Fan-out', sub: 'this tick' },
+            // The worker's own tool count leads, because it is the only figure here that is
+            // never zero while a tick is alive. All four columns read zero on a running loop
+            // during a shape stage, which is precisely when nothing gets dispatched.
+            h('div', { className: 'statrow' },
+              h(Stat, { n: worker ? worker.toolUses : 0, l: 'worker tools' }),
+              h(Stat, { n: realAgents.filter((a) => a.kind === 'local_agent').length, l: 'agents' }),
+              h(Stat, { n: liveCount, l: 'working now' }),
+              h(Stat, { n: realAgents.filter((a) => a.kind === 'local_bash').length, l: 'commands' })),
+            h('div', { className: 'agent-meta', style: { marginTop: '0.9rem' } },
+              worker && worker.contextTokens > 0 &&
+                h('span', null, 'worker context ' + Math.round(worker.contextTokens / 1000) + 'k'),
+              h('span', null, 'depth ' + live.agents.reduce((d, a) => Math.max(d, a.depth), 0)),
+              h('span', null, (live.counts.completed || 0) + ' returned'),
+              (live.counts.stopped || 0) > 0 && h('span', null, live.counts.stopped + ' cancelled'),
+              (live.counts.failed || 0) > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, live.counts.failed + ' failed'),
+              // SUBAGENT tokens by name: the runtime reports a total per subagent and none for
+              // the worker, so one combined number would be two different measurements added
+              // together and presented as one.
+              h('span', null, Math.round(realAgents.reduce((n, a) => n + (a.tokens || 0), 0) / 1000) + 'k subagent tokens')),
+            // A zero always gets a sentence. "0 agents" next to "5 commands" is accurate and
+            // still looks broken, so each shape of emptiness says why it is empty.
+            h('div', { className: 'where-src' },
+              realAgents.length === 0
+                ? 'Nothing dispatched yet this tick — the worker is doing the job itself, which is normal for a shape stage.'
+                : realAgents.filter((a) => a.kind === 'local_agent').length === 0
+                  ? 'No subagent out: the worker is running background commands itself, not delegating.'
+                  : 'A cancelled command is not a failure — the worker stopped waiting on it deliberately.'))),
+
+        h(Panel, {
+          title: 'Working now',
+          // Counts DISPATCHED agents, matching the tab badge exactly. The first version counted
+          // the cards on screen, which includes the worker, so the badge said "1 live" beside a
+          // panel saying "2 live" — two numbers for one fact, which is the bug I keep fixing.
+          sub: liveNow.length === 0
+            ? 'nothing running'
+            : (liveDispatched === 0 ? 'the worker alone' : liveDispatched + ' live') +
+              ' · ' + pastAll.length + ' returned, in History',
+        },
+          liveNow.length === 0
+            ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+                live.link === 'live'
+                  ? 'Nothing is running. The tick has ended, or the loop is between ticks — everything it did is in History.'
+                  : 'Waiting for the feed…')
+            : h('div', { className: 'agentgrid' },
+                // Index is the agent's position in the tick's spawn order, not its position in
+                // this list, so a card keeps the same number as things finish around it.
+                liveNow.map((a) => h(AgentCard, {
+                  key: a.id, a, index: gridAgents.indexOf(a), parent: byId.get(a.parentId),
+                  selected: a.id === openId, onOpen: setOpenId,
+                }))))),
+
+      tab === 'management' && h('div', { className: 'tabpane' },
+        h(Panel, {
+          title: 'Management',
+          sub: 'three sessions you can talk to · click one to open its chat',
+        },
+          h('p', { style: { fontSize: '0.86rem', lineHeight: 1.5, marginTop: 0 } },
+            'The loop had one overseer and nothing checked it, which is how 006 came to be marked ' +
+            'built when it had never been started. The manager exists to disagree with the supervisor ' +
+            'when the evidence says so; the special agent is yours.'),
+          h('div', { className: 'rolegrid' },
+            (roles.length ? roles : []).map((r) => h(RoleCard, {
+              key: r.id, role: r,
+              live: roleSteps[r.id] || [],
+              selected: r.id === roleOpen,
+              onOpen: setRoleOpen,
+            }))),
+          roles.length === 0 && h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+            'Could not read the roles. Is the server on the current code?'),
+          h('div', { className: 'where-src', style: { marginTop: '0.9rem' } },
+            'Each message is a real Claude Code session turn against this repo — same tooling as the ' +
+            'workers, and it costs quota. Supervisor and manager are read-only on purpose: an auditor ' +
+            'that can edit what it audits is not an auditor.'))),
+
+      tab === 'history' && h('div', { className: 'tabpane' }, h(Panel, {
+        title: 'History',
+        sub: pastAll.length + ' returned this tick' + (live.meta ? ' (tick ' + live.meta.number + ')' : ''),
       },
-        liveNow.length === 0
-          ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
-              live.link === 'live'
-                ? 'Nothing is running. The tick has ended, or the loop is between ticks — everything it did is in History.'
-                : 'Waiting for the feed…')
-          : h('div', { className: 'agentgrid' },
-              // Index is the agent's position in the tick's spawn order, not its position in
-              // this list, so a card keeps the same number as things finish around it.
-              liveNow.map((a) => h(AgentCard, {
-                key: a.id, a, index: gridAgents.indexOf(a), parent: byId.get(a.parentId),
-                selected: a.id === openId, onOpen: setOpenId,
-              }))))),
-
-    tab === 'management' && h(React.Fragment, null,
-      h(Panel, {
-        title: 'Management',
-        sub: 'three sessions you can talk to · click one to open its chat',
-      },
-        h('p', { style: { fontSize: '0.86rem', lineHeight: 1.5, marginTop: 0 } },
-          'The loop had one overseer and nothing checked it, which is how 006 came to be marked ' +
-          'built when it had never been started. The manager exists to disagree with the supervisor ' +
-          'when the evidence says so; the special agent is yours.'),
-        h('div', { className: 'rolegrid' },
-          (roles.length ? roles : []).map((r) => h(RoleCard, {
-            key: r.id, role: r,
-            live: roleSteps[r.id] || [],
-            selected: r.id === roleOpen,
-            onOpen: setRoleOpen,
-          }))),
-        roles.length === 0 && h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
-          'Could not read the roles. Is the server on the current code?'),
-        h('div', { className: 'where-src', style: { marginTop: '0.9rem' } },
-          'Each message is a real Claude Code session turn against this repo — same tooling as the ' +
-          'workers, and it costs quota. Supervisor and manager are read-only on purpose: an auditor ' +
-          'that can edit what it audits is not an auditor.'))),
-
-    tab === 'history' && h(Panel, {
-      title: 'History',
-      sub: pastAll.length + ' returned this tick' + (live.meta ? ' (tick ' + live.meta.number + ')' : ''),
-    },
-      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginBottom: '0.7rem' } },
-        h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history' },
-          [['all', 'All'], ['agents', 'Agents'], ['commands', 'Commands']].map(([id, label]) =>
-            h('button', {
-              key: id, type: 'button',
-              'aria-pressed': histFilter === id ? 'true' : 'false',
-              onClick: () => { setHistFilter(id); setHistLimit(25); },
-            }, label))),
-        // Three numbers because there are three: rendered, matching the filter, and total.
-        // "28 shown of 28" was printed while 25 rows were on screen — a silent cap is the one
-        // thing a history view must never do, since it reads as "this is everything".
-        h('span', { className: 'mono', style: { fontSize: '0.66rem', color: 'var(--text-dim)' } },
-          pastShown.length + ' shown' +
-          (pastFiltered.length !== pastShown.length ? ' of ' + pastFiltered.length + ' matching' : '') +
-          (pastFiltered.length !== pastAll.length ? ' · ' + pastAll.length + ' total' : ''))),
-
-      pastFiltered.length === 0
-        ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
-            pastAll.length === 0
-              ? 'Nothing has returned yet this tick.'
-              : 'Nothing of that kind this tick — ' + pastAll.length + ' other entries are under All.')
-        : h(React.Fragment, null,
-            h('ul', { className: 'hist' }, pastShown.map((a) => h('li', { key: a.id },
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginBottom: '0.7rem' } },
+          h('div', { className: 'theme-seg', role: 'group', 'aria-label': 'Filter history' },
+            [['all', 'All'], ['agents', 'Agents'], ['commands', 'Commands']].map(([id, label]) =>
               h('button', {
-                className: 'histrow ' + a.status,
-                'aria-current': a.id === openId ? 'true' : 'false',
-                onClick: () => setOpenId(a.id),
-              },
-                h('i', { className: 'sdot ' + a.status }),
-                h('span', { className: 'hname' }, agentLabel(a)),
-                h('span', { className: 'hdesc' }, a.description),
-                h('span', { className: 'hstat' }, AGENT_STAT(a).join(' · ') || a.status))))),
-            // Never silently truncate: say what is hidden and offer it.
-            pastFiltered.length > pastShown.length && h('button', {
-              className: 'linkish', style: { marginTop: '0.6rem' },
-              onClick: () => setHistLimit(pastFiltered.length),
-            }, 'show ' + (pastFiltered.length - pastShown.length) + ' older'))),
+                key: id, type: 'button',
+                'aria-pressed': histFilter === id ? 'true' : 'false',
+                onClick: () => { setHistFilter(id); setHistLimit(25); },
+              }, label))),
+          // Three numbers because there are three: rendered, matching the filter, and total.
+          // "28 shown of 28" was printed while 25 rows were on screen — a silent cap is the one
+          // thing a history view must never do, since it reads as "this is everything".
+          h('span', { className: 'mono', style: { fontSize: '0.66rem', color: 'var(--text-dim)' } },
+            pastShown.length + ' shown' +
+            (pastFiltered.length !== pastShown.length ? ' of ' + pastFiltered.length + ' matching' : '') +
+            (pastFiltered.length !== pastAll.length ? ' · ' + pastAll.length + ' total' : ''))),
 
-    tab === 'overview' && h(React.Fragment, null,
-    // EIGHT ZONES, RANKED — not nine co-equal panels.
-    //
-    // The page was 4105px of panels that all shouted at the same volume: a 9px header dot
-    // answered "is it working", the cost answer sat 2055px down, and the self-healing panel
-    // — added last, dumping every check and every event — was 1029px of reference material
-    // sitting above the two things a founder acts on. Nothing here is deleted. It is ranked:
-    //
-    //   2  MARQUEE      is it working · on what · for how long · at what cost
-    //   3  LIVE WORK    the current tick, and the catalog it is working through
-    //   4  OBLIGATIONS  what only the founder can clear, and what it is costing
-    //   5  STATUS RAIL  self-healing, tree, parked — three strips that expand in place
-    //   6  RECORDS      tick history, windowed
-    //
-    // Run totals is the only panel that stops existing as a panel; all four of its figures
-    // and its billable sentence are in the marquee's third cell. Fields removed: none.
-    // Fields added: git.dirtyPaths, which the server has always sent and the page never showed.
+        pastFiltered.length === 0
+          ? h('div', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--text-dim)' } },
+              pastAll.length === 0
+                ? 'Nothing has returned yet this tick.'
+                : 'Nothing of that kind this tick — ' + pastAll.length + ' other entries are under All.')
+          : h(React.Fragment, null,
+              h('ul', { className: 'hist' }, pastShown.map((a) => h('li', { key: a.id },
+                h('button', {
+                  className: 'histrow ' + a.status,
+                  'aria-current': a.id === openId ? 'true' : 'false',
+                  onClick: () => setOpenId(a.id),
+                },
+                  h('i', { className: 'sdot ' + a.status }),
+                  h('span', { className: 'hname' }, agentLabel(a)),
+                  h('span', { className: 'hdesc' }, a.description),
+                  h('span', { className: 'hstat' }, AGENT_STAT(a).join(' · ') || a.status))))),
+              // Never silently truncate: say what is hidden and offer it.
+              pastFiltered.length > pastShown.length && h('button', {
+                className: 'linkish', style: { marginTop: '0.6rem' },
+                onClick: () => setHistLimit(pastFiltered.length),
+              }, 'show ' + (pastFiltered.length - pastShown.length) + ' older'))))),
 
-    // ── ZONE 2 ──────────────────────────────────────────────────────────
-    h(Marquee, {
-      s, top, armed, unsupervised,
-      owedCount: owedItems.length,
-      onOwed: jumpToOwed,
+    // ── Z4 — THE WATCH RAIL ─────────────────────────────────────────
+    h(WatchRail, {
+      range: jr.range,
+      onMark: (m) => { setWireFilter('all'); setWireOpen(m.wireId || null); jumpTo('deck-record'); },
     }),
 
-    // ── ZONE 3 — live work ──────────────────────────────────────────────
-    h('div', { className: 'grid cols-2', style: { marginBottom: '1.1rem' } },
-      h(Live, { live: s.live, lanes: s.lanes, running: s.running }),
+    // ── Z5 — THE TICKER ─────────────────────────────────────────────
+    h(Ticker, { lanes: (s.lanes && s.lanes.length) ? s.lanes : (s.live ? [s.live] : []), reason: top.reason }),
 
-      h(Panel, { title: 'Catalog', sub: c.signedOff + ' of ' + c.total + ' signed off' },
-        h(Progress, { done: c.signedOff, built: c.builtFraction, total: c.total }),
-        // "The platform never marks its own work done": a spec that retired on an empty task
-        // list with no closing-gate APPROVE on record gets said out loud, not just logged.
-        // A chip, not an emoji — the page has a vocabulary for warnings and this is it.
-        c.entries.some((e) => e.closingGateWarning) &&
-          h('p', { className: 'mono', style: { fontSize: '0.72rem', color: 'var(--warn-text)', fontWeight: 700, margin: '0.6rem 0 0' } },
-            h('span', { className: 'tag warn' }, 'no closing gate'), ' ',
-            'retired without a closing-gate record: ' +
-            c.entries.filter((e) => e.closingGateWarning).map((e) => e.id).join(', ')),
-        h('div', { className: 'statrow', style: { marginTop: '1rem' } },
-          h(Stat, { n: c.signedOff, l: 'signed off' }),
-          h(Stat, { n: c.awaitingFounder.length, l: 'awaiting you' }),
-          h(Stat, { n: c.parked.length, l: 'parked' }),
-          h(Stat, { n: c.pending, l: 'not started' })),
-        h(CatalogLanes, { lanes: (s.actives || (active ? [active] : [])) }))),
+    // ── Z6 — THE TELEMETRY BUS ──────────────────────────────────────
+    h(Bus, {
+      s, link: live.link, lastFrameAt: live.lastAt, bell: bell.perm,
+      modErrors: mods.errors, offline: !navigator.onLine,
+    }),
 
-    // ── ZONE 4 — obligations. The scroll target of the marquee's red chip. ──
-    h('div', { className: 'grid cols-2', id: 'zone-obligations', style: { marginBottom: '1.1rem', scrollMarginTop: '8rem' } },
-      // Every row opens a brief. The panel used to name a debt without saying what paying it
-      // involves, which is how three specs came to sit here for two days.
-      h(OwedPanel, { items: owedItems, onOpen: setBriefOpen }),
-      h(Accounts, { accounts: s.accounts, events: s.accountEvents })),
-
-    // ── ZONE 5 — the status rail. Three strips, collapsed, that expand in place. ──
-    h('div', { className: 'grid cols-3', style: { marginBottom: '1.1rem' } },
-      // Self-healing keeps its name, its full output tree and every row it ever rendered —
-      // it collapses visually and never conditionally, and re-opens itself on a new break.
-      h(Health, { health: s.health, open: healthOpen, onToggle: () => setHealthOpen((v) => !v) }),
-      h(TreeStrip, { git: s.git, open: treeOpen, onToggle: () => setTreeOpen((v) => !v) }),
-      h(ParkedStrip, { parked: s.parked, open: parkedOpen, onToggle: () => setParkedOpen((v) => !v) })),
-
-    // ── ZONE 6 — the record ─────────────────────────────────────────────
-    h(Ticks, { ticks: s.ticks })),
+    // ── OVERLAYS ────────────────────────────────────────────────────
+    paletteOpen && h(Palette, { items: paletteItems, onClose: () => setPaletteOpen(false) }),
+    shortcutsOpen && h(Shortcuts, { onClose: () => setShortcutsOpen(false) }),
+    bellOpen && h(BellSheet, {
+      perm: bell.perm, enabled: bell.enabled, quiet: bell.quiet, journalReady: Boolean(jr.journal),
+      onToggle: bell.toggle, onQuiet: bell.setQuietHours, onAsk: bell.ask,
+      onTest: (rule) => { const ok = bell.test(rule); setToast(ok ? 'test notification sent — if nothing appeared, the OS is suppressing it' : 'the bell could not fire: ' + (bell.perm === 'granted' ? 'quiet hours are on and this rule is not critical' : 'permission is ' + bell.perm)); },
+      onClose: () => setBellOpen(false),
+    }),
+    digestOpen && h(Digest, {
+      digest, sinceAt: lastSeen.seenAt,
+      onClose: () => { setDigestOpen(false); lastSeen.clear(); },
+      onWire: (id) => { setWireFilter('all'); setWireOpen(id); jumpTo('deck-record'); },
+    }),
 
     roleOpen && h(ChatSheet, {
       role: roles.find((r) => r.id === roleOpen) || null,
@@ -2652,11 +4564,6 @@ function App() {
       log: openLog,
       onClose: () => setOpenId(null),
     }),
-
-    h('footer', null,
-      'Reads the driver\'s state files and signals it back through files — closing this page never stops a build. ',
-      'Loopback bind + host allowlist + cross-site rejection + a per-start control token. Terminal equivalent: ', h('code', null, 'pnpm my-spec'),
-      ' · updated ', ago(s.at)),
 
     toast && h('div', { className: 'toast', role: 'status' }, toast));
 }

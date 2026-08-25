@@ -14,7 +14,20 @@ import { fileURLToPath } from 'node:url';
 import { openStore, type Store } from '@spicyspec/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  accountEventRows,
+  budgetsFor,
+  COMMIT_SEP,
+  composeDigest,
+  coverageOf,
+  detectAnomalies,
   HEALTH_KEY,
+  ledgerDigest,
+  mergeGateRows,
+  parseCommitLog,
+  searchCorpus,
+  STATE_PUSH_MS,
+  statOf,
+  windowStartOf,
   healthRows,
   INSTALL_HINT,
   KILL_KEY,
@@ -30,6 +43,7 @@ import {
   topLine,
   type HealthEvent,
   type HealthRow,
+  type SupervisorHealth,
   type RunningRoom,
 } from './room-server.js';
 
@@ -650,7 +664,12 @@ describe('health panel', () => {
   it('carries a header chip for a silent supervisor — an unwatched loop must not look watched', async () => {
     const page = await (await fetch(base + '/')).text();
     expect(page).toContain("const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
-    expect(page).toContain("'unsupervised'");
+    // SUPV is a FIXED annunciator slot, so the absence of a watcher has a known position on
+    // the page rather than a chip that appears only when someone thought to render it. The
+    // assertion is on the slot and its alarm level, not on the class name that carried it in
+    // the scrolling layout — that name moved with the deck and the guarantee did not.
+    expect(page).toContain("const supBad = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
+    expect(page).toContain("id: 'SUPV', level: supBad ? 'alarm' : 'nominal'");
   });
 
   it('renders the full roster and the install command when the supervisor has never reported', () => {
@@ -993,5 +1012,480 @@ describe('dirty paths survive git porcelain padding', () => {
       '.specify/loop/ship-pr-body.md',
       'apps/web/src/main.ts',
     ]);
+  });
+});
+
+/* ==================================================================== THE DECK ====
+ *
+ * The instrument deck's arithmetic. Every test below is named after the lie the helper is
+ * there to refuse — a zero standing in for a missing number, a median drawn from a rendering
+ * window, a ruling narrated twice because it is written to two files on purpose.
+ * ------------------------------------------------------------------------------------ */
+
+describe('statOf', () => {
+  it('says null, not zero, when nothing was measured — a median of 0 reads as a measurement', () => {
+    expect(statOf([])).toEqual({ n: 0, total: 0, mean: null, median: null, p90: null, min: null, max: null });
+    expect(statOf([null, undefined, 'x', NaN])).toMatchObject({ n: 0, median: null });
+  });
+
+  it('counts only the rows that carry a number, and never averages a blank as zero', () => {
+    // Four rows, two priced. The mean is of the two, not of the four.
+    expect(statOf([10, null, 20, undefined])).toMatchObject({ n: 2, total: 30, mean: 15, median: 15 });
+  });
+
+  it('takes the midpoint of an even sample and the middle of an odd one', () => {
+    expect(statOf([1, 2, 3, 4]).median).toBe(2.5);
+    expect(statOf([1, 2, 3]).median).toBe(2);
+  });
+
+  it('reports p90 by nearest rank, so the figure is always a value that was observed', () => {
+    expect(statOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).p90).toBe(9);
+  });
+});
+
+describe('coverageOf', () => {
+  it('prints the exclusion sentence the deck shows under every aggregate', () => {
+    const c = coverageOf(16, 40, 'a cost', 'no cost');
+    expect(c.line).toBe('16 of 40 rows carry a cost');
+    expect(c.missingLine).toBe('24 of 40 rows carry no cost');
+  });
+
+  it('has no missing sentence when nothing was excluded — there is nothing honest to print', () => {
+    expect(coverageOf(40, 40, 'a cost', 'no cost').missingLine).toBeNull();
+  });
+});
+
+describe('ledgerDigest', () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 7, 24, h, 0, 0)).toISOString();
+  const rows = [
+    { tick: 1, costUsd: 10, durationMinutes: 30, tasksClosed: 2, startedAt: at(0), exit: 'clean', account: 'primary' },
+    { tick: 2, costUsd: 20, durationMinutes: 60, tasksClosed: 0, startedAt: at(1), exit: 'stalled', account: 'primary' },
+    { tick: 3, startedAt: at(2), exit: 'clean', account: 'secondary' },
+    { tick: 4, costUsd: 30, durationMinutes: 30, tasksClosed: 4, exit: 'clean', account: 'secondary' },
+  ];
+
+  it('states how many rows each figure was computed from, and which were left out', () => {
+    const d = ledgerDigest(rows, Date.parse(at(3)));
+    expect(d.rows).toBe(4);
+    expect(d.runs).toBe(4);
+    expect(d.priced.line).toBe('3 of 4 rows carry a cost');
+    expect(d.priced.missingLine).toBe('1 of 4 rows carry no cost');
+    // Run 4 has no startedAt: it belongs to no window and the coverage line says so.
+    expect(d.stamped.line).toBe('3 of 4 rows carry a start stamp');
+    expect(d.cost).toMatchObject({ n: 3, total: 60, median: 20 });
+  });
+
+  it('divides by what it actually has — never by a count that includes the blanks', () => {
+    const d = ledgerDigest(rows, Date.parse(at(3)));
+    // $60 over 4 distinct runs, and the basis names the 3 rows the money came from.
+    expect(d.burn.perRun).toMatchObject({ value: 15, n: 3 });
+    // 'run NUMBERS', not 'runs': the live ledger restarts numbering per spec, so the
+    // denominator is a count of distinct numbers and the basis line must not pretend
+    // otherwise — 83 rows collapse to 51 numbers there, and the $/run figure inherits that.
+    expect(d.burn.perRun.basis).toBe('3 priced rows over 4 distinct run numbers');
+    // $60 over 6 tasks closed.
+    expect(d.burn.perTaskClosed.value).toBe(10);
+  });
+
+  it('returns null rather than Infinity when the divisor is zero — no task closed is not free', () => {
+    const d = ledgerDigest([{ tick: 1, costUsd: 5, tasksClosed: 0, startedAt: at(0) }], Date.parse(at(1)));
+    expect(d.burn.perTaskClosed.value).toBeNull();
+    // One stamped row is an instant, not a span: there is no rate to state.
+    expect(d.burn.perHour.value).toBeNull();
+  });
+
+  it('reads a verification result off the residue the pipeline wrote, and unknown when it did not', () => {
+    const d = ledgerDigest(
+      [
+        { tick: 1, redFirstResidue: [{ file: 'a', marker: 'it.skip' }], startedAt: at(0) },
+        { tick: 2, startedAt: at(1) },
+      ],
+      Date.parse(at(2)),
+    );
+    expect(d.series.verifyFailed).toEqual([1, null]);
+    expect(d.verified.line).toBe('1 of 2 rows carry a verification result');
+  });
+
+  it('measures the WHOLE ledger, not the slice the page renders — the founder acts on the comparison', () => {
+    // 60 cheap runs then one expensive one. A median taken from the last forty rows would be
+    // a different number, and the anomaly card quotes this one at the founder.
+    const many = Array.from({ length: 60 }, (_, i) => ({ tick: i + 1, costUsd: 1, startedAt: at(0) }));
+    const d = ledgerDigest([...many, { tick: 61, costUsd: 100, startedAt: at(1) }], Date.parse(at(2)));
+    expect(d.cost.n).toBe(61);
+    expect(d.cost.median).toBe(1);
+  });
+
+  it('changes its revision when a row lands, so the page refetches on a fact and not a timer', () => {
+    const a = ledgerDigest(rows, 0).revision;
+    const b = ledgerDigest([...rows, { tick: 5, startedAt: at(3), exit: 'clean' }], 0).revision;
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('mergeGateRows', () => {
+  const record = (over: Record<string, unknown> = {}) => ({
+    at: '2026-08-23T19:09:59Z',
+    spec: '007',
+    stage: 'closing',
+    gate: 'terminal',
+    verdict: 'APPROVE',
+    confidence: 0.92,
+    seat: 'board-qa-critic',
+    frozen: 'abeddc2',
+    note: 'both findings closed',
+    ...over,
+  });
+
+  it('narrates a ruling once, though the DB and the JSONL both hold it on purpose', () => {
+    const rows = mergeGateRows([
+      { source: 'store', path: null, records: [record()] as never, problems: [], readAt: null },
+      { source: 'GATES.jsonl', path: '/x', records: [record()] as never, problems: [], readAt: null },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source).toBe('store');
+  });
+
+  it('keeps a re-review as its own row — the same seat ruling twice is the whole story', () => {
+    const rows = mergeGateRows([
+      {
+        source: 'GATES.jsonl',
+        path: '/x',
+        records: [record({ verdict: 'REVISE', at: '2026-08-23T18:00:00Z', note: 'cov 68.96' }), record()] as never,
+        problems: [],
+        readAt: null,
+      },
+    ]);
+    expect(rows.map((r) => r.verdict)).toEqual(['REVISE', 'APPROVE']);
+  });
+
+  it('previews a long note but always states the full length, so a row can say what it is hiding', () => {
+    const note = 'x'.repeat(900);
+    const [row] = mergeGateRows([{ source: 'GATES.jsonl', path: '/x', records: [record({ note })] as never, problems: [], readAt: null }], 220);
+    expect(row.note).toHaveLength(220);
+    expect(row.noteChars).toBe(900);
+  });
+
+  it('carries the file it was read from and the tree it judged — the row prints its own provenance', () => {
+    const [row] = mergeGateRows([{ source: 'GATES.jsonl', path: '/x', records: [record()] as never, problems: [], readAt: null }]);
+    expect(`${row.source} · frozen ${row.frozen}`).toBe('GATES.jsonl · frozen abeddc2');
+  });
+});
+
+describe('windowStartOf', () => {
+  const ends = Date.parse('2026-08-24T18:00:00.000Z');
+  const rows = [
+    { tick: 1, account: 'primary', startedAt: '2026-08-24T14:00:00.000Z', rateResetsAt: ends / 1000 },
+    { tick: 2, account: 'primary', startedAt: '2026-08-24T15:00:00.000Z', rateResetsAt: ends / 1000 },
+    { tick: 3, account: 'primary', startedAt: '2026-08-24T09:00:00.000Z', rateResetsAt: Date.parse('2026-08-24T12:00:00.000Z') / 1000 },
+  ];
+
+  it('names the earliest run that PROVED the window was already open, and labels it as derived', () => {
+    expect(windowStartOf(rows, 'primary', ends)).toEqual({
+      at: '2026-08-24T14:00:00.000Z',
+      source: 'first-run-observed-in-this-window',
+    });
+  });
+
+  it('refuses to invent a start when no row reported this window — a now-marker needs a record', () => {
+    expect(windowStartOf(rows, 'secondary', ends)).toEqual({ at: null, source: null });
+    expect(windowStartOf(rows, 'primary', null)).toEqual({ at: null, source: null });
+  });
+});
+
+describe('accountEventRows', () => {
+  it('stamps each switch and cooling so the wire can place it beside a ruling', () => {
+    const out = accountEventRows(
+      [
+        { tick: 1, account: 'primary', startedAt: '2026-08-24T09:00:00.000Z', exit: 'clean' },
+        { tick: 2, account: 'secondary', startedAt: '2026-08-24T10:00:00.000Z', exit: 'rate-limited' },
+      ],
+      {},
+      Date.parse('2026-08-24T11:00:00.000Z'),
+    );
+    expect(out.map((e) => [e.kind, e.account, e.at])).toEqual([
+      ['switch', 'secondary', '2026-08-24T10:00:00.000Z'],
+      ['cooling', 'secondary', '2026-08-24T10:00:00.000Z'],
+    ]);
+    expect(out[0].text).toBe('run 2: switched primary → secondary');
+  });
+
+  it("reads a cold account off the pool's own state and names the refusal", () => {
+    const now = Date.parse('2026-08-24T11:00:00.000Z');
+    const out = accountEventRows([], { tertiary: { coldUntilMs: now + 600_000, refusedReason: 'quota exhausted' } }, now);
+    expect(out[0]).toMatchObject({ kind: 'refused', account: 'tertiary' });
+    expect(out[0].text).toContain('quota exhausted');
+  });
+});
+
+describe('detectAnomalies', () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 7, 24, h, 0, 0)).toISOString();
+  const healthy: SupervisorHealth = { reporting: true, lastAt: at(3), staleAfterMs: 180_000, advice: null };
+  const working = { state: 'WORKING' as const, reason: null, tone: 'on' as const };
+  const base = (runs: Array<Record<string, unknown>>, over: Partial<Parameters<typeof detectAnomalies>[0]> = {}) => ({
+    ledger: ledgerDigest(runs, Date.parse(at(4))),
+    runs,
+    accounts: [],
+    healthRows: [] as HealthRow[],
+    supervisor: healthy,
+    activity: working,
+    entries: [],
+    gates: [],
+    activeSpec: null,
+    now: Date.parse(at(4)),
+    ...over,
+  });
+
+  it('says nothing at all when nothing is wrong — an all-clear box is a chip that is always on', () => {
+    const runs = Array.from({ length: 8 }, (_, i) => ({ tick: i + 1, costUsd: 10, tasksClosed: 2, durationMinutes: 20, exit: 'clean', startedAt: at(3) }));
+    expect(detectAnomalies(base(runs))).toEqual([]);
+  });
+
+  it('states the number, the comparison and the reason, in that order', () => {
+    const runs = [
+      ...Array.from({ length: 8 }, (_, i) => ({ tick: i + 1, costUsd: 10, tasksClosed: 2, durationMinutes: 20, exit: 'clean', startedAt: at(1) })),
+      { tick: 9, costUsd: 22, tasksClosed: 0, durationMinutes: 20, exit: 'clean', startedAt: at(3), toolCalls: 407 },
+    ];
+    const hit = detectAnomalies(base(runs)).find((a) => a.kind === 'cost');
+    expect(hit?.headline).toBe('Run 9 cost $22.00 — 2.2× the $10.00 median across 9 priced runs, and made 407 tool calls for 0 tasks closed.');
+    expect(hit?.evidence).toBe('9 of 9 rows carry a cost');
+  });
+
+  it('gives two expensive runs that share a number two different cards', () => {
+    // The live ledger has 83 rows and 51 distinct tick values: numbering RESTARTS per spec,
+    // so two unrelated $60 runs both call themselves 'run 1'. Keying a card on the number
+    // alone made the older overspend vanish behind the newer one in a keyed list.
+    const runs = [
+      ...Array.from({ length: 8 }, (_, i) => ({ tick: i + 1, costUsd: 10, exit: 'clean', startedAt: at(0) })),
+      { tick: 1, costUsd: 60, tasksClosed: 0, exit: 'clean', startedAt: at(1) },
+      { tick: 1, costUsd: 55, tasksClosed: 0, exit: 'clean', startedAt: at(2) },
+    ];
+    const ids = detectAnomalies(base(runs))
+      .filter((a) => a.kind === 'cost')
+      .map((a) => a.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('refuses to compare against a population too small to be a population', () => {
+    // Three rows: 2.2x of a three-row median is a coin toss wearing a statistic.
+    const runs = [
+      { tick: 1, costUsd: 10, exit: 'clean', startedAt: at(1) },
+      { tick: 2, costUsd: 10, exit: 'clean', startedAt: at(2) },
+      { tick: 3, costUsd: 90, exit: 'clean', startedAt: at(3) },
+    ];
+    expect(detectAnomalies(base(runs)).filter((a) => a.kind === 'cost')).toEqual([]);
+  });
+
+  it('escalates a run of bad exits and names every exit class it saw', () => {
+    const runs = [
+      { tick: 1, exit: 'clean', startedAt: at(0) },
+      { tick: 2, exit: 'stalled', startedAt: at(1) },
+      { tick: 3, exit: 'blocked', startedAt: at(2) },
+      { tick: 4, exit: 'stalled', startedAt: at(3) },
+    ];
+    const hit = detectAnomalies(base(runs)).find((a) => a.kind === 'exit');
+    expect(hit?.level).toBe('alarm');
+    expect(hit?.headline).toBe('The last 3 runs all exited badly (stalled, blocked) — 4 runs are on record.');
+  });
+
+  it('outranks every measurement with a supervisor that has gone quiet', () => {
+    const runs = [{ tick: 1, exit: 'stalled', startedAt: at(1) }, { tick: 2, exit: 'stalled', startedAt: at(2) }];
+    const out = detectAnomalies(base(runs, { supervisor: { reporting: false, lastAt: null, staleAfterMs: 180_000, advice: INSTALL_HINT } }));
+    expect(out[0].kind).toBe('supervisor');
+    expect(out[0].evidence).toBe(INSTALL_HINT);
+  });
+
+  it('calls a WORKING loop with a long-silent ledger what it is, against the median run length', () => {
+    const runs = Array.from({ length: 6 }, (_, i) => ({ tick: i + 1, durationMinutes: 20, costUsd: 5, tasksClosed: 1, exit: 'clean', startedAt: at(0) }));
+    const now = Date.parse(at(0)) + 200 * 60_000;
+    const hit = detectAnomalies(base(runs, { now, ledger: ledgerDigest(runs, now) })).find((a) => a.kind === 'cadence');
+    expect(hit?.headline).toContain('No run has settled in 200m — 10× the 20m median across 6 timed runs.');
+  });
+
+  it('says all the accounts are cold rather than counting them one at a time', () => {
+    const accounts = [
+      { id: 'primary', cold: true, coldMinutes: 42, refusedReason: null },
+      { id: 'secondary', cold: true, coldMinutes: 12, refusedReason: null },
+    ];
+    const hit = detectAnomalies(base([], { accounts })).find((a) => a.kind === 'accounts');
+    expect(hit?.level).toBe('alarm');
+    expect(hit?.headline).toBe('All 2 accounts are cold — the rotation has nothing to run on.');
+  });
+});
+
+describe('composeDigest', () => {
+  const at = (h: number) => new Date(Date.UTC(2026, 7, 24, h, 0, 0)).toISOString();
+  const runs = [
+    { tick: 1, costUsd: 10, tasksClosed: 2, durationMinutes: 30, exit: 'clean', startedAt: at(1) },
+    { tick: 2, costUsd: 20, tasksClosed: 0, durationMinutes: 40, exit: 'stalled', startedAt: at(4) },
+    { tick: 3, costUsd: 5, tasksClosed: 1, exit: 'clean', startedAt: at(20) },
+    { tick: 4, costUsd: 99, tasksClosed: 9, exit: 'clean' },
+  ];
+  const digest = () =>
+    composeDigest({
+      sinceMs: Date.parse(at(0)),
+      untilMs: Date.parse(at(8)),
+      runs,
+      gates: [],
+      healthEvents: [],
+      accountEvents: [],
+      entries: [],
+      parked: [],
+      commits: [],
+      owed: null,
+    });
+
+  it('counts only what happened inside the window the founder asked about', () => {
+    expect(digest().numbers).toMatchObject({ rows: 2, runs: 2, tasksClosed: 2, costUsd: 30, minutes: 70 });
+  });
+
+  it('names the rows that belong to no window rather than sweeping them into this one', () => {
+    // Run 4 has no start stamp. Counting it here would inflate the night's spend by $99.
+    expect(digest().coverage.excludedLine).toBe('1 of 4 ledger rows carry no start stamp and are not in this window');
+    expect(digest().numbers.costUsd).toBe(30);
+  });
+
+  it('lists what broke, by exit class, with its own row', () => {
+    expect(digest().broke.exits.map((e) => e['tick'])).toEqual([2]);
+  });
+});
+
+describe('searchCorpus', () => {
+  const docs = [
+    { kind: 'gate', id: 'g1', title: 'REVISE · spec 007 · terminal · board-qa-critic', body: 'submission branch cov 68.96 and a web coverage tooling gap', at: '2026-08-23T19:09:59Z', source: 'GATES.jsonl' },
+    { kind: 'run', id: '44', title: 'Run 44 · stalled · primary', body: 'no commits landed', at: '2026-08-24T02:00:00Z', source: 'ledger' },
+  ];
+
+  it('returns nothing for an empty query rather than the whole log', () => {
+    expect(searchCorpus(docs, '   ')).toEqual([]);
+  });
+
+  it('demands every term — a palette that returns near-misses makes the founder read a list', () => {
+    expect(searchCorpus(docs, 'coverage stalled')).toEqual([]);
+    expect(searchCorpus(docs, 'coverage tooling').map((h) => h.id)).toEqual(['g1']);
+  });
+
+  it('weighs the thing named above the thing merely mentioned', () => {
+    expect(searchCorpus(docs, 'stalled')[0].id).toBe('44');
+  });
+
+  it('quotes the neighbourhood of the hit, not the head of the row', () => {
+    expect(searchCorpus(docs, 'tooling')[0].snippet).toContain('tooling');
+  });
+});
+
+describe('parseCommitLog', () => {
+  it("keeps a subject that contains the separator a naive format would have split on", () => {
+    // '%h|%aI|%s' ate every subject containing a pipe — 'fix(room): a | b' became 'a'.
+    const line = ['4bfe5b5', '2026-08-25T03:59:00+02:00', 'fix(room): a | b — and a tab\there'].join(COMMIT_SEP);
+    expect(parseCommitLog(line)).toEqual([
+      { sha: '4bfe5b5', at: '2026-08-25T01:59:00.000Z', subject: 'fix(room): a | b — and a tab\there' },
+    ]);
+  });
+
+  it('drops a blank line without inventing a commit for it', () => {
+    expect(parseCommitLog('\n\n')).toEqual([]);
+  });
+});
+
+describe('budgetsFor', () => {
+  it("takes the health budget from the supervisor's own grace rather than a copied constant", () => {
+    // A page that had hardcoded 180000 would go on calling a supervisor healthy for three
+    // minutes after that supervisor decided its own limit was thirty seconds.
+    expect(budgetsFor(30_000)).toMatchObject({ health: 30_000, state: STATE_PUSH_MS * 3, push: STATE_PUSH_MS });
+  });
+});
+
+/* --------------------------------------------------------------- deck wiring ---- */
+
+describe('the deck over the wire', () => {
+  it('serves a sibling ES module as JavaScript — octet-stream plus nosniff is a refused import', async () => {
+    // Every room/*.mjs is imported by <script type="module">. With only .html and .js in the
+    // MIME map they arrived as application/octet-stream and the browser refused all of them,
+    // silently, behind a page that still rendered.
+    const res = await fetch(base + '/agents.mjs');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/javascript; charset=utf-8');
+  });
+
+  it('carries the ledger aggregates, the anomalies, the budgets and the owed age on the state frame', async () => {
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', costUsd: 10, tasksClosed: 2, durationMinutes: 20, startedAt: '2026-08-24T09:00:00.000Z' });
+    const s = await state();
+    expect(s['ledger']).toMatchObject({ rows: 1, runs: 1 });
+    expect((s['ledger'] as unknown as { priced: { line: string } }).priced.line).toBe('1 of 1 row carry a cost');
+    expect(Array.isArray(s['anomalies'])).toBe(true);
+    expect(s['budgets']).toMatchObject({ push: 4000, state: 12000 });
+    // The count is memoised; its AGE travels with it so the annunciator can hatch itself.
+    expect(s['owed']).toHaveProperty('ageMs');
+  });
+
+  it('derives the rate window start from the run that proved the window was open', async () => {
+    const ends = Date.parse('2026-08-24T18:00:00.000Z');
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', startedAt: '2026-08-24T14:00:00.000Z', rateResetsAt: ends / 1000 });
+    const account = ((await state())['accounts'] as unknown as Array<Record<string, unknown>>)[0];
+    expect(account).toMatchObject({
+      windowEndsAt: ends,
+      windowStartedAt: '2026-08-24T14:00:00.000Z',
+      windowStartedAtSource: 'first-run-observed-in-this-window',
+    });
+  });
+
+  it('says nothing about a window start it cannot prove, instead of drawing a marker', async () => {
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', startedAt: '2026-08-24T14:00:00.000Z' });
+    const account = ((await state())['accounts'] as unknown as Array<Record<string, unknown>>)[0];
+    expect(account['windowStartedAt']).toBeNull();
+    expect(account['windowStartedAtSource']).toBeNull();
+  });
+
+  it('serves the ledger rows the wire and the journal read, with the revision they refetch on', async () => {
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', costUsd: 3, startedAt: '2026-08-24T09:00:00.000Z' });
+    const body = (await (await fetch(base + '/api/ledger')).json()) as Record<string, never>;
+    expect(body['revision']).toBeTruthy();
+    expect((body['rows'] as unknown as Array<Record<string, unknown>>)[0]).toMatchObject({ tick: 1, cost: 3, at: '2026-08-24T09:00:00.000Z', source: 'ledger' });
+  });
+
+  it('reads the board rulings out of the JSONL the board writes, notes intact', async () => {
+    const note = 'both findings closed; api 2004 web 621 submission-branches 89.65 '.repeat(20);
+    write(
+      join(repo, '.specify', 'board', 'GATES.jsonl'),
+      JSON.stringify({ at: '2026-08-23T19:09:59Z', spec: '007', stage: 'closing', gate: 'terminal', verdict: 'APPROVE', confidence: 0.92, seat: 'board-qa-critic', frozen: 'abeddc2', note }) + '\n',
+    );
+    const full = (await (await fetch(base + '/api/gates')).json()) as Record<string, never>;
+    const rows = full['rows'] as unknown as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ spec: '007', verdict: 'APPROVE', seat: 'board-qa-critic', frozen: 'abeddc2', source: 'GATES.jsonl' });
+    expect(String(rows[0]['note'])).toHaveLength(note.length);
+
+    // The 4s frame previews the note but always states how long the real one is.
+    const s = await state();
+    const preview = ((s['gates'] as unknown as { rows: Array<Record<string, unknown>> }).rows)[0];
+    expect(String(preview['note']).length).toBeLessThan(note.length);
+    expect(preview['noteChars']).toBe(note.length);
+  });
+
+  it('composes the night the founder slept through, and names what it had to leave out', async () => {
+    await store.appendRun({ tick: 1, account: 'primary', exit: 'clean', costUsd: 10, tasksClosed: 2, startedAt: new Date(Date.now() - 3600_000).toISOString() });
+    await store.appendRun({ tick: 2, account: 'primary', exit: 'stalled', costUsd: 20, tasksClosed: 0 });
+    const since = new Date(Date.now() - 8 * 3600_000).toISOString();
+    const d = (await (await fetch(`${base}/api/digest?since=${encodeURIComponent(since)}`)).json()) as Record<string, never>;
+    expect(d['numbers']).toMatchObject({ rows: 1, costUsd: 10, tasksClosed: 2 });
+    expect((d['coverage'] as unknown as { excludedLine: string }).excludedLine).toBe('1 of 2 ledger rows carry no start stamp and are not in this window');
+  });
+
+  it('finds a ruling by a word inside its note, and returns nothing for an empty query', async () => {
+    write(
+      join(repo, '.specify', 'board', 'GATES.jsonl'),
+      JSON.stringify({ at: '2026-08-23T19:09:59Z', spec: '007', gate: 'terminal', verdict: 'REVISE', seat: 'board-qa-critic', note: 'submission branch cov 68.96' }) + '\n',
+    );
+    const hit = (await (await fetch(base + '/api/search?q=submission')).json()) as Record<string, never>;
+    expect((hit['hits'] as unknown as Array<Record<string, unknown>>)[0]).toMatchObject({ kind: 'gate', source: 'GATES.jsonl' });
+    const none = (await (await fetch(base + '/api/search?q=')).json()) as Record<string, never>;
+    expect(none['hits']).toEqual([]);
+  });
+
+  it('tells a page restored from the offline shell that its token is the previous start’s', async () => {
+    const res = await fetch(base + '/api/action/resume', { method: 'POST', headers: { 'x-loop-token': 'from-a-cached-shell' } });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ ok: false, code: 'stale-token' });
   });
 });

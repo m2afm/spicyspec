@@ -119,7 +119,11 @@ export function windowsLauncherScript(req: AutostartRequest): string {
     // NO shell redirect: the supervisor appends to the log itself. cmd's `>>` opens the file
     // for the whole process, so any other holder — an overlapping sweep, a tail — made the
     // launcher exit 1 before node started, running no checks and writing nothing.
-    `"${req.nodePath}" "${req.cliPath}" supervise --once --config "${req.configPath}"`,
+    // --interval carries the SCHEDULER's cadence into the heartbeat: the room marks the
+    // supervisor missing after three missed beats, and a sweep that declared the config's
+    // 60s while the task fired every 3 minutes made the header read UNSUPERVISED half the
+    // time with nothing actually wrong.
+    `"${req.nodePath}" "${req.cliPath}" supervise --once --interval ${req.intervalMinutes * 60} --config "${req.configPath}"`,
     '',
   ].join('\r\n');
 }
@@ -193,7 +197,7 @@ export function systemdServiceUnit(req: AutostartRequest): string {
     '',
     '[Service]',
     'Type=oneshot',
-    `ExecStart="${req.nodePath}" "${req.cliPath}" supervise --once --config "${req.configPath}"`,
+    `ExecStart="${req.nodePath}" "${req.cliPath}" supervise --once --interval ${req.intervalMinutes * 60} --config "${req.configPath}"`,
     `StandardOutput=append:${log}`,
     `StandardError=append:${log}`,
     '',
