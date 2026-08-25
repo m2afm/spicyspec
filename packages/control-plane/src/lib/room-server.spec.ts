@@ -663,13 +663,13 @@ describe('health panel', () => {
 
   it('carries a header chip for a silent supervisor — an unwatched loop must not look watched', async () => {
     const page = await (await fetch(base + '/')).text();
+    // The GUARANTEE, not the widget: a supervisor that is not reporting must reach the
+    // header, because a loop nobody watches must never look watched. This was written
+    // against a fixed 'SUPV' annunciator slot that shipped in a deck redesign and was
+    // reverted when that build blanked the page; the guarantee survived the revert in the
+    // form of a header chip, so the test follows the guarantee rather than the widget.
     expect(page).toContain("const unsupervised = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
-    // SUPV is a FIXED annunciator slot, so the absence of a watcher has a known position on
-    // the page rather than a chip that appears only when someone thought to render it. The
-    // assertion is on the slot and its alarm level, not on the class name that carried it in
-    // the scrolling layout — that name moved with the deck and the guarantee did not.
-    expect(page).toContain("const supBad = Boolean(s.health && s.health.supervisor && !s.health.supervisor.reporting)");
-    expect(page).toContain("id: 'SUPV', level: supBad ? 'alarm' : 'nominal'");
+    expect(page).toMatch(/unsupervised && h\('span', \{ className: 'chip warn' \}, 'unsupervised'\)/);
   });
 
   it('renders the full roster and the install command when the supervisor has never reported', () => {
