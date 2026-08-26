@@ -144,7 +144,9 @@ describe('specProgress', () => {
     // T001+T002 done, T003+T006 open, T004 held with a stated reason, T005 silently blank.
     // The repeated **T003** in prose is the same id, and T009 in a paragraph is not a task.
     // The wave label stops at the '·' exactly as the terminal view's did.
-    expect(p).toEqual({ done: 2, open: 2, held: 1, unmarked: 1, total: 6, waves: 2, currentWave: 'Wave 1' });
+    // deferred: 0 asserted deliberately — a fixture with no DEFERRED marker must defer nothing,
+    // and total excludes deferred rows so it still reads 6 here.
+    expect(p).toEqual({ done: 2, open: 2, held: 1, unmarked: 1, deferred: 0, total: 6, deferredTotal: 6, waves: 2, currentWave: 'Wave 1' });
   });
 
   it('reports the wave holding the FIRST open task, not the last heading it read', () => {
@@ -2033,5 +2035,34 @@ describe('agent parentage across the lane namespace', () => {
     const fixed = namespaceParents(input);
     expect(fixed[1]).toBe(input[1]);       // untouched rows keep their identity
     expect(input[1].parentId).toBe('root');
+  });
+});
+
+describe('deferred rows do not make a finished spec look stalled', () => {
+  it('excludes DEFERRED-TO-<spec> rows from the bar and counts them separately', () => {
+    // The runner stopped counting deferred rows as open, the room did not, and a spec with
+    // every one of its OWN rows closed read "74 of 100" on the founder's dashboard — looking
+    // permanently unfinished. Two surfaces disagreeing about the same file is the defect
+    // class this room exists to kill.
+    const root = mkdtempSync(join(tmpdir(), 'roomdefer-'));
+    const rel = 'specs/008-x';
+    mkdirSync(join(root, rel), { recursive: true });
+    writeFileSync(
+      join(root, rel, 'tasks.md'),
+      [
+        '- [x] T001 shipped',
+        '- [x] T002 shipped',
+        '- [ ] T036b **DEFERRED-TO-009** the whole listings surface',
+        '- [ ] T042 **DEFERRED-TO-009** admin page',
+      ].join('\n'),
+      'utf8',
+    );
+    expect(specProgress(root, rel, '008')).toMatchObject({
+      done: 2,
+      open: 0,
+      deferred: 2,
+      total: 2,
+      deferredTotal: 4,
+    });
   });
 });

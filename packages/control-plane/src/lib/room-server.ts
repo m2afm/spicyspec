@@ -587,7 +587,12 @@ export interface SpecProgress {
   open: number;
   held: number;
   unmarked: number;
+  /** rows explicitly handed to a later spec — not this spec's work, shown but not counted */
+  deferred: number;
+  /** total EXCLUDING deferred rows, so the bar measures this spec */
   total: number;
+  /** every row in the file, deferred included, for the line beside the bar */
+  deferredTotal: number;
   waves: number;
   currentWave: string | null;
 }
@@ -633,6 +638,7 @@ export function specProgress(repoCwd: string, dir: string | null, specId?: strin
   let open = 0;
   let held = 0;
   let unmarked = 0;
+  let deferred = 0;
   let currentWave: string | null = null;
   let waveAtFirstOpen: string | null = null;
   const waves: string[] = [];
@@ -655,14 +661,35 @@ export function specProgress(repoCwd: string, dir: string | null, specId?: strin
     seen.add(tid);
 
     if (/^\s*-\s*\[ \]/.test(line)) {
-      open += 1;
-      if (!waveAtFirstOpen) waveAtFirstOpen = currentWave;
+      // A row explicitly handed to a later spec is not this spec's open work. The runner
+      // already counts it that way; the room did not, so a spec with every one of its own
+      // rows closed read "74 of 100" on the founder's dashboard and looked unfinished
+      // forever. Two surfaces disagreeing about the same file is the defect class this room
+      // exists to kill, so the marker is honoured in exactly one place per side.
+      if (/\bDEFERRED-TO-[A-Za-z0-9._-]+/.test(line)) {
+        deferred += 1;
+      } else {
+        open += 1;
+        if (!waveAtFirstOpen) waveAtFirstOpen = currentWave;
+      }
     } else if (/^\s*-\s*\[[xX]\]/.test(line) || line.includes('✔')) done += 1;
     else if (/left unmarked|NOT CLOSED|✖|⚠/.test(line)) held += 1;
     else unmarked += 1;
   }
 
-  return { done, open, held, unmarked, total: seen.size, waves: waves.length, currentWave: waveAtFirstOpen ?? currentWave };
+  return {
+    done,
+    open,
+    held,
+    unmarked,
+    deferred,
+    // The bar measures THIS spec: deferred rows are excluded, so 74 of 74 reads as finished
+    // rather than 74 of 100 reading as stalled. The count itself stays visible beside it.
+    total: seen.size - deferred,
+    deferredTotal: seen.size,
+    waves: waves.length,
+    currentWave: waveAtFirstOpen ?? currentWave,
+  };
 }
 
 async function buildRoomState(
