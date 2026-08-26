@@ -1,5 +1,12 @@
 # Migrating the Airvia loop onto Spicyspec
 
+> **⚠️ THIS MIGRATION IS DONE — this page is history, not instructions.** The prototype's state was
+> migrated and the loop has been running on Spicyspec since; it delivered specs through 008 there.
+> **Setting up a fresh machine against airvia lives in THAT repo: `docs/SPICYSPEC-SETUP.md`** —
+> a fresh clone seeds a new store (state does not travel with git) rather than migrating anything.
+> Kept because `migrate.mjs` and its refusal rules are the template for onboarding the NEXT
+> prototype-built tenant.
+
 Airvia is the prototype this platform was extracted from — its 47 recorded machinery
 defects are this repo's regression suite. Migrating it back onto Spicyspec is the dogfood
 milestone. **Preparation only lives here; nothing in this folder touches the Airvia tree.**
