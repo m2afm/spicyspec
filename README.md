@@ -15,7 +15,8 @@ gate records, and test evidence a production team needs to adapt and launch it.
 3. **[docs/RFC-001-founding.md](docs/RFC-001-founding.md)** — the architecture and the decisions
    behind it.
 4. **[docs/dev-setup.md](docs/dev-setup.md)** — Temporal, the worker, and boot survival.
-5. **[examples/airvia/](examples/airvia/)** — a real tenant config, annotated. The first tenant is
+5. **[docs/accounts.md](docs/accounts.md)** — adding accounts: the multi-account rotation setup.
+6. **[examples/airvia/](examples/airvia/)** — a real tenant config, annotated. The first tenant is
    the Airvia marketplace repo; its live rules live in *that* repo's `CLAUDE.md`.
 
 ## Shape

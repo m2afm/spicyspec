@@ -51,3 +51,6 @@ Thumbs.db
 vitest.config.*.timestamp*
 # orchestrator local state (temporal dev db, runner state)
 .spicyspec/
+
+# Credentials for the account pool — derived from the config path, never committed (docs/accounts.md)
+*.secrets.json
