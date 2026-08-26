@@ -586,7 +586,6 @@ export interface SpecProgress {
   done: number;
   open: number;
   held: number;
-  unmarked: number;
   /** rows explicitly handed to a later spec — not this spec's work, shown but not counted */
   deferred: number;
   /** total EXCLUDING deferred rows, so the bar measures this spec */
@@ -598,13 +597,21 @@ export interface SpecProgress {
 }
 
 /**
- * Task progress, counted by task ID and by list item only — a line port of the prototype's
- * specProgress (ui/server.mjs:102-125). Deliberately the same rules as the terminal view:
- * prose that merely mentions an id is not a task, and a task held open WITH a stated reason
- * ("left unmarked", "NOT CLOSED", ✖, ⚠) is not the same as one silently blank. Both
- * distinctions were learned the hard way — held:0 hardcoded made the per-lane 'built'
- * segment permanently empty and builtFraction diverge from the airvia room's numbers the
- * moment a task was held.
+ * Task progress, counted by task ID and by CHECKBOX ROW only.
+ *
+ * A task is a row with a checkbox. That is the whole rule, and it is narrower than the
+ * prototype's (ui/server.mjs:102-125), which also counted a bullet carrying an id but no
+ * checkbox. That looseness cost the founder a dashboard: three explanatory bullets in
+ * 008's tasks.md — `- **T041** — the service already EXIST` and two like it — were read as
+ * task rows, so a spec with every one of its own rows closed reported "73 signed off of
+ * 100 · 3 UNMARKED" and looked unfinished. A bullet naming an id is indistinguishable in
+ * shape from a task row that lost its tick, so the room does not guess between them; it
+ * counts what is unambiguous and reports nothing it cannot prove.
+ *
+ * `held` survives, re-anchored: an OPEN row that states a blocker ("NOT CLOSED", "left
+ * unmarked", ✖, ⚠) is not the same as one merely waiting. held:0 hardcoded once made the
+ * per-lane 'built' segment permanently empty and builtFraction diverge from the airvia
+ * room's numbers the moment a task was held.
  */
 export function specProgress(repoCwd: string, dir: string | null, specId?: string): SpecProgress | null {
   if (!dir) return null;
@@ -637,7 +644,6 @@ export function specProgress(repoCwd: string, dir: string | null, specId?: strin
   let done = 0;
   let open = 0;
   let held = 0;
-  let unmarked = 0;
   let deferred = 0;
   let currentWave: string | null = null;
   let waveAtFirstOpen: string | null = null;
@@ -651,40 +657,35 @@ export function specProgress(repoCwd: string, dir: string | null, specId?: strin
     }
     if (!/^\s*-\s/.test(line)) continue;
     // Both id styles are real: the prototype wrote `- [x] **T001**`, airvia's lanes write
-    // `- [x] T001` — the strict bold-only match rendered a working spec as "0 of 0". The
-    // plain form is only accepted at the head of the bullet (after an optional checkbox),
-    // so prose that merely mentions an id still does not count as a task.
-    const tid =
-      (line.match(/\*\*(T\d{3}[a-z]?)\*\*/) ?? [])[1] ??
-      (line.match(/^\s*-\s*(?:\[[ xX]\]\s*)?(T\d{3}[a-z]?)\b/) ?? [])[1];
+    // `- [x] T001` — a strict bold-only match rendered a working spec as "0 of 0". The id
+    // must sit immediately after the checkbox, which is what keeps prose out (see above).
+    const tid = (line.match(/^\s*[-*] \[[ xX]\]\s*(?:\*\*)?(T\d{3}[a-z]?)/) ?? [])[1];
     if (!tid || seen.has(tid)) continue;
     seen.add(tid);
 
-    if (/^\s*-\s*\[ \]/.test(line)) {
+    if (/^\s*-\s*\[[xX]\]/.test(line)) {
+      done += 1;
+    } else if (/\bDEFERRED-TO-[A-Za-z0-9._-]+/.test(line)) {
       // A row explicitly handed to a later spec is not this spec's open work. The runner
-      // already counts it that way; the room did not, so a spec with every one of its own
-      // rows closed read "74 of 100" on the founder's dashboard and looked unfinished
-      // forever. Two surfaces disagreeing about the same file is the defect class this room
-      // exists to kill, so the marker is honoured in exactly one place per side.
-      if (/\bDEFERRED-TO-[A-Za-z0-9._-]+/.test(line)) {
-        deferred += 1;
-      } else {
-        open += 1;
-        if (!waveAtFirstOpen) waveAtFirstOpen = currentWave;
-      }
-    } else if (/^\s*-\s*\[[xX]\]/.test(line) || line.includes('✔')) done += 1;
-    else if (/left unmarked|NOT CLOSED|✖|⚠/.test(line)) held += 1;
-    else unmarked += 1;
+      // already counts it that way; the room did not, so a spec with all of its own rows
+      // closed read "74 of 100" and looked stalled forever. Two surfaces disagreeing about
+      // the same file is the defect class this room exists to kill.
+      deferred += 1;
+    } else if (/left unmarked|NOT CLOSED|✖|⚠/.test(line)) {
+      held += 1;
+    } else {
+      open += 1;
+      if (!waveAtFirstOpen) waveAtFirstOpen = currentWave;
+    }
   }
 
   return {
     done,
     open,
     held,
-    unmarked,
     deferred,
-    // The bar measures THIS spec: deferred rows are excluded, so 74 of 74 reads as finished
-    // rather than 74 of 100 reading as stalled. The count itself stays visible beside it.
+    // The bar measures THIS spec: deferred rows are excluded, so 73 of 73 reads as finished
+    // rather than 73 of 97 reading as stalled. The count itself stays visible beside it.
     total: seen.size - deferred,
     deferredTotal: seen.size,
     waves: waves.length,

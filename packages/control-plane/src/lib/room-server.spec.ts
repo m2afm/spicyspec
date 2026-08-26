@@ -131,22 +131,22 @@ describe('specProgress', () => {
     '- [X] T002 plain-id style, still a task',
     '- [ ] **T003** make it pass',
     '## Wave 2 · hardening',
-    '- **T004** left unmarked — the gate has open findings',
-    '- **T005** nothing said about it at all',
+    '- [ ] **T004** NOT CLOSED — the gate has open findings',
+    '- **T005** an explanatory bullet, not a row: no checkbox, so not a task',
     '- [ ] **T006** last one',
     'Prose that merely mentions **T003** again must not count twice.',
     'A paragraph naming T009 is not a task line.',
   ].join('\n');
 
-  it('classifies done, open, held and unmarked separately — held:0 made the built bar always empty', () => {
+  it('classifies done, open and held separately — held:0 made the built bar always empty', () => {
     write(join(repo, 'specs', '002-x', 'tasks.md'), TASKS);
     const p = specProgress(repo, 'specs/002-x', '002');
-    // T001+T002 done, T003+T006 open, T004 held with a stated reason, T005 silently blank.
-    // The repeated **T003** in prose is the same id, and T009 in a paragraph is not a task.
+    // T001+T002 done, T003+T006 open, T004 open WITH a stated blocker so it counts as held.
+    // T005 carries an id but no checkbox, the repeated **T003** in prose is the same id, and
+    // T009 sits in a paragraph: none of the three is a row, so the file holds five tasks.
     // The wave label stops at the '·' exactly as the terminal view's did.
-    // deferred: 0 asserted deliberately — a fixture with no DEFERRED marker must defer nothing,
-    // and total excludes deferred rows so it still reads 6 here.
-    expect(p).toEqual({ done: 2, open: 2, held: 1, unmarked: 1, deferred: 0, total: 6, deferredTotal: 6, waves: 2, currentWave: 'Wave 1' });
+    // deferred: 0 asserted deliberately — a fixture with no DEFERRED marker must defer nothing.
+    expect(p).toEqual({ done: 2, open: 2, held: 1, deferred: 0, total: 5, deferredTotal: 5, waves: 2, currentWave: 'Wave 1' });
   });
 
   it('reports the wave holding the FIRST open task, not the last heading it read', () => {
@@ -2063,6 +2063,41 @@ describe('deferred rows do not make a finished spec look stalled', () => {
       deferred: 2,
       total: 2,
       deferredTotal: 4,
+    });
+  });
+});
+
+describe('prose is never a task, from the room side too (B28)', () => {
+  it('ignores ids mentioned in sentences and explanatory bullets', () => {
+    // These four shapes are verbatim from the live 008 list. They produced three phantom
+    // "UNMARKED" rows on the founder's dashboard, and inflated a finished spec's denominator
+    // to "73 signed off of 100" while every row of its own work was closed.
+    const root = mkdtempSync(join(tmpdir(), 'roomprose-'));
+    const rel = 'specs/008-x';
+    mkdirSync(join(root, rel), { recursive: true });
+    writeFileSync(
+      join(root, rel, 'tasks.md'),
+      [
+        '- [x] T001 real, done',
+        '- [ ] T002 real, open',
+        'minted ONCE for all SM-RATECHECK ids in W5/**T041a** (unanimous Decision Council)',
+        '- **T041** — the service + module + port already EXIST (W2/T015-T017).',
+        '- **T041c** — conditionally required, named in T041b.',
+        '- T075-T077 are documentation/traceability debt, non-gating.',
+      ].join('\n'),
+      'utf8',
+    );
+    // Two real rows, and nothing else counted anywhere: not in the bar, not as held, and not
+    // as a phantom warning beside it.
+    expect(specProgress(root, rel, '008')).toEqual({
+      done: 1,
+      open: 1,
+      held: 0,
+      deferred: 0,
+      total: 2,
+      deferredTotal: 2,
+      waves: 0,
+      currentWave: null,
     });
   });
 });

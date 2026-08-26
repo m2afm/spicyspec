@@ -3674,7 +3674,7 @@ function CatalogLanes({ lanes }) {
           h('span', null, h('b', null, lp.done), ' done'),
           h('span', null, h('b', null, lp.open), ' open'),
           lp.held > 0 && h('span', null, h('b', null, lp.held), ' held (reason stated)'),
-          lp.unmarked > 0 && h('span', { style: { color: 'var(--hot)', fontWeight: 700 } }, lp.unmarked + ' UNMARKED'),
+          lp.deferred > 0 && h('span', null, '+', h('b', null, lp.deferred), ' handed to a later spec'),
           lp.currentWave && h('span', null, lp.currentWave.slice(0, 46))));
     }),
     lanes.length > shown.length && h('button', {
@@ -4235,7 +4235,7 @@ function PfdLane({ s, samples, inst }) {
     h('div', { className: 'burnexcl' },
       lp
         ? lp.done + '/' + lp.total + ' done · ' + lp.open + ' open' + (lp.held ? ' · ' + lp.held + ' held' : '') +
-          (lp.unmarked ? ' · ' + lp.unmarked + ' UNMARKED' : '')
+          (lp.deferred ? ' · +' + lp.deferred + ' handed to a later spec' : '')
         : 'no tasks.md for this spec yet — the lane is still writing spec, plan and tasks'),
     lanes.length > 1 && h('div', { className: 'burnexcl' },
       '+' + (lanes.length - 1) + ' more lane(s) — all of them under MACHINE'));
