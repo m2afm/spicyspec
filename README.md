@@ -7,6 +7,17 @@ gate records, and test evidence a production team needs to adapt and launch it.
 > GitHub Actions for building whole apps — a spec-driven pipeline as the brain,
 > evidence-paired verification as the moat.
 
+## New here? Read in this order
+
+1. **This file** — what the thing is and how to run it.
+2. **[HANDOFF.md](HANDOFF.md)** — where the work stands *right now*, what is unfinished, and the
+   traps the last session paid for. The baton, not the record.
+3. **[docs/RFC-001-founding.md](docs/RFC-001-founding.md)** — the architecture and the decisions
+   behind it.
+4. **[docs/dev-setup.md](docs/dev-setup.md)** — Temporal, the worker, and boot survival.
+5. **[examples/airvia/](examples/airvia/)** — a real tenant config, annotated. The first tenant is
+   the Airvia marketplace repo; its live rules live in *that* repo's `CLAUDE.md`.
+
 ## Shape
 
 - **Control plane** — projects, pipelines, run queue, gate records, approvals, dashboards.
@@ -15,7 +26,31 @@ gate records, and test evidence a production team needs to adapt and launch it.
 - **Plugin surfaces** — providers (Claude/Kimi/GLM/…), agent manifests, skill & gate packs
   (frontend-checklist, backend-checklist, security-check, pentest), pipeline definitions.
 
-Full architecture: [docs/RFC-001-founding.md](docs/RFC-001-founding.md).
+## Quickstart
+
+```bash
+pnpm install
+pnpm nx run-many -t typecheck test build   # the full sweep — green at handover (36/36 tasks)
+```
+
+Run a loop against a repo of your own:
+
+```bash
+npx create-spicyspec my-project    # scaffolds config + store in five commands
+spicyspec-runner start --config spicyspec.runner.json
+spicyspec-runner dashboard --port 4477 --config spicyspec.runner.json
+```
+
+The dashboard is one vendored HTML file (`packages/control-plane/room/app.html`) — no build step,
+works offline, React via `h()` calls. Rebuild the runner (`pnpm nx build runner`) before restarting
+a deployed dashboard: it serves whatever `dist/` holds.
+
+## How work flows
+
+One spec at a time, through a gated pipeline: **intake → specify → clarify → plan → tasks →
+execute → converge**, then a terminal gate and a human sign-off — the platform never marks its own
+work done. Temporal makes every run durable; the store (SQLite solo, Postgres team) is the single
+writer's ledger; accounts rotate *within* a spec, weekly-quota accounts held in reserve.
 
 ## Stack
 
@@ -25,12 +60,11 @@ plane · WinSW/systemd runner services · vitest · zod.
 
 ## Status
 
-**Phase 3 — complete.** Domain logic ported from the Airvia build-loop prototype
-(48h unattended, 191 tasks closed, 47 machinery defects — each encoded as a named regression test).
-Four live proofs on real infrastructure: a single-run smoke (8/8), a three-stage rotation through
-real Claude sessions (10/10, $0.25), the manager dashboard rendering a live store in a browser,
-and the store contract at 9/9 against real Postgres 16 (rollback + two-runner federation).
-274 tests across 12 packages.
+**Dogfooding on the Airvia tenant.** The loop delivered specs 001–008 there; 008 is signed off at
+its terminal gate and awaits the founder's own click-through. This platform was extracted from that
+prototype (48h unattended, 191 tasks closed, 47 machinery defects — each encoded as a named
+regression test) and then hardened against everything the dogfood run surfaced: self-healing
+supervision, branch-per-spec, pid-carrying account leases, honest task counting.
 
 | Package | What | Status |
 |---|---|---|
@@ -75,14 +109,23 @@ Written after a real night: the founder left the loop running, and found it dead
 hours. Two causes — a stop flag the agent armed and never cleared, and *nothing supervising
 the processes*. Both are what a sweep now looks for.
 
-## Workspace
+## Team practices — the rules the measurements forced
 
-```bash
-pnpm install
-pnpm nx test core        # unit tests (vitest)
-pnpm nx typecheck core
-```
+The full set (with the numbers) lives in the tenant repo's `CLAUDE.md` and in
+`packages/pipeline/src/lib/packet.ts`, which is how they reach every worker. The short form:
+
+- **Executed beats reasoned.** One browser click-through per feature, run uncached at the terminal
+  gate. No static substitute counts. Both defects that ever escaped to a human were this class.
+- **Verify the OUTCOME, never the exit code.** The costliest failures here were things reporting
+  success while doing nothing — a supervisor whose timers let it exit healthy, a psql helper that
+  swallowed every SQL error, coverage bars that resolved no files and passed.
+- **Review in batches of 5–6 units; every finding names a falsifiable probe** — a mutation that
+  stayed green, a red-first test, or a command with its output. "Checked, fine" is not a finding.
+- **Never review the process's own records.** Task lists and handoffs are corrected in place.
+- **Fix per finding; commit bodies carry the probe.** Read any `fix(...)` commit in this repo or the
+  tenant's for the idiom.
 
 ## License
 
-Undecided — treat as proprietary until a license file exists.
+Undecided — **treat as proprietary**. The source being visible does not grant use, copying, or
+redistribution; no license file exists yet, so default copyright applies. Founder call pending.
