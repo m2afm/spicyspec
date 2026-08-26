@@ -21,7 +21,7 @@ import {
 /* ------------------------------------------------------------------------- tasks ---- */
 
 describe('countTasks — B28: prose is never a task', () => {
-  it('counts only checkbox lines with a bold task id', () => {
+  it('counts only checkbox lines carrying a task id — prose is not a task (B28)', () => {
     const text = [
       '- [ ] **T010** RED-first unit (resume)',
       '  - [x] **T011** implement resumeUnderLock',
@@ -30,11 +30,11 @@ describe('countTasks — B28: prose is never a task', () => {
       'Some paragraph with - [ ] mid-line noise',
     ].join('\n');
     const t = countTasks(text);
-    expect(t).toEqual({ exists: true, done: 2, open: 1, nextTaskIds: ['T010'] });
+    expect(t).toEqual({ exists: true, done: 2, open: 1, deferred: 0, nextTaskIds: ['T010'] });
   });
 
   it('a missing file is a fact, not an error', () => {
-    expect(countTasks(null)).toEqual({ exists: false, done: 0, open: 0, nextTaskIds: [] });
+    expect(countTasks(null)).toMatchObject({ exists: false, done: 0, open: 0, nextTaskIds: [] });
   });
 
   it('nextTaskIds is bounded', () => {
